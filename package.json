@@ -1,0 +1,18 @@
+{
+  "name": "chimera-agent",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Terminal-native, provider-neutral AI coding-agent platform MVP scaffold.",
+  "type": "module",
+  "bin": {
+    "chimera": "./bin/chimera.js"
+  },
+  "scripts": {
+    "start": "node ./bin/chimera.js",
+    "test": "node --test",
+    "lint": "node --check ./bin/chimera.js && node --check ./src/*.js && node --check ./tests/*.test.js"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
