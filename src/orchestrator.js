@@ -38,7 +38,7 @@ export function selectAgentMode({ requested = 'auto', taskMode, prompt = '', rep
     reasons.push(...repoSignals.map((signal) => `Repository/task signal: ${signal}.`));
     return buildSelection('duo', reasons);
   }
-  if (['ask', 'status', 'check'].includes(taskMode)) {
+  if (['ask', 'status', 'check', 'patch'].includes(taskMode)) {
     reasons.push(`${taskMode} mode is read-only and low risk.`);
     return buildSelection('solo', reasons);
   }

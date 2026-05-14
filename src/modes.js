@@ -4,6 +4,7 @@ import path from 'node:path';
 import { promisify } from 'node:util';
 import { runAgentPanel } from './agents.js';
 import { discoverCheckCommands, runCheckCommands, summarizeCheckResults } from './checks.js';
+import { applyPatch, checkPatch, loadPatch, validatePatchPaths } from './patch.js';
 import { completeWithProvider } from './provider.js';
 
 const execFileAsync = promisify(execFile);
@@ -144,6 +145,56 @@ function parseRequestedChecks(prompt, discovered) {
   const requested = prompt.split(',').map((item) => item.trim()).filter(Boolean);
   if (!requested.length) return discovered;
   return requested.map((command) => ({ command, source: 'user prompt' }));
+}
+
+export async function runPatchMode({ repo, prompt, session, selection, cwd, permissionProfile, apply }) {
+  await session.record({ type: 'mode_started', mode: 'patch', prompt, permissionProfile, apply });
+  const loaded = await loadPatch(cwd, prompt);
+  const pathValidation = validatePatchPaths(loaded.files);
+  const check = pathValidation.valid
+    ? await checkPatch(cwd, loaded.text)
+    : { ok: false, exitCode: null, stdout: '', stderr: pathValidation.reason };
+  const applyResult = apply && check.ok
+    ? await applyPatch(cwd, loaded.text, permissionProfile)
+    : null;
+
+  await session.record({
+    type: 'patch_evaluated',
+    patchPath: loaded.path,
+    files: loaded.files,
+    pathValidation,
+    check: { ok: check.ok, exitCode: check.exitCode, stderr: check.stderr },
+    applyResult: applyResult ? { applied: applyResult.applied, skipped: applyResult.skipped, exitCode: applyResult.exitCode, stderr: applyResult.stderr, decision: applyResult.decision } : null,
+  });
+
+  const findings = [
+    `Patch file: ${loaded.path}`,
+    `Touched files: ${loaded.files.length ? loaded.files.join(', ') : 'none detected'}`,
+    `Path validation: ${pathValidation.reason}`,
+    `git apply --check: ${check.ok ? 'passed' : `failed${check.stderr ? ` (${check.stderr})` : ''}`}`,
+  ];
+  if (applyResult) {
+    findings.push(applyResult.applied
+      ? 'Patch applied successfully.'
+      : `Patch not applied: ${applyResult.stderr || applyResult.decision.reason}`);
+  } else if (apply) {
+    findings.push('Patch was not applied because validation failed.');
+  } else {
+    findings.push('Patch was validated only. Re-run with `--apply --permission workspace-write` to apply it.');
+  }
+
+  return {
+    title: 'Patch mode',
+    summary: apply ? 'Validated and attempted to apply a unified diff.' : 'Validated a unified diff without applying it.',
+    findings,
+    risks: applyResult?.applied ? ['Review the resulting git diff before committing.'] : [],
+    checks: (await discoverCheckCommands(repo.root, repo)).map((candidate) => candidate.command),
+    nextSteps: applyResult?.applied
+      ? ['Run `chimera check` and `chimera review` before committing.']
+      : ['Inspect the patch validation result and apply only after review.'],
+    agentPanel: { mode: selection.mode, reasons: selection.reasons, results: [], quorum: null },
+    evidence: repo.evidence,
+  };
 }
 
 function firstAvailable(agentPanel, role) {

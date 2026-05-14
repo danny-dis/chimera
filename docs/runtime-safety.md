@@ -33,3 +33,17 @@ node ./bin/chimera.js check --permission workspace-write "npm install"
 ```
 
 The last command is permitted by policy only outside read-only/ask-before-write profiles. Destructive commands remain blocked unless `danger-full-access` is selected.
+
+
+## Patch mode
+
+`chimera patch <diff-file>` validates a unified diff without mutating the workspace. It checks that patch paths are workspace-relative and then runs `git apply --check`.
+
+To apply a patch, the user must explicitly pass `--apply` and select a profile that permits write-like commands:
+
+```bash
+node ./bin/chimera.js patch .chimera/sessions/<id>/proposal.diff
+node ./bin/chimera.js patch --apply --permission workspace-write .chimera/sessions/<id>/proposal.diff
+```
+
+Patch mode intentionally applies through `git apply` rather than direct model-driven file writes. This keeps proposed changes reviewable, reversible through Git, and blocked by the same deterministic policy layer used by check mode.

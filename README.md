@@ -7,7 +7,7 @@ Chimera is a terminal-native, provider-neutral AI coding-agent platform. It star
 This repository now contains the first runnable Chimera MVP scaffold:
 
 - a `chimera` CLI entrypoint;
-- read-only `ask`, `plan`, `review`, `check`, and `status` modes plus a guarded `code` mode for provider-backed patch proposal artifacts;
+- read-only `ask`, `plan`, `review`, `check`, `patch`, and `status` modes plus a guarded `code` mode for provider-backed patch proposal artifacts;
 - `--agents solo|duo|trio|auto` orchestration with writer, reviewer, and challenger roles;
 - repository scanning for files, languages, docs, tests, package manifests, and instruction files;
 - append-only session event logs under `.chimera/sessions/`;
@@ -20,6 +20,7 @@ The architecture blueprint remains the long-term product plan:
 
 - [Chimera Terminal Coding Agent Blueprint](docs/chimera-agent-blueprint.md)
 - [Side-by-side Claude Code / Codex workflow research](docs/research/side-by-side-agent-workflows.md)
+- [Runtime safety MVP](docs/runtime-safety.md)
 
 ## Quick start
 
@@ -31,6 +32,8 @@ node ./bin/chimera.js plan "add provider-backed code mode"
 node ./bin/chimera.js code --agents duo "add provider-backed code mode"
 node ./bin/chimera.js plan --agents trio "redesign auth rollback"
 node ./bin/chimera.js check
+node ./bin/chimera.js patch .chimera/sessions/<id>/proposal.diff
+node ./bin/chimera.js patch --apply --permission workspace-write .chimera/sessions/<id>/proposal.diff
 node ./bin/chimera.js review --json
 CHIMERA_API_KEY=... CHIMERA_MODEL=... node ./bin/chimera.js ask "summarize this repo"
 ```
@@ -43,11 +46,13 @@ chimera plan <goal>      # Produce a repo-aware implementation plan
 chimera code <goal>      # Save a provider-backed patch proposal when configured
 chimera review [target]  # Review git status/diff evidence and suggest checks
 chimera check [commands] # Discover and run safe project checks
+chimera patch <diff>     # Validate a unified diff; add --apply to apply it
 chimera status           # Show repository profile and instruction sources
 
 Options:
   --agents solo|duo|trio|auto  # Select writer-only, writer+reviewer, writer+reviewer+challenger, or heuristic routing
   --permission read-only|ask-before-write|workspace-write|trusted-project|danger-full-access
+  --apply       # Patch mode only: apply after validation and permission checks
 ```
 
 ## Multi-agent model configuration
@@ -71,4 +76,4 @@ CHIMERA_REVIEWER_COMMAND="claude -p" \
 node ./bin/chimera.js code --agents duo "fix the failing tests"
 ```
 
-The current implementation intentionally avoids unsafe autonomous edits. `check` mode runs only commands allowed by the selected permission profile and records check results in the session log. `code` mode can save a provider-generated patch proposal, but automatic application is blocked until the patch engine, permission prompts, and test-command discovery are implemented.
+The current implementation intentionally avoids unsafe autonomous edits. `check` mode runs only commands allowed by the selected permission profile and records check results in the session log. `code` mode can save a provider-generated patch proposal, and `patch` mode can validate or explicitly apply that proposal through git after path and permission checks.

@@ -17,6 +17,7 @@ const WRITE_PATTERNS = [
   /\b(pip|uv)\s+install\b/,
   /\bcargo\s+(add|update|install)\b/,
   /\bgo\s+get\b/,
+  /\bgit\s+apply\b/,
   /\btouch\b|\bmkdir\b|\bmv\b|\bcp\b|\bsed\s+-i\b/,
 ];
 

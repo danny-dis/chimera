@@ -37,3 +37,19 @@ test('runCli accepts explicit trio agent mode', async () => {
   assert.match(stdout.output, /Mode: trio/);
   assert.match(stdout.output, /challenger: abstain/);
 });
+
+
+test('runCli renders patch mode validation output', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'chimera-cli-patch-'));
+  await writeFile(path.join(root, 'file.txt'), 'one\n');
+  const { execFile } = await import('node:child_process');
+  const { promisify } = await import('node:util');
+  await promisify(execFile)('git', ['init'], { cwd: root });
+  const patch = 'diff --git a/file.txt b/file.txt\nindex 5626abf..f719efd 100644\n--- a/file.txt\n+++ b/file.txt\n@@ -1 +1 @@\n-one\n+two\n';
+  await writeFile(path.join(root, 'change.diff'), patch);
+  const stdout = new Capture();
+  const stderr = new Capture();
+  await runCli(['patch', 'change.diff'], { cwd: root, stdout, stderr });
+  assert.match(stdout.output, /# Patch mode/);
+  assert.match(stdout.output, /git apply --check: passed/);
+});
