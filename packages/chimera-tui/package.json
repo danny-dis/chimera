@@ -1,0 +1,23 @@
+{
+  "name": "@chimera/tui",
+  "version": "0.0.1",
+  "description": "Terminal UI: setup wizard, chat, agent dashboard, cost tracker, session browser, diff viewer",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "test": "vitest",
+    "lint": "eslint src/",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@chimera/core": "workspace:*",
+    "@chimera/cli": "workspace:*",
+    "ink": "^5.0.0",
+    "react": "^18.3.0"
+  },
+  "devDependencies": {
+    "@types/react": "^18.3.0"
+  }
+}
