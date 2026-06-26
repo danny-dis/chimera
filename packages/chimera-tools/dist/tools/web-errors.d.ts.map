@@ -1,0 +1,1 @@
+{"version":3,"file":"web-errors.d.ts","sourceRoot":"","sources":["../../src/tools/web-errors.ts"],"names":[],"mappings":"AAEA,qBAAa,cAAe,SAAQ,KAAK;IACvC,QAAQ,CAAC,QAAQ,EAAE,MAAM,CAAC;IAC1B,QAAQ,CAAC,MAAM,CAAC,EAAE,MAAM,CAAC;gBAEb,QAAQ,EAAE,MAAM,EAAE,OAAO,EAAE,MAAM,EAAE,MAAM,CAAC,EAAE,MAAM;CAQ/D"}

@@ -1,0 +1,292 @@
+diff --git a/packages/chimera-core/src/prompts.ts b/packages/chimera-core/src/prompts.ts
+index 3a6886c..4ca1bb2 100644
+--- a/packages/chimera-core/src/prompts.ts
++++ b/packages/chimera-core/src/prompts.ts
+@@ -862,6 +862,14 @@ export interface BuildMessagesParams {
+   task: string;
+   context?: string;
+   previousOutput?: string;
++  /**
++   * Optional prompt-cache directive. When set, the returned system message
++   * block carries a `cache_control` field so downstream providers (notably
++   * Anthropic) can attach a prompt-cache breakpoint on it. The
++   * orchestrator should also forward this option to the provider's
++   * `complete()`/`stream()` call.
++   */
++  cacheControl?: { type: 'ephemeral'; ttl?: '5m' | '1h' };
+ }
+ 
+ /**
+@@ -879,23 +887,34 @@ export interface BuildMessagesParams {
+  */
+ export function buildMessages(
+   params: BuildMessagesParams,
+-): Array<{ role: string; content: string }> {
++): Array<{ role: string; content: string; cache_control?: { type: 'ephemeral'; ttl?: '5m' | '1h' } }> {
+   const template = AGENT_PROMPTS[params.role];
+   const modeInstructions = template.mode[params.mode] ?? '';
+   const modeFormatting = MODE_INSTRUCTIONS[params.mode] ?? '';
+ 
+-  const messages: Array<{ role: string; content: string }> = [
+-    {
+-      role: 'system',
+-      content:
+-        CHIMERA_CORE_IDENTITY +
+-        '\n\n---\n\n' +
+-        template.system +
+-        '\n\n---\n\n' +
+-        modeInstructions +
+-        '\n\n---\n\n' +
+-        modeFormatting,
+-    },
++  const systemMessage: { role: string; content: string; cache_control?: { type: 'ephemeral'; ttl?: '5m' | '1h' } } = {
++    role: 'system',
++    content:
++      CHIMERA_CORE_IDENTITY +
++      '\n\n---\n\n' +
++      template.system +
++      '\n\n---\n\n' +
++      modeInstructions +
++      '\n\n---\n\n' +
++      modeFormatting,
++  };
++
++  if (params.cacheControl) {
++    // Append a cache_control marker to the system content block so the
++    // provider wrapper can promote it to a prompt-cache breakpoint.
++    systemMessage.cache_control = {
++      type: params.cacheControl.type,
++      ttl: params.cacheControl.ttl ?? '5m',
++    };
++  }
++
++  const messages: Array<{ role: string; content: string; cache_control?: { type: 'ephemeral'; ttl?: '5m' | '1h' } }> = [
++    systemMessage,
+   ];
+ 
+   if (params.context) {
+diff --git a/packages/chimera-core/src/session-orchestrator.ts b/packages/chimera-core/src/session-orchestrator.ts
+index f9149ef..dbb699c 100644
+--- a/packages/chimera-core/src/session-orchestrator.ts
++++ b/packages/chimera-core/src/session-orchestrator.ts
+@@ -22,6 +22,13 @@ export interface LLMProvider {
+         description: string;
+         parameters: Record<string, unknown>;
+       }>;
++      /**
++       * Optional prompt-cache directive. When set, providers that
++       * support explicit cache markers (Anthropic) attach a
++       * `cache_control` breakpoint to the appropriate system block.
++       * OpenAI-compatible providers accept and ignore the field.
++       */
++      cacheControl?: { type: 'ephemeral'; ttl?: '5m' | '1h' };
+     },
+   ): Promise<{
+     content: string;
+@@ -134,6 +141,15 @@ function nextAgentId(): string {
+ 
+ const MAX_TOOL_ITERATIONS = 10;
+ 
++/**
++ * Default prompt-cache directive used for every LLM call dispatched by
++ * the orchestrator. The system-prompt prefix is identical across calls
++ * for a given role, so attaching a 5-minute ephemeral cache breakpoint
++ * maximizes cache hit rate without leaking the prompt to long-lived
++ * caches.
++ */
++const DEFAULT_CACHE_CONTROL = { type: 'ephemeral' as const, ttl: '5m' as const };
++
+ export class SessionOrchestrator {
+   private state: OrchestratorState = { status: 'idle' };
+   private eventStream: EventStream;
+@@ -300,6 +316,7 @@ export class SessionOrchestrator {
+         maxTokens: 4096,
+         responseFormat: 'json_object',
+         tools: toolDefs.length > 0 ? toolDefs : undefined,
++        cacheControl: DEFAULT_CACHE_CONTROL,
+       });
+ 
+       let draftCost = this.estimateCost(draftResult.usage);
+@@ -321,6 +338,7 @@ export class SessionOrchestrator {
+           maxTokens: 4096,
+           responseFormat: 'json_object',
+           tools: toolDefs.length > 0 ? toolDefs : undefined,
++          cacheControl: DEFAULT_CACHE_CONTROL,
+         });
+ 
+         const iterCost = this.estimateCost(draftResult.usage);
+@@ -364,6 +382,7 @@ export class SessionOrchestrator {
+         temperature: 0.2,
+         maxTokens: 4096,
+         responseFormat: 'json_object',
++        cacheControl: DEFAULT_CACHE_CONTROL,
+       });
+ 
+       const reviewCost = this.estimateCost(reviewResult.usage);
+@@ -412,6 +431,7 @@ export class SessionOrchestrator {
+           temperature: 0.5,
+           maxTokens: 4096,
+           responseFormat: 'json_object',
++          cacheControl: DEFAULT_CACHE_CONTROL,
+         });
+ 
+         const challengeCost = this.estimateCost(challengeResult.usage);
+@@ -544,6 +564,7 @@ export class SessionOrchestrator {
+         temperature: 0.2,
+         maxTokens: 4096,
+         responseFormat: 'json_object',
++        cacheControl: DEFAULT_CACHE_CONTROL,
+       });
+ 
+       const cost = this.estimateCost(result.usage);
+@@ -588,6 +609,7 @@ export class SessionOrchestrator {
+             temperature: 0.5,
+             maxTokens: 4096,
+             responseFormat: 'json_object',
++            cacheControl: DEFAULT_CACHE_CONTROL,
+           });
+ 
+           const cost = this.estimateCost(result.usage);
+@@ -676,7 +698,7 @@ export class SessionOrchestrator {
+   }
+ 
+   buildWriterPrompt(task: string, mode: Mode): Array<{ role: string; content: string }> {
+-    const messages = buildMessages({ role: 'writer', mode, task });
++    const messages = buildMessages({ role: 'writer', mode, task, cacheControl: DEFAULT_CACHE_CONTROL });
+ 
+     const outputInstructions = [
+       'Respond with valid JSON matching this schema:',
+@@ -706,6 +728,7 @@ export class SessionOrchestrator {
+         '',
+         'Evaluate the draft against the task. Return structured JSON.',
+       ].join('\n'),
++      cacheControl: DEFAULT_CACHE_CONTROL,
+     });
+ 
+     const outputInstructions = [
+@@ -733,6 +756,7 @@ export class SessionOrchestrator {
+         '',
+         'Critique both the draft and the review. Propose alternatives if needed. Return structured JSON.',
+       ].join('\n'),
++      cacheControl: DEFAULT_CACHE_CONTROL,
+     });
+ 
+     const outputInstructions = [
+diff --git a/packages/chimera-providers/src/providers/anthropic.ts b/packages/chimera-providers/src/providers/anthropic.ts
+index f1d675f..d35d64f 100644
+--- a/packages/chimera-providers/src/providers/anthropic.ts
++++ b/packages/chimera-providers/src/providers/anthropic.ts
+@@ -237,7 +237,24 @@ export class AnthropicProvider implements ModelProvider {
+     };
+ 
+     if (systemMessage) {
+-      body.system = systemMessage.content;
++      // When cacheControl is set, convert the system field to an array of
++      // content blocks and place the cache_control marker on the LAST
++      // block — Anthropic only honors the marker on the final system
++      // block of the request.
++      if (options?.cacheControl) {
++        body.system = [
++          {
++            type: 'text',
++            text: systemMessage.content,
++            cache_control: {
++              type: options.cacheControl.type,
++              ttl: options.cacheControl.ttl ?? '5m',
++            },
++          },
++        ];
++      } else {
++        body.system = systemMessage.content;
++      }
+     }
+     if (options?.temperature !== undefined) body.temperature = options.temperature;
+     if (options?.topP !== undefined) body.top_p = options.topP;
+@@ -278,7 +295,22 @@ export class AnthropicProvider implements ModelProvider {
+     };
+ 
+     if (systemMessage) {
+-      body.system = systemMessage.content;
++      // Mirror complete(): when cacheControl is set, send system as an
++      // array with cache_control on the LAST block (Anthropic requirement).
++      if (options?.cacheControl) {
++        body.system = [
++          {
++            type: 'text',
++            text: systemMessage.content,
++            cache_control: {
++              type: options.cacheControl.type,
++              ttl: options.cacheControl.ttl ?? '5m',
++            },
++          },
++        ];
++      } else {
++        body.system = systemMessage.content;
++      }
+     }
+     if (options?.temperature !== undefined) body.temperature = options.temperature;
+     if (options?.topP !== undefined) body.top_p = options.topP;
+diff --git a/packages/chimera-providers/src/providers/openai-compatible.ts b/packages/chimera-providers/src/providers/openai-compatible.ts
+index cb2df81..7a9928d 100644
+--- a/packages/chimera-providers/src/providers/openai-compatible.ts
++++ b/packages/chimera-providers/src/providers/openai-compatible.ts
+@@ -214,6 +214,14 @@ export class OpenAICompatibleProvider implements ModelProvider {
+       stream: false,
+     };
+ 
++    // NOTE: `options.cacheControl` is intentionally a no-op for
++    // OpenAI-compatible providers. OpenAI automatically caches prompts
++    // (prefix caching on matching chat.completions requests), so no
++    // explicit marker is required. The field is accepted on the shared
++    // CompletionOptions interface so callers can pass it uniformly
++    // without branching on provider.
++    void options?.cacheControl;
++
+     if (options?.temperature !== undefined) body.temperature = options.temperature;
+     if (options?.topP !== undefined) body.top_p = options.topP;
+     if (options?.maxTokens !== undefined) body.max_tokens = options.maxTokens;
+@@ -247,6 +255,14 @@ export class OpenAICompatibleProvider implements ModelProvider {
+       stream_options: { include_usage: true },
+     };
+ 
++    // NOTE: `options.cacheControl` is intentionally a no-op for
++    // OpenAI-compatible providers. OpenAI automatically caches prompts
++    // (prefix caching on matching chat.completions requests), so no
++    // explicit marker is required. The field is accepted on the shared
++    // CompletionOptions interface so callers can pass it uniformly
++    // without branching on provider.
++    void options?.cacheControl;
++
+     if (options?.temperature !== undefined) body.temperature = options.temperature;
+     if (options?.topP !== undefined) body.top_p = options.topP;
+     if (options?.maxTokens !== undefined) body.max_tokens = options.maxTokens;
+diff --git a/packages/chimera-providers/src/types/provider.ts b/packages/chimera-providers/src/types/provider.ts
+index 5850adb..5e8fdd4 100644
+--- a/packages/chimera-providers/src/types/provider.ts
++++ b/packages/chimera-providers/src/types/provider.ts
+@@ -19,6 +19,17 @@ export interface ToolDefinition {
+ 
+ export type ResponseFormat = 'text' | 'json_object';
+ 
++/**
++ * Optional prompt-cache directive. Anthropic uses this to attach a
++ * `cache_control` marker to a system content block so the prefix can be
++ * cached for `ttl` minutes. OpenAI auto-caches prompts and ignores this
++ * field; the type is shared so callers can pass it uniformly.
++ */
++export interface CacheControlOptions {
++  type: 'ephemeral';
++  ttl?: '5m' | '1h';
++}
++
+ export interface CompletionOptions {
+   temperature?: number;
+   topP?: number;
+@@ -27,6 +38,7 @@ export interface CompletionOptions {
+   tools?: ToolDefinition[];
+   toolChoice?: 'auto' | 'required' | 'none' | { type: 'function'; name: string };
+   responseFormat?: ResponseFormat;
++  cacheControl?: CacheControlOptions;
+ }
+ 
+ export interface TokenUsage {

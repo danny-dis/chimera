@@ -1,0 +1,1 @@
+{"version":3,"file":"diff-viewer.d.ts","sourceRoot":"","sources":["../../src/components/diff-viewer.tsx"],"names":[],"mappings":"AAAA,OAAO,KAAmB,MAAM,OAAO,CAAC;AAExC,OAAO,KAAK,EAAE,QAAQ,EAAE,MAAM,aAAa,CAAC;AAE5C,UAAU,eAAe;IACvB,KAAK,EAAE,QAAQ,EAAE,CAAC;CACnB;AA2CD,eAAO,MAAM,UAAU,EAAE,KAAK,CAAC,EAAE,CAAC,eAAe,CAuEhD,CAAC"}

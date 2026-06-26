@@ -1,0 +1,24 @@
+{
+  "name": "@chimera/learning",
+  "version": "0.0.1",
+  "description": "Self-improvement engine: session analysis → skill/workflow synthesis",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "test": "vitest",
+    "lint": "eslint src/",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@chimera/core": "workspace:*",
+    "@chimera/session": "workspace:*",
+    "yaml": "^2.5.0",
+    "zod": "^3.23.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "vitest": "^1.2.0"
+  }
+}

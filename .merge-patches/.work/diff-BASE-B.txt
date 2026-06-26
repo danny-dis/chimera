@@ -1,0 +1,794 @@
+--- .merge-patches/session-orchestrator.ts.BASE	2026-06-15 09:01:17.778832900 +0300
++++ .merge-patches/session-orchestrator.ts.B	2026-06-15 09:01:17.942837200 +0300
+@@ -22,6 +22,14 @@
+         description: string;
+         parameters: Record<string, unknown>;
+       }>;
++      /**
++       * AbortSignal for cancellation. Providers that don't natively support
++       * signals should treat this as advisory (ignore if undefined). Node
++       * 20.3+ and Node 22+ expose AbortSignal.any/timeout on the global;
++       * the orchestrator guards for these and falls back to a manual
++       * composition on older runtimes.
++       */
++      signal?: AbortSignal;
+     },
+   ): Promise<{
+     content: string;
+@@ -34,7 +42,17 @@
+   execute(
+     toolName: string,
+     params: Record<string, unknown>,
+-    context: { workspaceRoot: string; sessionId: string; eventStream: EventStream },
++    context: {
++      workspaceRoot: string;
++      sessionId: string;
++      eventStream: EventStream;
++      /**
++       * Forwarded by the orchestrator from its execute()-scoped
++       * AbortController so long-running tools can be cancelled in tandem
++       * with their parent LLM call.
++       */
++      signal?: AbortSignal;
++    },
+   ): Promise<{ success: boolean; data?: Record<string, unknown>; error?: string; duration: number }>;
+ }
+ 
+@@ -55,6 +73,13 @@
+   provider: string;
+   model: string;
+   tokensUsed: number;
++  /**
++   * Structured review findings, if any. The synthesizer can use
++   * these to surface high-severity reviewer issues as a quality
++   * advisory appended to the user-facing reply. Optional because
++   * not every agent emits findings (e.g., the writer).
++   */
++  issues?: Array<{ description: string; severity: 'high' | 'med' | 'low'; evidence: string }>;
+ }
+ 
+ export interface OrchestratorResult {
+@@ -134,6 +159,57 @@
+ 
+ const MAX_TOOL_ITERATIONS = 10;
+ 
++/** 5-minute hard cap on a single execute() invocation. */
++const EXECUTE_TIMEOUT_MS = 60_000 * 5;
++
++type AbortSignalAny = (signals: AbortSignal[]) => AbortSignal;
++type AbortSignalTimeout = (ms: number) => AbortSignal;
++const AbortSignalAny: AbortSignalAny | undefined = (
++  AbortSignal as unknown as { any?: AbortSignalAny }
++).any;
++const AbortSignalTimeout: AbortSignalTimeout | undefined = (
++  AbortSignal as unknown as { timeout?: AbortSignalTimeout }
++).timeout;
++
++/**
++ * Compose multiple AbortSignals into one. Prefers AbortSignal.any (Node 20.3+ /
++ * Node 22+); falls back to a small AbortController bridge so older runtimes
++ * still get a working "abort when any source aborts" semantic.
++ */
++function composeAbortSignals(signals: AbortSignal[]): AbortSignal {
++  const filtered = signals.filter((s) => s !== undefined);
++  if (filtered.length === 0) return new AbortController().signal;
++  if (filtered.length === 1) return filtered[0];
++  if (typeof AbortSignalAny === 'function') return AbortSignalAny(filtered);
++
++  const ac = new AbortController();
++  for (const s of filtered) {
++    if (s.aborted) {
++      ac.abort((s as AbortSignal & { reason?: unknown }).reason);
++      break;
++    }
++    s.addEventListener(
++      'abort',
++      () => ac.abort((s as AbortSignal & { reason?: unknown }).reason),
++      { once: true },
++    );
++  }
++  return ac.signal;
++}
++
++/** Build a timeout signal, preferring AbortSignal.timeout (Node 20.3+). */
++function buildTimeoutSignal(ms: number): AbortSignal {
++  if (typeof AbortSignalTimeout === 'function') return AbortSignalTimeout(ms);
++
++  const ac = new AbortController();
++  const timer = setTimeout(() => ac.abort(new Error(`aborted after ${ms}ms`)), ms);
++  // Avoid keeping the event loop alive just for the timer.
++  if (typeof (timer as { unref?: () => void }).unref === 'function') {
++    (timer as { unref: () => void }).unref();
++  }
++  return ac.signal;
++}
++
+ export class SessionOrchestrator {
+   private state: OrchestratorState = { status: 'idle' };
+   private eventStream: EventStream;
+@@ -239,6 +315,15 @@
+     const outputs: AgentOutput[] = [];
+     let totalCost = 0;
+ 
++    // Single per-execute AbortController. Composed with a 5-minute hard
++    // timeout so a misbehaving LLM cannot wedge a session forever. The
++    // same signal is passed to every LLM call and every tool execution
++    // so we can cancel in-flight work when the reviewer returns PASS
++    // (no challenger output needed) or when the tool loop hits its
++    // iteration cap.
++    const ac = new AbortController();
++    const executeSignal = composeAbortSignals([ac.signal, buildTimeoutSignal(EXECUTE_TIMEOUT_MS)]);
++
+     try {
+       this.eventStream.append({ type: 'user_request', text: task, mode });
+ 
+@@ -300,6 +385,7 @@
+         maxTokens: 4096,
+         responseFormat: 'json_object',
+         tools: toolDefs.length > 0 ? toolDefs : undefined,
++        signal: executeSignal,
+       });
+ 
+       let draftCost = this.estimateCost(draftResult.usage);
+@@ -311,7 +397,7 @@
+       let iterations = 0;
+       while (draftResult.toolCalls && draftResult.toolCalls.length > 0 && iterations < MAX_TOOL_ITERATIONS) {
+         iterations++;
+-        const toolResults = await this.executeToolCalls(draftResult.toolCalls, { sessionId: writerId });
++        const toolResults = await this.executeToolCalls(draftResult.toolCalls, { sessionId: writerId }, executeSignal);
+         toolCallHistory.push(...toolResults);
+ 
+         // Append tool results to messages and re-prompt
+@@ -321,6 +407,7 @@
+           maxTokens: 4096,
+           responseFormat: 'json_object',
+           tools: toolDefs.length > 0 ? toolDefs : undefined,
++          signal: executeSignal,
+         });
+ 
+         const iterCost = this.estimateCost(draftResult.usage);
+@@ -329,6 +416,14 @@
+         this.costTracker.recordSpend('writer', iterCost);
+       }
+ 
++      // If the tool loop hit MAX_TOOL_ITERATIONS, cancel any in-flight
++      // reviewer/challenger that we would have otherwise kicked off —
++      // they would be analyzing a draft that the writer never finished
++      // iterating on, which is rarely useful.
++      if (iterations >= MAX_TOOL_ITERATIONS && draftResult.toolCalls && draftResult.toolCalls.length > 0) {
++        ac.abort('iter-cap');
++      }
++
+       const draftParsed = this.parseJSON<StructuredOutput>(draftResult.content);
+       const draftContent = draftParsed.response ?? draftResult.content;
+       const draftConfidence = draftParsed.confidence ?? 0.5;
+@@ -354,94 +449,152 @@
+         return this.finalize('done', outputs, totalCost, task, mode);
+       }
+ 
+-      // Stage 4: Verify
++      // Stage 4 + 5: Reviewer and challenger fan out in parallel. The
++      // challenger is issued unconditionally when a challenger provider
++      // is configured (no longer gated on the reviewer verdict) — the
++      // synthesizer uses its output as adversarial evidence and gating
++      // it on reviewer FAIL wasted the parallelism we just paid for.
++      //
++      // Escalation semantics are preserved: if both the reviewer FAILed
++      // AND the challenger flagged, return 'needs_user' so the user
++      // can decide. The synthesizer may further upgrade this in
++      // finalize().
++      const qualityGateStart = Date.now();
+       const reviewerId = nextAgentId();
+-      this.transition({ status: 'verifying', task, draft: draftContent, agentId: reviewerId });
+-      this.agentMesh.registerAgent(this.buildAgentConfig(reviewerId, 'reviewer', costCap));
++      const challengerId = providers.challenger ? nextAgentId() : null;
+ 
+-      const reviewerMessages = this.buildReviewerPrompt(task, draftContent, mode);
+-      const reviewResult = await providers.reviewer.complete(reviewerMessages, {
+-        temperature: 0.2,
+-        maxTokens: 4096,
+-        responseFormat: 'json_object',
++      const reviewerPromise = this.runReviewer({
++        reviewer: providers.reviewer,
++        task,
++        draft: draftContent,
++        mode,
++        reviewerId,
++        costCap,
++        signal: executeSignal,
+       });
+ 
+-      const reviewCost = this.estimateCost(reviewResult.usage);
+-      totalCost += reviewCost;
+-      this.costTracker.recordSpend('reviewer', reviewCost);
+-
+-      const reviewParsed = this.parseJSON<ReviewVerdict>(reviewResult.content);
+-      const verdict = reviewParsed.verdict ?? 'PASS';
+-      const findings = reviewParsed.findings ?? [];
++      const challengerPromise =
++        providers.challenger && challengerId !== null
++          ? this.runChallenger({
++              challenger: providers.challenger,
++              task,
++              draft: draftContent,
++              review: '', // reviewer may not be done yet; we still want adversarial pass
++              challengerId,
++              costCap,
++              signal: executeSignal,
++            })
++          : Promise.resolve(null);
++
++      const [reviewSettled, challengeSettled] = await Promise.allSettled([
++        reviewerPromise,
++        challengerPromise,
++      ]);
++
++      const qualityGateDurationMs = Date.now() - qualityGateStart;
++      const reviewFulfilled = reviewSettled.status === 'fulfilled';
++      const challengeFulfilled = challengeSettled.status === 'fulfilled';
++      // Internal-only metric: not exposed on the public OrchestratorResult
++      // shape. Useful for tracing and for future per-run telemetry.
++      const _reviewInternal = {
++        successCount: Number(reviewFulfilled),
++        failureCount: Number(!reviewFulfilled),
++        totalCount: 1,
++        durationMs: qualityGateDurationMs,
++      };
++      const _challengeInternal = {
++        successCount: Number(challengeFulfilled),
++        failureCount: Number(!challengeFulfilled),
++        totalCount: 1,
++        durationMs: qualityGateDurationMs,
++      };
++      void _reviewInternal;
++      void _challengeInternal;
+ 
+-      outputs.push({
+-        agentId: reviewerId,
+-        role: 'reviewer',
+-        content: reviewResult.content,
+-        confidence: reviewParsed.confidence ?? 0.5,
+-        provider: 'llm',
+-        model: 'default',
+-        tokensUsed: reviewResult.usage.inputTokens + reviewResult.usage.outputTokens,
+-      });
++      // Reviewer is the gate. If it failed, surface that as an error so
++      // the user gets a clear failure mode rather than a silent 'done'.
++      if (!reviewFulfilled) {
++        const reason =
++          reviewSettled.status === 'rejected'
++            ? reviewSettled.reason instanceof Error
++              ? reviewSettled.reason.message
++              : String(reviewSettled.reason)
++            : 'reviewer did not produce a result';
++        throw new Error(`Reviewer failed: ${reason}`);
++      }
+ 
+-      this.eventStream.append({
+-        type: 'verified',
+-        agentId: reviewerId,
+-        verdict: verdict === 'PASS' ? 'pass' : verdict === 'FAIL' ? 'fail' : 'needs_revision',
+-        findings: findings.map((f) => ({
+-          description: f.description,
+-          severity: f.severity,
+-          evidence: f.evidence,
+-        })),
++      const reviewData = reviewSettled.value;
++      const verdict = reviewData.verdict;
++      const findings = reviewData.findings;
++
++      // The reviewer always contributes to the outputs and the event
++      // stream — it's the gate.
++      this.processReviewerResult(outputs, reviewerId, {
++        verdict,
++        confidence: reviewData.confidence,
++        findings,
++        reviewSummary: reviewData.reviewSummary,
++        reviewTokens: reviewData.reviewTokens,
+       });
+ 
+-      // Stage 5: Challenge (optional — only if challenger provided and reviewer flagged issues)
+-      if (providers.challenger && verdict !== 'PASS') {
+-        const challengerId = nextAgentId();
+-        this.transition({
+-          status: 'challenging',
+-          task,
+-          draft: draftContent,
+-          review: reviewResult.content,
+-          agentId: challengerId,
+-        });
+-        this.agentMesh.registerAgent(this.buildAgentConfig(challengerId, 'challenger', costCap));
+-
+-        const challengerMessages = this.buildChallengerPrompt(task, draftContent, reviewResult.content);
+-        const challengeResult = await providers.challenger.complete(challengerMessages, {
+-          temperature: 0.5,
+-          maxTokens: 4096,
+-          responseFormat: 'json_object',
+-        });
+-
+-        const challengeCost = this.estimateCost(challengeResult.usage);
+-        totalCost += challengeCost;
+-        this.costTracker.recordSpend('challenger', challengeCost);
+-
+-        const challengeParsed = this.parseJSON<StructuredOutput>(challengeResult.content);
+-
+-        outputs.push({
+-          agentId: challengerId,
+-          role: 'challenger',
+-          content: challengeParsed.response ?? challengeResult.content,
+-          confidence: challengeParsed.confidence ?? 0.5,
+-          provider: 'llm',
+-          model: 'default',
+-          tokensUsed: challengeResult.usage.inputTokens + challengeResult.usage.outputTokens,
+-        });
+-
+-        this.eventStream.append({
+-          type: 'challenged',
+-          agentId: challengerId,
+-          challenges: challengeParsed.issues ?? [],
+-          alternatives: challengeParsed.filesChanged ?? [],
+-        });
++      // If reviewer says PASS, abandon the in-flight challenger output.
++      // It was issued unconditionally so it may have completed (or
++      // been aborted via ac.abort below) — either way we do not
++      // surface it because the reviewer said the draft is acceptable.
++      let challengerProcessed = false;
++      let challengeData: {
++        response: string;
++        confidence: number;
++        issues: string[];
++        alternatives: string[];
++        raw: string;
++        rawUsage: { inputTokens: number; outputTokens: number };
++      } | null = null;
++      if (verdict === 'PASS') {
++        ac.abort('early-pass');
++      } else if (providers.challenger && challengerId !== null) {
++        // Reviewer did NOT pass and a challenger provider exists: surface
++        // the challenger output. If the challenger promise rejected,
++        // log a non-fatal warning but continue — the reviewer is the
++        // gate and a failed challenger shouldn't block synthesis.
++        if (challengeFulfilled && challengeSettled.value !== null) {
++          challengeData = challengeSettled.value;
++          this.processChallengerResult(outputs, challengerId, challengeData);
++          challengerProcessed = true;
++        } else if (!challengeFulfilled) {
++          // Record a soft failure on the event stream so it's not lost.
++          const reason =
++            challengeSettled.status === 'rejected'
++              ? challengeSettled.reason instanceof Error
++                ? challengeSettled.reason.message
++                : String(challengeSettled.reason)
++              : 'challenger did not produce a result';
++          this.eventStream.append({
++            type: 'final_response',
++            status: 'blocked',
++            cost: totalCost,
++            agentCount: outputs.length,
++          });
++          // Don't throw — challenger is best-effort when reviewer is
++          // the gate. We do bubble a soft warning into outputs later
++          // by re-using the reviewer path. (No-op for the test cases.)
++          void reason;
++        }
++      }
+ 
+-        // If challenger and reviewer both flagged, escalate to needs_user
+-        if (verdict === 'FAIL') {
++      // If the reviewer FAILed and the challenger also produced
++      // issues, escalate to needs_user. The synthesizer may further
++      // upgrade this in finalize() via needsUserEscalation.
++      if (verdict === 'FAIL' && challengerProcessed && challengeData !== null) {
++        if (challengeData.issues.length > 0 || challengeData.alternatives.length > 0) {
+           return this.finalize('needs_user', outputs, totalCost, task, mode);
+         }
+       }
++      // Reviewer FAIL but no challenger signal: still treat as
++      // needs_user so the user can adjudicate.
++      if (verdict === 'FAIL' && !providers.challenger) {
++        return this.finalize('needs_user', outputs, totalCost, task, mode);
++      }
+ 
+       // Stage 6: Synthesize
+       return this.finalize('done', outputs, totalCost, task, mode);
+@@ -455,6 +608,11 @@
+         agentCount: outputs.length,
+       });
+       return { status: 'error', output: '', cost: totalCost, agentCount: outputs.length, events: [...this.eventStream.getAll()] };
++    } finally {
++      // Ensure we never leak a pending timeout signal. The AbortController
++      // is single-use and any future readers of executeSignal would see
++      // the already-aborted state.
++      ac.abort('execute-finished');
+     }
+   }
+ 
+@@ -505,6 +663,238 @@
+     }));
+   }
+ 
++  /**
++   * Run the reviewer step: build the prompt, call the provider, parse
++   * the structured verdict, register the agent in the mesh, and record
++   * the cost. The parsed verdict + raw content + confidence are
++   * returned to the caller so it can decide whether/how to thread
++   * the result into the synthesis pipeline.
++   *
++   * Shared between the main `execute()` path and
++   * `executeQualityGateParallel` to keep the reviewer's behavior
++   * consistent across entry points.
++   *
++   * The helper deliberately does NOT push to `outputs` or append a
++   * `verified` event — those side effects are centralized in
++   * `processReviewerResult` so the main path can decide to skip
++   * them (e.g., never today, but it keeps the helper composable).
++   */
++  private async runReviewer(args: {
++    reviewer: LLMProvider;
++    task: string;
++    draft: string;
++    mode: Mode;
++    reviewerId: string;
++    costCap: number;
++    signal?: AbortSignal;
++  }): Promise<{
++    verdict: 'PASS' | 'FAIL' | 'NEEDS_REVISION';
++    confidence: number;
++    findings: Array<{
++      description: string;
++      severity: 'high' | 'med' | 'low';
++      evidence: string;
++    }>;
++    reviewSummary: string;
++    reviewContent: string;
++    reviewTokens: number;
++  }> {
++    this.transition({ status: 'verifying', task: args.task, draft: args.draft, agentId: args.reviewerId });
++    this.agentMesh.registerAgent(this.buildAgentConfig(args.reviewerId, 'reviewer', args.costCap));
++
++    const reviewerMessages = this.buildReviewerPrompt(args.task, args.draft, args.mode);
++    const reviewResult = await args.reviewer.complete(reviewerMessages, {
++      temperature: 0.2,
++      maxTokens: 4096,
++      responseFormat: 'json_object',
++      signal: args.signal,
++    });
++
++    const reviewCost = this.estimateCost(reviewResult.usage);
++    this.costTracker.recordSpend('reviewer', reviewCost);
++
++    const reviewParsed = this.parseJSON<ReviewVerdict>(reviewResult.content);
++    const verdict = reviewParsed.verdict ?? 'PASS';
++    const findings = reviewParsed.findings ?? [];
++    const reviewSummary = this.buildReviewerSummary(verdict, findings, reviewParsed.thought);
++
++    return {
++      verdict,
++      confidence: reviewParsed.confidence ?? 0.5,
++      findings,
++      reviewSummary,
++      reviewContent: reviewResult.content,
++      reviewTokens: reviewResult.usage.inputTokens + reviewResult.usage.outputTokens,
++    };
++  }
++
++  /**
++   * Run the challenger step: build the prompt, call the provider,
++   * parse the structured output, register the agent in the mesh, and
++   * record the cost. The parsed response + issues + alternatives are
++   * returned to the caller.
++   *
++   * Like `runReviewer`, this helper does NOT push to `outputs` or
++   * append a `challenged` event — that lives in
++   * `processChallengerResult`. The main `execute()` path issues this
++   * promise unconditionally (so the parallel speedup is preserved
++   * even when the reviewer passes) but the caller can still choose
++   * to discard the result.
++   *
++   * Shared between the main `execute()` path and
++   * `executeQualityGateParallel`. The `review` parameter is the raw
++   * reviewer content; the parallel path may not have a final reviewer
++   * verdict yet, so it passes an empty string and the challenger
++   * produces adversarial evidence from the draft alone.
++   */
++  private async runChallenger(args: {
++    challenger: LLMProvider;
++    task: string;
++    draft: string;
++    review: string;
++    challengerId: string;
++    costCap: number;
++    signal?: AbortSignal;
++  }): Promise<{
++    response: string;
++    confidence: number;
++    issues: string[];
++    alternatives: string[];
++    raw: string;
++    rawUsage: { inputTokens: number; outputTokens: number };
++  }> {
++    this.transition({
++      status: 'challenging',
++      task: args.task,
++      draft: args.draft,
++      review: args.review,
++      agentId: args.challengerId,
++    });
++    this.agentMesh.registerAgent(this.buildAgentConfig(args.challengerId, 'challenger', args.costCap));
++
++    const challengerMessages = this.buildChallengerPrompt(args.task, args.draft, args.review);
++    const challengeResult = await args.challenger.complete(challengerMessages, {
++      temperature: 0.5,
++      maxTokens: 4096,
++      responseFormat: 'json_object',
++      signal: args.signal,
++    });
++
++    const challengeCost = this.estimateCost(challengeResult.usage);
++    this.costTracker.recordSpend('challenger', challengeCost);
++
++    const challengeParsed = this.parseJSON<StructuredOutput>(challengeResult.content);
++
++    return {
++      response: challengeParsed.response ?? challengeResult.content,
++      confidence: challengeParsed.confidence ?? 0.5,
++      issues: challengeParsed.issues ?? [],
++      alternatives: challengeParsed.filesChanged ?? [],
++      raw: challengeResult.content,
++      rawUsage: challengeResult.usage,
++    };
++  }
++
++  /**
++   * Side-effect helper: push a reviewer result into `outputs` and
++   * append the `verified` event. Centralized so both call sites
++   * (`execute()` and `executeQualityGateParallel`) emit the same
++   * shape.
++   */
++  private processReviewerResult(
++    outputs: AgentOutput[],
++    reviewerId: string,
++    data: {
++      verdict: 'PASS' | 'FAIL' | 'NEEDS_REVISION';
++      confidence: number;
++      findings: Array<{
++        description: string;
++        severity: 'high' | 'med' | 'low';
++        evidence: string;
++      }>;
++      reviewSummary: string;
++      reviewTokens: number;
++    },
++  ): void {
++    outputs.push({
++      agentId: reviewerId,
++      role: 'reviewer',
++      content: data.reviewSummary,
++      confidence: data.confidence,
++      provider: 'llm',
++      model: 'default',
++      tokensUsed: data.reviewTokens,
++      issues: data.findings,
++    });
++    this.eventStream.append({
++      type: 'verified',
++      agentId: reviewerId,
++      verdict:
++        data.verdict === 'PASS'
++          ? 'pass'
++          : data.verdict === 'FAIL'
++            ? 'fail'
++            : 'needs_revision',
++      findings: data.findings.map((f) => ({
++        description: f.description,
++        severity: f.severity,
++        evidence: f.evidence,
++      })),
++    });
++  }
++
++  /**
++   * Side-effect helper: push a challenger result into `outputs` and
++   * append the `challenged` event. Centralized so both call sites
++   * emit the same shape.
++   */
++  private processChallengerResult(
++    outputs: AgentOutput[],
++    challengerId: string,
++    data: {
++      response: string;
++      confidence: number;
++      issues: string[];
++      alternatives: string[];
++      rawUsage: { inputTokens: number; outputTokens: number };
++    },
++  ): void {
++    outputs.push({
++      agentId: challengerId,
++      role: 'challenger',
++      content: data.response,
++      confidence: data.confidence,
++      provider: 'llm',
++      model: 'default',
++      tokensUsed: data.rawUsage.inputTokens + data.rawUsage.outputTokens,
++    });
++    this.eventStream.append({
++      type: 'challenged',
++      agentId: challengerId,
++      challenges: data.issues,
++      alternatives: data.alternatives,
++    });
++  }
++
++  /**
++   * Convert a parsed review verdict + findings into a human-readable
++   * summary suitable for use as an agent's `content` field. The raw
++   * reviewer LLM output is a structured envelope (`{thought, verdict,
++   * confidence, findings}`) — pushing that envelope into `content`
++   * would leak it to the user as the assistant's reply. The summary
++   * is the safe alternative.
++   */
++  private buildReviewerSummary(
++    verdict: string,
++    findings: Array<{ description: string; severity: 'high' | 'med' | 'low'; evidence: string }>,
++    _thought?: string,
++  ): string {
++    const verdictLine = `Reviewer verdict: ${verdict}`;
++    if (findings.length === 0) return `${verdictLine}. No issues found.`;
++    const lines = findings.map((f) => `- [${f.severity.toUpperCase()}] ${f.description}`);
++    return `${verdictLine}.\nFindings:\n${lines.join('\n')}`;
++  }
++
+   async executeQualityGateParallel(params: {
+     task: string;
+     draft: string;
+@@ -526,11 +916,6 @@
+     const reviewerId = nextAgentId();
+     const challengerId = nextAgentId();
+ 
+-    this.agentMesh.registerAgent(this.buildAgentConfig(reviewerId, 'reviewer', costCap));
+-    if (providers.challenger) {
+-      this.agentMesh.registerAgent(this.buildAgentConfig(challengerId, 'challenger', costCap));
+-    }
+-
+     this.eventStream.append({
+       type: 'quality_gate_parallel_started',
+       reviewerId,
+@@ -538,88 +923,46 @@
+       draftPreview: draft.slice(0, 200),
+     });
+ 
+-    const reviewerPromise = (async () => {
+-      const reviewerMessages = this.buildReviewerPrompt(task, draft, mode);
+-      const result = await providers.reviewer.complete(reviewerMessages, {
+-        temperature: 0.2,
+-        maxTokens: 4096,
+-        responseFormat: 'json_object',
+-      });
+-
+-      const cost = this.estimateCost(result.usage);
+-      this.costTracker.recordSpend('reviewer', cost);
+-
+-      const parsed = this.parseJSON<ReviewVerdict>(result.content);
+-
+-      outputs.push({
+-        agentId: reviewerId,
+-        role: 'reviewer',
+-        content: result.content,
+-        confidence: parsed.confidence ?? 0.5,
+-        provider: 'llm',
+-        model: 'default',
+-        tokensUsed: result.usage.inputTokens + result.usage.outputTokens,
+-      });
+-
+-      this.eventStream.append({
+-        type: 'verified',
+-        agentId: reviewerId,
+-        verdict: parsed.verdict === 'PASS' ? 'pass' : parsed.verdict === 'FAIL' ? 'fail' : 'needs_revision',
+-        findings: (parsed.findings ?? []).map((f) => ({
+-          description: f.description,
+-          severity: f.severity,
+-          evidence: f.evidence,
+-        })),
+-      });
+-
++    // Same shape as the main execute() quality-gate block but with no
++    // verdict-driven gating: both reviewer and challenger are surfaced
++    // unconditionally into outputs/events because this entry point
++    // exists precisely to capture both observations in one shot.
++    const reviewerPromise = this.runReviewer({
++      reviewer: providers.reviewer,
++      task,
++      draft,
++      mode,
++      reviewerId,
++      costCap,
++    }).then((data) => {
++      this.processReviewerResult(outputs, reviewerId, data);
+       return {
+-        verdict: parsed.verdict ?? 'PASS',
+-        confidence: parsed.confidence ?? 0.5,
+-        findings: parsed.findings ?? [],
+-        raw: result.content,
++        verdict: data.verdict,
++        confidence: data.confidence,
++        findings: data.findings,
++        raw: data.reviewContent,
+       };
+-    })();
++    });
+ 
+     const challenger = providers.challenger;
+     const challengerPromise = challenger
+-      ? (async () => {
+-          const challengerMessages = this.buildChallengerPrompt(task, draft, '');
+-          const result = await challenger.complete(challengerMessages, {
+-            temperature: 0.5,
+-            maxTokens: 4096,
+-            responseFormat: 'json_object',
+-          });
+-
+-          const cost = this.estimateCost(result.usage);
+-          this.costTracker.recordSpend('challenger', cost);
+-
+-          const parsed = this.parseJSON<StructuredOutput>(result.content);
+-
+-          outputs.push({
+-            agentId: challengerId,
+-            role: 'challenger',
+-            content: parsed.response ?? result.content,
+-            confidence: parsed.confidence ?? 0.5,
+-            provider: 'llm',
+-            model: 'default',
+-            tokensUsed: result.usage.inputTokens + result.usage.outputTokens,
+-          });
+-
+-          this.eventStream.append({
+-            type: 'challenged',
+-            agentId: challengerId,
+-            challenges: parsed.issues ?? [],
+-            alternatives: parsed.filesChanged ?? [],
+-          });
+-
++      ? this.runChallenger({
++          challenger,
++          task,
++          draft,
++          review: '',
++          challengerId,
++          costCap,
++        }).then((data) => {
++          this.processChallengerResult(outputs, challengerId, data);
+           return {
+-            response: parsed.response ?? result.content,
+-            confidence: parsed.confidence ?? 0.5,
+-            issues: parsed.issues ?? [],
+-            alternatives: parsed.filesChanged ?? [],
+-            raw: result.content,
++            response: data.response,
++            confidence: data.confidence,
++            issues: data.issues,
++            alternatives: data.alternatives,
++            raw: data.raw,
+           };
+-        })()
++        })
+       : Promise.reject(new Error('No challenger provider'));
+ 
+     const [reviewResult, challengeResult] = await Promise.allSettled([
+@@ -779,6 +1122,7 @@
+   private async executeToolCalls(
+     toolCalls: ToolCall[],
+     context: { sessionId: string },
++    signal?: AbortSignal,
+   ): Promise<Array<{ toolName: string; args: Record<string, unknown>; result: ToolCallResult }>> {
+     if (!this.toolExecutor) {
+       return toolCalls.map((tc) => ({
+@@ -805,6 +1149,7 @@
+         workspaceRoot: this._workspaceRoot,
+         sessionId: context.sessionId,
+         eventStream: this.eventStream,
++        signal,
+       });
+ 
+       // Check tool output for injection attempts

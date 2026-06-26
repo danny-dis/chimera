@@ -1,0 +1,1 @@
+{"version":3,"file":"agent-dashboard.d.ts","sourceRoot":"","sources":["../../src/components/agent-dashboard.tsx"],"names":[],"mappings":"AAAA,OAAO,KAAK,MAAM,OAAO,CAAC;AAE1B,OAAO,KAAK,EAAE,KAAK,EAAE,MAAM,aAAa,CAAC;AAEzC,UAAU,mBAAmB;IAC3B,MAAM,EAAE,KAAK,EAAE,CAAC;CACjB;AAyCD,eAAO,MAAM,cAAc,EAAE,KAAK,CAAC,EAAE,CAAC,mBAAmB,CAyBxD,CAAC"}

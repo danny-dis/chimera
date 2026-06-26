@@ -1,0 +1,355 @@
+diff --git a/packages/chimera-core/src/__tests__/session-orchestrator.test.ts b/packages/chimera-core/src/__tests__/session-orchestrator.test.ts
+index 6ee4ede..7ca9e9a 100644
+--- a/packages/chimera-core/src/__tests__/session-orchestrator.test.ts
++++ b/packages/chimera-core/src/__tests__/session-orchestrator.test.ts
+@@ -387,4 +387,88 @@ describe('SessionOrchestrator', () => {
+       expect(result.status).toBe('done');
+     });
+   });
++
++  describe('estimateCost', () => {
++    it('falls back to static rates when no provider hint is given', () => {
++      const cost = orchestrator['estimateCost']({ inputTokens: 1_000_000, outputTokens: 1_000_000 });
++      // Static rates: $0.50/M input, $1.50/M output → $2.00
++      expect(cost).toBeCloseTo(2.0);
++    });
++
++    it('uses the provider pricing (mocked) when getPricing is available', () => {
++      const provider = {
++        getCost: vi.fn(),
++        getPricing: () => ({
++          inputPerMillion: 10,
++          outputPerMillion: 20,
++          cacheReadPerMillion: 1,
++          cacheWritePerMillion: 12.5,
++        }),
++      };
++
++      const cost = orchestrator['estimateCost'](
++        { inputTokens: 1_000_000, outputTokens: 1_000_000 },
++        provider,
++      );
++      // (uncached 1M * 10 + cache 0 * 1 + cache-write 0 * 12.5) / 1e6
++      // + (1M * 20) / 1e6 = 10 + 20 = 30
++      expect(cost).toBeCloseTo(30);
++      // getCost is intentionally NOT called — the orchestrator computes
++      // cost directly from getPricing() so it can apply the cache
++      // rates that getCost() doesn't expose.
++      expect(provider.getCost).not.toHaveBeenCalled();
++    });
++
++    it('returns a lower cost when cacheReadTokens is set (cache reads are cheap)', () => {
++      const provider = {
++        getCost: vi.fn((tokens: { input: number; output: number }) =>
++          (tokens.input * 10 + tokens.output * 20) / 1_000_000,
++        ),
++        getPricing: () => ({
++          inputPerMillion: 10,
++          outputPerMillion: 20,
++          cacheReadPerMillion: 1, // 10x cheaper than uncached input
++          cacheWritePerMillion: 12.5,
++        }),
++      };
++
++      const withoutCache = orchestrator['estimateCost'](
++        { inputTokens: 1_000_000, outputTokens: 1_000_000 },
++        provider,
++      );
++      const withCache = orchestrator['estimateCost'](
++        { inputTokens: 1_000_000, outputTokens: 1_000_000, cacheReadTokens: 800_000 },
++        provider,
++      );
++
++      // withoutCache = 30 (1M * 10/M + 1M * 20/M)
++      // withCache    = (200k * 10 + 800k * 1) / 1e6 + 1M * 20 / 1e6
++      //             = 2 + 0.8 + 20 = 22.8  → strictly lower
++      expect(withoutCache).toBeCloseTo(30);
++      expect(withCache).toBeCloseTo(22.8);
++      expect(withCache).toBeLessThan(withoutCache);
++    });
++
++    it('charges cacheWriteTokens at the cacheWritePerMillion rate on top of uncached input', () => {
++      const provider = {
++        getCost: vi.fn(),
++        getPricing: () => ({
++          inputPerMillion: 10,
++          outputPerMillion: 20,
++          cacheReadPerMillion: 1,
++          cacheWritePerMillion: 12.5,
++        }),
++      };
++
++      // 1M total input, 0 cache-read (so the full 1M is treated as
++      // uncached and billed at the input rate), plus 500k cache-write
++      // billed at cacheWritePerMillion.
++      const cost = orchestrator['estimateCost'](
++        { inputTokens: 1_000_000, outputTokens: 0, cacheWriteTokens: 500_000 },
++        provider,
++      );
++      // (1M * 10 + 0 + 500k * 12.5) / 1e6 + 0 = 10 + 6.25 = 16.25
++      expect(cost).toBeCloseTo(16.25);
++    });
++  });
+ });
+diff --git a/packages/chimera-core/src/session-orchestrator.ts b/packages/chimera-core/src/session-orchestrator.ts
+index f9149ef..7b0141b 100644
+--- a/packages/chimera-core/src/session-orchestrator.ts
++++ b/packages/chimera-core/src/session-orchestrator.ts
+@@ -26,8 +26,27 @@ export interface LLMProvider {
+   ): Promise<{
+     content: string;
+     toolCalls?: ToolCall[];
+-    usage: { inputTokens: number; outputTokens: number };
++    usage: {
++      inputTokens: number;
++      outputTokens: number;
++      // Optional prompt-cache token counts, populated by providers that
++      // support caching (Anthropic, OpenAI). Mock providers may omit.
++      cacheReadTokens?: number;
++      cacheWriteTokens?: number;
++    };
+   }>;
++  // Optional pricing surface — concrete providers from
++  // `@chimera/providers` implement these so the orchestrator can
++  // compute provider-truthful cost (including prompt-cache rates).
++  // Mock/test providers may omit them; `estimateCost` falls back to
++  // static rates when they are absent.
++  getCost?: (tokens: { input: number; output: number }) => number;
++  getPricing?: () => {
++    inputPerMillion: number;
++    outputPerMillion: number;
++    cacheReadPerMillion?: number;
++    cacheWritePerMillion?: number;
++  };
+ }
+ 
+ export interface ToolExecutorInterface {
+@@ -302,7 +321,7 @@ export class SessionOrchestrator {
+         tools: toolDefs.length > 0 ? toolDefs : undefined,
+       });
+ 
+-      let draftCost = this.estimateCost(draftResult.usage);
++      let draftCost = this.estimateCost(draftResult.usage, providers.writer);
+       totalCost += draftCost;
+       this.costTracker.recordSpend('writer', draftCost);
+ 
+@@ -323,7 +342,7 @@ export class SessionOrchestrator {
+           tools: toolDefs.length > 0 ? toolDefs : undefined,
+         });
+ 
+-        const iterCost = this.estimateCost(draftResult.usage);
++        const iterCost = this.estimateCost(draftResult.usage, providers.writer);
+         draftCost += iterCost;
+         totalCost += iterCost;
+         this.costTracker.recordSpend('writer', iterCost);
+@@ -366,7 +385,7 @@ export class SessionOrchestrator {
+         responseFormat: 'json_object',
+       });
+ 
+-      const reviewCost = this.estimateCost(reviewResult.usage);
++      const reviewCost = this.estimateCost(reviewResult.usage, providers.reviewer);
+       totalCost += reviewCost;
+       this.costTracker.recordSpend('reviewer', reviewCost);
+ 
+@@ -414,7 +433,7 @@ export class SessionOrchestrator {
+           responseFormat: 'json_object',
+         });
+ 
+-        const challengeCost = this.estimateCost(challengeResult.usage);
++        const challengeCost = this.estimateCost(challengeResult.usage, providers.challenger);
+         totalCost += challengeCost;
+         this.costTracker.recordSpend('challenger', challengeCost);
+ 
+@@ -757,7 +776,55 @@ export class SessionOrchestrator {
+     }
+   }
+ 
+-  private estimateCost(usage: { inputTokens: number; outputTokens: number }): number {
++  private estimateCost(
++    usage: {
++      inputTokens: number;
++      outputTokens: number;
++      cacheReadTokens?: number;
++      cacheWriteTokens?: number;
++    },
++    provider?: {
++      // Optional on the type because the orchestrator's LLMProvider
++      // interface (the only thing it knows about) does not declare
++      // these methods. The concrete providers (Anthropic, OpenAI, etc.)
++      // do expose them at runtime — the function's runtime check
++      // `typeof provider.getCost === 'function'` falls back to the
++      // static rates when they are missing (e.g. MockProvider or
++      // test stubs).
++      getCost?: (tokens: { input: number; output: number }) => number;
++      getPricing?: () => {
++        inputPerMillion: number;
++        outputPerMillion: number;
++        cacheReadPerMillion?: number;
++        cacheWritePerMillion?: number;
++      };
++    },
++  ): number {
++    // Provider-truthful path: use the provider's own pricing table so
++    // prompt-caching and per-model rates are honored. We compute from
++    // `getPricing` rather than `getCost` because `getCost` does not
++    // surface the cache rates. The structural type accepts both
++    // `ModelProvider` (e.g. AnthropicProvider, OpenAICompatibleProvider)
++    // and the `MockProvider` / orchestrator `LLMProvider` used in tests
++    // — when the methods are absent, we fall through to the static
++    // fallback rates.
++    if (provider && typeof provider.getCost === 'function' && typeof provider.getPricing === 'function') {
++      const pricing = provider.getPricing();
++      const cacheReadTokens = usage.cacheReadTokens ?? 0;
++      const cacheWriteTokens = usage.cacheWriteTokens ?? 0;
++      const uncached = Math.max(0, usage.inputTokens - cacheReadTokens);
++
++      const inputCost =
++        (uncached * pricing.inputPerMillion) / 1e6 +
++        (cacheReadTokens * (pricing.cacheReadPerMillion ?? pricing.inputPerMillion)) / 1e6 +
++        (cacheWriteTokens * (pricing.cacheWritePerMillion ?? pricing.inputPerMillion)) / 1e6;
++      const outputCost = (usage.outputTokens * pricing.outputPerMillion) / 1e6;
++      return inputCost + outputCost;
++    }
++
++    // Fallback: static rates that match the original behavior when no
++    // provider hint is available (e.g. MockProvider path or tests that
++    // don't pass a provider).
+     const inputRate = 0.5 / 1_000_000;
+     const outputRate = 1.5 / 1_000_000;
+     return usage.inputTokens * inputRate + usage.outputTokens * outputRate;
+diff --git a/packages/chimera-providers/src/providers/anthropic.ts b/packages/chimera-providers/src/providers/anthropic.ts
+index f1d675f..1e6aaa7 100644
+--- a/packages/chimera-providers/src/providers/anthropic.ts
++++ b/packages/chimera-providers/src/providers/anthropic.ts
+@@ -119,10 +119,25 @@ function parseCompletionResult(body: Record<string, unknown>): CompletionResult
+   }
+ 
+   const usage = body.usage as Record<string, number> | undefined;
+-  const tokenUsage: { inputTokens: number; outputTokens: number } = {
++  const tokenUsage: {
++    inputTokens: number;
++    outputTokens: number;
++    cacheReadTokens?: number;
++    cacheWriteTokens?: number;
++  } = {
+     inputTokens: usage?.input_tokens ?? 0,
+     outputTokens: usage?.output_tokens ?? 0,
+   };
++  // Anthropic reports prompt-cache usage as separate counters on `usage`.
++  // `cache_creation_input_tokens` is cache-write; `cache_read_input_tokens`
++  // is cache-read. Both can coexist in a single response. Only attach
++  // them when present so mock/test bodies without them stay clean.
++  if (usage?.cache_read_input_tokens !== undefined) {
++    tokenUsage.cacheReadTokens = usage.cache_read_input_tokens;
++  }
++  if (usage?.cache_creation_input_tokens !== undefined) {
++    tokenUsage.cacheWriteTokens = usage.cache_creation_input_tokens;
++  }
+ 
+   return {
+     content,
+@@ -149,14 +164,30 @@ function parseStreamChunk(
+   if (type === 'message_delta') {
+     const delta = data.delta as Record<string, unknown> | undefined;
+     const usage = data.usage as Record<string, number> | undefined;
++    if (usage) {
++      const tokenUsage: {
++        inputTokens: number;
++        outputTokens: number;
++        cacheReadTokens?: number;
++        cacheWriteTokens?: number;
++      } = {
++        inputTokens: 0,
++        outputTokens: usage.output_tokens ?? 0,
++      };
++      // Same Anthropic cache-token field names as parseCompletionResult.
++      if (usage.cache_read_input_tokens !== undefined) {
++        tokenUsage.cacheReadTokens = usage.cache_read_input_tokens;
++      }
++      if (usage.cache_creation_input_tokens !== undefined) {
++        tokenUsage.cacheWriteTokens = usage.cache_creation_input_tokens;
++      }
++      return {
++        finishReason: (delta?.stop_reason as string) ?? undefined,
++        usage: tokenUsage,
++      };
++    }
+     return {
+       finishReason: (delta?.stop_reason as string) ?? undefined,
+-      usage: usage
+-        ? {
+-            inputTokens: 0,
+-            outputTokens: usage.output_tokens ?? 0,
+-          }
+-        : undefined,
+     };
+   }
+ 
+diff --git a/packages/chimera-providers/src/providers/openai-compatible.ts b/packages/chimera-providers/src/providers/openai-compatible.ts
+index cb2df81..c028fd6 100644
+--- a/packages/chimera-providers/src/providers/openai-compatible.ts
++++ b/packages/chimera-providers/src/providers/openai-compatible.ts
+@@ -101,11 +101,24 @@ function parseCompletionResult(body: Record<string, unknown>): CompletionResult
+     });
+   }
+ 
+-  const usage = body.usage as Record<string, number> | undefined;
+-  const tokenUsage = {
+-    inputTokens: usage?.prompt_tokens ?? 0,
+-    outputTokens: usage?.completion_tokens ?? 0,
++  const usage = body.usage as Record<string, unknown> | undefined;
++  const tokenUsage: {
++    inputTokens: number;
++    outputTokens: number;
++    cacheReadTokens?: number;
++    cacheWriteTokens?: number;
++  } = {
++    inputTokens: (usage?.prompt_tokens as number) ?? 0,
++    outputTokens: (usage?.completion_tokens as number) ?? 0,
+   };
++  // OpenAI returns cached-input tokens nested under
++  // `usage.prompt_tokens_details.cached_tokens`. We only attach the
++  // cache field when the nested object is present so non-OpenAI
++  // OpenAI-compatible endpoints (which omit it) stay clean.
++  const promptDetails = usage?.prompt_tokens_details as Record<string, number> | undefined;
++  if (promptDetails?.cached_tokens !== undefined) {
++    tokenUsage.cacheReadTokens = promptDetails.cached_tokens;
++  }
+ 
+   return {
+     content,
+@@ -139,13 +152,28 @@ function parseStreamChunk(
+ 
+   const finishReason = (choice.finish_reason as string) ?? undefined;
+ 
+-  const usage = data.usage as Record<string, number> | undefined;
+-  const tokenUsage = usage
+-    ? {
+-        inputTokens: usage.prompt_tokens ?? 0,
+-        outputTokens: usage.completion_tokens ?? 0,
++  const usage = data.usage as Record<string, unknown> | undefined;
++  let tokenUsage:
++    | {
++        inputTokens: number;
++        outputTokens: number;
++        cacheReadTokens?: number;
++        cacheWriteTokens?: number;
+       }
+-    : undefined;
++    | undefined;
++  if (usage) {
++    tokenUsage = {
++      inputTokens: (usage.prompt_tokens as number) ?? 0,
++      outputTokens: (usage.completion_tokens as number) ?? 0,
++    };
++    // Same nested `prompt_tokens_details.cached_tokens` shape as
++    // parseCompletionResult; the `stream_options: { include_usage: true }`
++    // request in `stream()` is what populates this object.
++    const promptDetails = usage.prompt_tokens_details as Record<string, number> | undefined;
++    if (promptDetails?.cached_tokens !== undefined) {
++      tokenUsage.cacheReadTokens = promptDetails.cached_tokens;
++    }
++  }
+ 
+   if (!content && !toolCalls?.length && !finishReason) {
+     return null;

@@ -1,0 +1,23 @@
+# Comprehensive PR Review Workflow
+# Demonstrates: 5 parallel reviewers, one_success trigger rule
+nodes:
+  code-review:
+    type: prompt
+    prompt: Review code for style and logic.
+  error-handling:
+    type: prompt
+    prompt: Review code for error handling and edge cases.
+  test-coverage:
+    type: prompt
+    prompt: Evaluate test coverage for new changes.
+  comment-quality:
+    type: prompt
+    prompt: Assess quality of comments and documentation.
+  docs-impact:
+    type: prompt
+    prompt: Evaluate impact on documentation.
+  synthesize:
+    type: prompt
+    prompt: Synthesize all reviews into a final report.
+    trigger_rule: one_success
+    depends_on: [code-review, error-handling, test-coverage, comment-quality, docs-impact]

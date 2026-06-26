@@ -1,0 +1,124 @@
+--- .merge-patches/session-orchestrator.ts.BASE	2026-06-15 09:01:17.778832900 +0300
++++ .merge-patches/session-orchestrator.ts.D	2026-06-15 09:01:18.100832100 +0300
+@@ -26,8 +26,27 @@
+   ): Promise<{
+     content: string;
+     toolCalls?: ToolCall[];
+-    usage: { inputTokens: number; outputTokens: number };
++    usage: {
++      inputTokens: number;
++      outputTokens: number;
++      // Optional prompt-cache token counts, populated by providers that
++      // support caching (Anthropic, OpenAI). Mock providers may omit.
++      cacheReadTokens?: number;
++      cacheWriteTokens?: number;
++    };
+   }>;
++  // Optional pricing surface — concrete providers from
++  // `@chimera/providers` implement these so the orchestrator can
++  // compute provider-truthful cost (including prompt-cache rates).
++  // Mock/test providers may omit them; `estimateCost` falls back to
++  // static rates when they are absent.
++  getCost?: (tokens: { input: number; output: number }) => number;
++  getPricing?: () => {
++    inputPerMillion: number;
++    outputPerMillion: number;
++    cacheReadPerMillion?: number;
++    cacheWritePerMillion?: number;
++  };
+ }
+ 
+ export interface ToolExecutorInterface {
+@@ -302,7 +321,7 @@
+         tools: toolDefs.length > 0 ? toolDefs : undefined,
+       });
+ 
+-      let draftCost = this.estimateCost(draftResult.usage);
++      let draftCost = this.estimateCost(draftResult.usage, providers.writer);
+       totalCost += draftCost;
+       this.costTracker.recordSpend('writer', draftCost);
+ 
+@@ -323,7 +342,7 @@
+           tools: toolDefs.length > 0 ? toolDefs : undefined,
+         });
+ 
+-        const iterCost = this.estimateCost(draftResult.usage);
++        const iterCost = this.estimateCost(draftResult.usage, providers.writer);
+         draftCost += iterCost;
+         totalCost += iterCost;
+         this.costTracker.recordSpend('writer', iterCost);
+@@ -366,7 +385,7 @@
+         responseFormat: 'json_object',
+       });
+ 
+-      const reviewCost = this.estimateCost(reviewResult.usage);
++      const reviewCost = this.estimateCost(reviewResult.usage, providers.reviewer);
+       totalCost += reviewCost;
+       this.costTracker.recordSpend('reviewer', reviewCost);
+ 
+@@ -414,7 +433,7 @@
+           responseFormat: 'json_object',
+         });
+ 
+-        const challengeCost = this.estimateCost(challengeResult.usage);
++        const challengeCost = this.estimateCost(challengeResult.usage, providers.challenger);
+         totalCost += challengeCost;
+         this.costTracker.recordSpend('challenger', challengeCost);
+ 
+@@ -757,7 +776,55 @@
+     }
+   }
+ 
+-  private estimateCost(usage: { inputTokens: number; outputTokens: number }): number {
++  private estimateCost(
++    usage: {
++      inputTokens: number;
++      outputTokens: number;
++      cacheReadTokens?: number;
++      cacheWriteTokens?: number;
++    },
++    provider?: {
++      // Optional on the type because the orchestrator's LLMProvider
++      // interface (the only thing it knows about) does not declare
++      // these methods. The concrete providers (Anthropic, OpenAI, etc.)
++      // do expose them at runtime — the function's runtime check
++      // `typeof provider.getCost === 'function'` falls back to the
++      // static rates when they are missing (e.g. MockProvider or
++      // test stubs).
++      getCost?: (tokens: { input: number; output: number }) => number;
++      getPricing?: () => {
++        inputPerMillion: number;
++        outputPerMillion: number;
++        cacheReadPerMillion?: number;
++        cacheWritePerMillion?: number;
++      };
++    },
++  ): number {
++    // Provider-truthful path: use the provider's own pricing table so
++    // prompt-caching and per-model rates are honored. We compute from
++    // `getPricing` rather than `getCost` because `getCost` does not
++    // surface the cache rates. The structural type accepts both
++    // `ModelProvider` (e.g. AnthropicProvider, OpenAICompatibleProvider)
++    // and the `MockProvider` / orchestrator `LLMProvider` used in tests
++    // — when the methods are absent, we fall through to the static
++    // fallback rates.
++    if (provider && typeof provider.getCost === 'function' && typeof provider.getPricing === 'function') {
++      const pricing = provider.getPricing();
++      const cacheReadTokens = usage.cacheReadTokens ?? 0;
++      const cacheWriteTokens = usage.cacheWriteTokens ?? 0;
++      const uncached = Math.max(0, usage.inputTokens - cacheReadTokens);
++
++      const inputCost =
++        (uncached * pricing.inputPerMillion) / 1e6 +
++        (cacheReadTokens * (pricing.cacheReadPerMillion ?? pricing.inputPerMillion)) / 1e6 +
++        (cacheWriteTokens * (pricing.cacheWritePerMillion ?? pricing.inputPerMillion)) / 1e6;
++      const outputCost = (usage.outputTokens * pricing.outputPerMillion) / 1e6;
++      return inputCost + outputCost;
++    }
++
++    // Fallback: static rates that match the original behavior when no
++    // provider hint is available (e.g. MockProvider path or tests that
++    // don't pass a provider).
+     const inputRate = 0.5 / 1_000_000;
+     const outputRate = 1.5 / 1_000_000;
+     return usage.inputTokens * inputRate + usage.outputTokens * outputRate;

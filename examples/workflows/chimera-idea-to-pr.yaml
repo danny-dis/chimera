@@ -1,0 +1,38 @@
+# Idea to PR Workflow
+# Demonstrates: 8 phases of a full pipeline
+nodes:
+  plan:
+    type: prompt
+    prompt: Create a plan for the new feature.
+  setup:
+    type: bash
+    command: git checkout -b feature/new-idea
+    depends_on: [plan]
+  confirm:
+    type: approval
+    prompt: Confirm the implementation plan.
+    depends_on: [setup]
+  implement:
+    type: script
+    script: ./scripts/implement-feature.sh
+    depends_on: [confirm]
+  validate:
+    type: bash
+    command: pnpm test
+    depends_on: [implement]
+  finalize:
+    type: script
+    script: ./scripts/finalize-commit.sh
+    depends_on: [validate]
+  review:
+    type: prompt
+    prompt: Perform a comprehensive PR review.
+    depends_on: [finalize]
+  fix:
+    type: prompt
+    prompt: Address review feedback.
+    depends_on: [review]
+  summary:
+    type: prompt
+    prompt: Generate final summary report.
+    depends_on: [fix]

@@ -1,0 +1,22 @@
+{
+  "name": "@chimera/lsp",
+  "version": "0.0.1",
+  "description": "Language Server Protocol service for Chimera",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "test": "vitest",
+    "lint": "eslint src/",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "execa": "^9.0.0",
+    "vscode-jsonrpc": "^8.2.1",
+    "vscode-languageserver-protocol": "^3.17.5",
+    "vscode-uri": "^3.0.8",
+    "yaml": "^2.4.5",
+    "zod": "^3.23.0"
+  }
+}

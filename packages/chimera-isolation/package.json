@@ -1,0 +1,22 @@
+{
+  "name": "@chimera/isolation",
+  "version": "0.0.1",
+  "description": "Worktree-based isolation for parallel agent runs (git worktree, lifecycle, cleanup, error classification)",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "test": "vitest",
+    "lint": "eslint src/",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "zod": "^3.23.0",
+    "@chimera/paths": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "vitest": "^1.2.0"
+  }
+}

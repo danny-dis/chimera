@@ -1,0 +1,295 @@
+--- .merge-patches/session-orchestrator.ts.BASE	2026-06-15 09:01:17.778832900 +0300
++++ .merge-patches/session-orchestrator.ts.C	2026-06-15 09:01:18.020834900 +0300
+@@ -134,6 +134,17 @@
+ 
+ const MAX_TOOL_ITERATIONS = 10;
+ 
++// P0.6 — Tool output truncation caps. Whichever limit is hit first wins.
++const TOOL_OUTPUT_MAX_BYTES = 8 * 1024;
++const TOOL_OUTPUT_MAX_LINES = 200;
++const TOOL_OUTPUT_TRUNCATION_MARKER = '\n\n[... truncated, see event log for full output ...]';
++
++// P0.7 — RelayRacing observation-masking caps, mirrored from
++// @chimera/context. Inlined here to avoid a new package dependency
++// (chimera-core does not depend on @chimera/context).
++const MASK_OUTPUT_LIMIT = 200;
++const MASK_ARGS_LIMIT = 100;
++
+ export class SessionOrchestrator {
+   private state: OrchestratorState = { status: 'idle' };
+   private eventStream: EventStream;
+@@ -145,6 +156,12 @@
+   private toolExecutor: ToolExecutorInterface | null = null;
+   private memory: LongTermMemory | null = null;
+   private _workspaceRoot: string;
++  // P0.7 — relay-racing observation masking. Inlined here (rather than
++  // importing RelayRacing from @chimera/context) because chimera-core
++  // does not depend on @chimera/context. The class is small enough that
++  // mirroring its behavior is cheaper than adding a new package edge.
++  private maskedObservations = new Map<string, Array<{ original: string; masked: string; tokensSaved: number }>>();
++  private maskedTokensSaved = 0;
+ 
+   constructor(
+     eventStream?: EventStream,
+@@ -316,7 +333,15 @@
+ 
+         // Append tool results to messages and re-prompt
+         const toolMessages = this.buildToolResultMessages(writerMessages, draftResult, toolResults);
+-        draftResult = await providers.writer.complete(toolMessages, {
++        // P0.7 — apply relay-racing observation masking before the
++        // next LLM call. This caps tool/function outputs and trims
++        // assistant tool-call signatures so the writer's context window
++        // does not fill up on redundant tool noise. Mirrors the
++        // behavior of @chimera/context's RelayRacing.maskObservations /
++        // RelayRacing.maskToolCalls, but inlined so we don't take on a
++        // new package dependency.
++        const maskedMessages = this.maskRelayObservations(toolMessages, writerId);
++        draftResult = await providers.writer.complete(maskedMessages, {
+           temperature: 0.7,
+           maxTokens: 4096,
+           responseFormat: 'json_object',
+@@ -792,43 +817,55 @@
+       }));
+     }
+ 
+-    const results: Array<{ toolName: string; args: Record<string, unknown>; result: ToolCallResult }> = [];
++    // P0.3 — Run tool calls in parallel. The LLM often emits a batch of
++    // independent read/search tools (e.g. several file reads in one turn)
++    // and serializing them wastes wall time for no benefit.
++    //
++    // TODO: respect isConcurrencySafe from the ToolDefinition. The
++    // chimera-tools package already records this flag (see
++    // packages/chimera-tools/src/tool-builder.ts and TOOL_DEFAULTS).
++    // When the registry exposes isConcurrencySafe on a per-tool basis
++    // (today the ToolRegistryInterface used here only exposes name /
++    // description / parameters), split the batch into a safe (parallel)
++    // group and an unsafe (serial) group. For this sprint the simple
++    // parallel version is acceptable.
++    const sanitized = await Promise.all(
++      toolCalls.map(async (tc) => {
++        this.eventStream.append({
++          type: 'tool_call_requested',
++          call: { tool: tc.name, args: tc.arguments },
++          policy: 'allow',
++        });
+ 
+-    for (const tc of toolCalls) {
+-      this.eventStream.append({
+-        type: 'tool_call_requested',
+-        call: { tool: tc.name, args: tc.arguments },
+-        policy: 'allow',
+-      });
+-
+-      const result = await this.toolExecutor.execute(tc.name, tc.arguments, {
+-        workspaceRoot: this._workspaceRoot,
+-        sessionId: context.sessionId,
+-        eventStream: this.eventStream,
+-      });
+-
+-      // Check tool output for injection attempts
+-      if (result.success && result.data) {
+-        const outputCheck = checkToolOutput(JSON.stringify(result.data), tc.name);
+-        if (!outputCheck.safe && outputCheck.confidence > 0.8) {
+-          result.success = false;
+-          result.error = `Tool output sanitized: potential injection detected (${outputCheck.flags.join(', ')})`;
+-          result.data = undefined;
++        const result = await this.toolExecutor!.execute(tc.name, tc.arguments, {
++          workspaceRoot: this._workspaceRoot,
++          sessionId: context.sessionId,
++          eventStream: this.eventStream,
++        });
++
++        // Check tool output for injection attempts
++        if (result.success && result.data) {
++          const outputCheck = checkToolOutput(JSON.stringify(result.data), tc.name);
++          if (!outputCheck.safe && outputCheck.confidence > 0.8) {
++            result.success = false;
++            result.error = `Tool output sanitized: potential injection detected (${outputCheck.flags.join(', ')})`;
++            result.data = undefined;
++          }
+         }
+-      }
+ 
+-      results.push({
+-        toolName: tc.name,
+-        args: tc.arguments,
+-        result: {
+-          toolCallId: tc.id,
++        return {
+           toolName: tc.name,
+-          result,
+-        },
+-      });
+-    }
++          args: tc.arguments,
++          result: {
++            toolCallId: tc.id,
++            toolName: tc.name,
++            result,
++          },
++        };
++      }),
++    );
+ 
+-    return results;
++    return sanitized;
+   }
+ 
+   private buildToolResultMessages(
+@@ -844,20 +881,148 @@
+       content: llmResponse.content,
+     });
+ 
+-    // Add tool results as user messages
++    // Add tool results as user messages. P0.6 — truncate each tool
++    // result's serialized payload so a single huge tool output can't
++    // blow out the next prompt's context window. The full payload is
++    // still in the event log; this just keeps the prompt bounded.
+     for (const tr of toolResults) {
++      const payload = JSON.stringify({
++        toolCallId: tr.result.toolCallId,
++        toolName: tr.toolName,
++        success: tr.result.result.success,
++        data: tr.result.result.data,
++        error: tr.result.result.error,
++      });
+       messages.push({
+         role: 'tool',
+-        content: JSON.stringify({
+-          toolCallId: tr.result.toolCallId,
+-          toolName: tr.toolName,
+-          success: tr.result.result.success,
+-          data: tr.result.result.data,
+-          error: tr.result.result.error,
+-        }),
++        content: this.truncateToolOutput(payload),
+       });
+     }
+ 
+     return messages;
+   }
++
++  /**
++   * P0.6 — Cap a single tool result's serialized text at
++   * {@link TOOL_OUTPUT_MAX_BYTES} bytes or {@link TOOL_OUTPUT_MAX_LINES}
++   * lines, whichever is hit first. The cap is applied per tool result,
++   * not per message array, so a batch of small results passes through
++   * untouched and only oversized ones are trimmed. Truncated output
++   * gets an explicit marker tail so the model can see that more data
++   * exists in the event log.
++   */
++  private truncateToolOutput(output: string): string {
++    if (output.length <= TOOL_OUTPUT_MAX_BYTES) {
++      // Length is fine; only re-check the line cap.
++      const lineCount = countLines(output);
++      if (lineCount <= TOOL_OUTPUT_MAX_LINES) return output;
++    }
++
++    // Apply the byte cap first.
++    let truncated = output.length > TOOL_OUTPUT_MAX_BYTES
++      ? output.slice(0, TOOL_OUTPUT_MAX_BYTES)
++      : output;
++
++    // Then apply the line cap. We always re-anchor to a whole-line
++    // boundary so we never slice mid-line.
++    const newlineIdx = truncated.indexOf('\n', TOOL_OUTPUT_MAX_LINES);
++    if (newlineIdx !== -1 && countLines(truncated) > TOOL_OUTPUT_MAX_LINES) {
++      truncated = truncated.slice(0, newlineIdx);
++    }
++
++    return `${truncated}${TOOL_OUTPUT_TRUNCATION_MARKER}`;
++  }
++
++  /**
++   * P0.7 — Inlined equivalent of
++   * `@chimera/context` `RelayRacing.maskObservations` +
++   * `RelayRacing.maskToolCalls`. Mask tool/function observations when
++   * they exceed {@link MASK_OUTPUT_LIMIT} and trim long assistant
++   * tool-call signatures when they exceed {@link MASK_ARGS_LIMIT}. For
++   * every message that is shortened, record the savings against the
++   * caller's agentId so the orchestrator can audit how much context
++   * the relay-racing pass is reclaiming.
++   */
++  private maskRelayObservations(
++    messages: Array<{ role: string; content: string }>,
++    agentId: string,
++  ): Array<{ role: string; content: string }> {
++    return messages.map((msg) => {
++      if (msg.role === 'tool' || msg.role === 'function') {
++        // Mirrors RelayRacing.maskObservations: only mask once content
++        // grows past the threshold so a brief tool acknowledgement
++        // is left alone.
++        if (msg.content.length > MASK_OUTPUT_LIMIT + 30) {
++          const masked = `${msg.content.slice(0, MASK_OUTPUT_LIMIT)}... [masked]`;
++          this.trackMaskedObservation(agentId, msg.content, masked);
++          return { ...msg, content: masked };
++        }
++        return msg;
++      }
++
++      if (msg.role === 'assistant') {
++        // Mirrors RelayRacing.maskToolCalls: only act on assistant
++        // messages that actually carry a tool-use signature.
++        const hasToolCalls =
++          msg.content.includes('<tool_use>') ||
++          msg.content.includes('"tool_call"') ||
++          msg.content.includes('function_call');
++        if (!hasToolCalls) return msg;
++
++        const signatureEnd = msg.content.indexOf('\n');
++        if (signatureEnd === -1 || signatureEnd <= MASK_ARGS_LIMIT) return msg;
++
++        const signature = msg.content.slice(0, MASK_ARGS_LIMIT);
++        const masked = `${signature}... [truncated]`;
++        this.trackMaskedObservation(agentId, msg.content, masked);
++        return { ...msg, content: masked };
++      }
++
++      return msg;
++    });
++  }
++
++  /**
++   * P0.7 — Track a single masked observation against an agent. Mirrors
++   * `RelayRacing.trackMaskedObservation` from @chimera/context. The
++   * full per-agent history is available via {@link getMaskedObservations}
++   * for downstream reporting (cost, telemetry, etc.).
++   */
++  private trackMaskedObservation(agentId: string, original: string, masked: string): void {
++    if (!this.maskedObservations.has(agentId)) {
++      this.maskedObservations.set(agentId, []);
++    }
++    this.maskedObservations.get(agentId)!.push({
++      original,
++      masked,
++      tokensSaved: Math.max(0, Math.ceil((original.length - masked.length) / 4)),
++    });
++    this.maskedTokensSaved += Math.max(0, original.length - masked.length);
++  }
++
++  /**
++   * P0.7 — Read-only view of the mask history. Exposed for tests and
++   * for any future telemetry/audit surface that wants to surface
++   * "how much context did relay-racing save this run".
++   */
++  getMaskedObservations(agentId: string): Array<{ original: string; masked: string; tokensSaved: number }> {
++    return this.maskedObservations.get(agentId) ?? [];
++  }
++
++  getMaskedTokensSaved(): number {
++    return this.maskedTokensSaved;
++  }
++}
++
++/**
++ * P0.6 helper — count newlines in `s` without allocating an array.
++ * Pure UTF-16 string scan, O(n) time, O(1) extra memory.
++ */
++function countLines(s: string): number {
++  if (s.length === 0) return 0;
++  let n = 1;
++  for (let i = 0; i < s.length; i++) {
++    if (s.charCodeAt(i) === 10) n++;
++  }
++  return n;
+ }

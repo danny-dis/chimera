@@ -1,0 +1,47 @@
+{
+  "name": "@chimera/cli",
+  "version": "0.0.1",
+  "description": "Chimera CLI — terminal-native parallel multi-agent coding platform",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/danny-dis/chimera.git",
+    "directory": "packages/chimera-cli"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "bin": {
+    "chimera": "./dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "test": "vitest",
+    "lint": "eslint src/",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@chimera/core": "workspace:*",
+    "@chimera/eval": "workspace:*",
+    "@chimera/isolation": "workspace:*",
+    "@chimera/providers": "workspace:*",
+    "@chimera/tools": "workspace:*",
+    "@chimera/session": "workspace:*",
+    "@chimera/learning": "workspace:*",
+    "@chimera/tui": "workspace:*",
+    "commander": "^12.0.0",
+    "pino": "^9.0.0",
+    "yaml": "^2.5.0",
+    "zod": "^3.23.0"
+  }
+}

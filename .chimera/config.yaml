@@ -1,0 +1,18 @@
+providers:
+  - name: gemma-cheap
+    provider: google
+    model: gemma-4-31b-it
+    api_key: ${CHIMERA_CHEAP_API_KEY}
+    role: writer
+  - name: minimax-frontier
+    provider: openai-compatible
+    model: minimaxai/minimax-m3
+    api_key: ${MINIMAX_API_KEY}
+    base_url: https://integrate.api.nvidia.com
+    role: reviewer
+  - name: mistral
+    provider: openai-compatible
+    model: mistral-small-latest
+    api_key: ${MISTRAL_API_KEY}
+    base_url: https://api.mistral.ai
+    role: challenger

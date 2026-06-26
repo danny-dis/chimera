@@ -1,0 +1,28 @@
+{
+  "name": "@chimera/tools",
+  "version": "0.0.1",
+  "description": "Tool registry: filesystem, search, shell, git, patch engine, test runner, LSP, MCP",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "test": "vitest",
+    "lint": "eslint src/",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@chimera/core": "workspace:*",
+    "@chimera/lsp": "workspace:*",
+    "execa": "^9.0.0",
+    "js-yaml": "^4.1.0",
+    "pdf-parse": "^1.1.1",
+    "yaml": "^2.4.0",
+    "zod": "^3.23.0"
+  },
+  "devDependencies": {
+    "@types/js-yaml": "^4.0.0",
+    "@types/node": "^22.0.0",
+    "typescript-language-server": "^5.3.0"
+  }
+}

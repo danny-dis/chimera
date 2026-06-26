@@ -1,0 +1,77 @@
+import React, { useState, useEffect, useCallback } from 'react';
+import { Box, useInput } from 'ink';
+export function Viewport({ items, height, renderItem, focused = false, autoScroll = true, }) {
+    const [scrollOffset, setScrollOffset] = useState(0);
+    const [selectedIndex, setSelectedIndex] = useState(0);
+    // Auto-scroll to bottom when items change
+    useEffect(() => {
+        if (autoScroll && items.length > 0) {
+            const lastIndex = items.length - 1;
+            setSelectedIndex(lastIndex);
+            if (lastIndex >= scrollOffset + height) {
+                setScrollOffset(Math.max(0, lastIndex - height + 1));
+            }
+        }
+    }, [items.length, autoScroll, height]);
+    const scrollUp = useCallback(() => {
+        setSelectedIndex((prev) => {
+            const next = Math.max(0, prev - 1);
+            if (next < scrollOffset) {
+                setScrollOffset(next);
+            }
+            return next;
+        });
+    }, [scrollOffset]);
+    const scrollDown = useCallback(() => {
+        setSelectedIndex((prev) => {
+            const next = Math.min(items.length - 1, prev + 1);
+            if (next >= scrollOffset + height) {
+                setScrollOffset(next - height + 1);
+            }
+            return next;
+        });
+    }, [scrollOffset, height, items.length]);
+    const pageUp = useCallback(() => {
+        setSelectedIndex((prev) => {
+            const next = Math.max(0, prev - height);
+            setScrollOffset((oldOffset) => Math.max(0, oldOffset - height));
+            return next;
+        });
+    }, [height]);
+    const pageDown = useCallback(() => {
+        setSelectedIndex((prev) => {
+            const next = Math.min(items.length - 1, prev + height);
+            setScrollOffset((oldOffset) => Math.min(Math.max(0, items.length - height), oldOffset + height));
+            return next;
+        });
+    }, [height, items.length]);
+    useInput((_input, key) => {
+        if (!focused)
+            return;
+        if (key.upArrow)
+            scrollUp();
+        if (key.downArrow)
+            scrollDown();
+        if (key.pageUp)
+            pageUp();
+        if (key.pageDown)
+            pageDown();
+        // Cast to any for home/end which might not be in the type
+        const k = key;
+        if (k.home) {
+            setSelectedIndex(0);
+            setScrollOffset(0);
+        }
+        if (k.end) {
+            const lastIndex = items.length - 1;
+            setSelectedIndex(lastIndex);
+            setScrollOffset(Math.max(0, lastIndex - height + 1));
+        }
+    });
+    const visibleItems = items.slice(scrollOffset, scrollOffset + height);
+    return (React.createElement(Box, { flexDirection: "column", height: height, overflow: "hidden" }, visibleItems.map((item, index) => {
+        const actualIndex = scrollOffset + index;
+        return (React.createElement(Box, { key: actualIndex }, renderItem(item, actualIndex, actualIndex === selectedIndex)));
+    })));
+}
+//# sourceMappingURL=viewport.js.map

@@ -1,0 +1,161 @@
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { SubAgentSpawner } from '../sub-agent-spawner.js';
+import { EventStream } from '../../event-stream.js';
+import { WorktreeIsolation } from '../../agent/worktree-isolation.js';
+import type { LLMProvider } from '../../session-orchestrator.js';
+
+vi.mock('../../agent/worktree-isolation.js');
+
+describe('SubAgentSpawner with Isolation', () => {
+  let eventStream: EventStream;
+  let spawner: SubAgentSpawner;
+
+  beforeEach(() => {
+    vi.resetAllMocks();
+    eventStream = new EventStream();
+  });
+
+  it('uses isolated worktree when requested', async () => {
+    const mockWorktree = {
+      worktreePath: '/mock/wt',
+      branch: 'agent-branch',
+      headCommit: 'abc',
+      gitRoot: '/mock/root',
+    };
+
+    (WorktreeIsolation as any).prototype.createIsolatedWorktree.mockResolvedValue(mockWorktree);
+    (WorktreeIsolation as any).prototype.mergeBranch.mockResolvedValue({ success: true });
+    (WorktreeIsolation as any).prototype.cleanupWorktree.mockResolvedValue(undefined);
+
+    const provider: LLMProvider = {
+      async complete() {
+        return {
+          content: 'Done',
+          usage: { inputTokens: 10, outputTokens: 10 },
+        };
+      },
+    };
+
+    spawner = new SubAgentSpawner(eventStream, { useIsolation: true });
+
+    const results = await spawner.executeAll([
+      {
+        id: 'task-1',
+        description: 'Test task',
+        dependencies: [],
+        context: '',
+        provider,
+        estimatedTokens: 100,
+        needsIsolation: true,
+      },
+    ]);
+
+    expect(results[0].status).toBe('success');
+    expect(results[0].worktree).toEqual(mockWorktree);
+    expect(WorktreeIsolation.prototype.createIsolatedWorktree).toHaveBeenCalledWith('task-1');
+    expect(WorktreeIsolation.prototype.mergeBranch).toHaveBeenCalled();
+  });
+
+  it('reports merge conflicts as errors', async () => {
+    const mockWorktree = {
+      worktreePath: '/mock/wt',
+      branch: 'agent-branch',
+      headCommit: 'abc',
+      gitRoot: '/mock/root',
+    };
+
+    (WorktreeIsolation as any).prototype.createIsolatedWorktree.mockResolvedValue(mockWorktree);
+    (WorktreeIsolation as any).prototype.mergeBranch.mockResolvedValue({ 
+      success: false, 
+      conflict: 'CONFLICT (content): Merge conflict in file.txt' 
+    });
+
+    const provider: LLMProvider = {
+      async complete() {
+        return {
+          content: 'Done',
+          usage: { inputTokens: 10, outputTokens: 10 },
+        };
+      },
+    };
+
+    spawner = new SubAgentSpawner(eventStream, { useIsolation: true });
+
+    const results = await spawner.executeAll([
+      {
+        id: 'task-1',
+        description: 'Test task',
+        dependencies: [],
+        context: '',
+        provider,
+        estimatedTokens: 100,
+        needsIsolation: true,
+      },
+    ]);
+
+    expect(results[0].status).toBe('error');
+    expect(results[0].error).toContain('Merge conflict');
+  });
+
+  it('executes tools in the worktree path', async () => {
+    const mockWorktree = {
+      worktreePath: '/mock/wt',
+      branch: 'agent-branch',
+      headCommit: 'abc',
+      gitRoot: '/mock/root',
+    };
+
+    (WorktreeIsolation as any).prototype.createIsolatedWorktree.mockResolvedValue(mockWorktree);
+    (WorktreeIsolation as any).prototype.mergeBranch.mockResolvedValue({ success: true });
+
+    const toolExecutor = {
+      execute: vi.fn().mockResolvedValue({ success: true, data: { ok: true }, duration: 10 }),
+    };
+    const toolRegistry = {
+      getAll: vi.fn().mockReturnValue([]),
+      has: vi.fn().mockReturnValue(true),
+      validateParams: vi.fn().mockReturnValue({ valid: true }),
+    };
+
+    const provider: LLMProvider = {
+      async complete(messages) {
+        // First call returns a tool call
+        if (messages.length === 2) {
+          return {
+            content: 'I need to use a tool',
+            toolCalls: [{ id: 'tc-1', name: 'test_tool', arguments: {} }],
+            usage: { inputTokens: 10, outputTokens: 10 },
+          };
+        }
+        // Second call returns final answer
+        return {
+          content: 'Tool used successfully',
+          usage: { inputTokens: 10, outputTokens: 10 },
+        };
+      },
+    };
+
+    spawner = new SubAgentSpawner(eventStream, { useIsolation: true }, {
+      registry: toolRegistry as any,
+      executor: toolExecutor as any,
+    });
+
+    await spawner.executeAll([
+      {
+        id: 'task-1',
+        description: 'Test task',
+        dependencies: [],
+        context: '',
+        provider,
+        estimatedTokens: 100,
+        needsIsolation: true,
+      },
+    ]);
+
+    expect(toolExecutor.execute).toHaveBeenCalledWith(
+      'test_tool',
+      {},
+      expect.objectContaining({ workspaceRoot: '/mock/wt' })
+    );
+  });
+});

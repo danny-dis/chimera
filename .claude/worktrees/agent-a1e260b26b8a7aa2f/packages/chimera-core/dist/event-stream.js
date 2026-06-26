@@ -1,0 +1,53 @@
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.EventStream = void 0;
+/**
+ * Immutable, append-only event stream for all agent actions.
+ * Enables replay, debugging, audit, and handoff state transfer.
+ * Pattern inspired by OpenHands' event-stream architecture.
+ */
+class EventStream {
+    events = [];
+    // One Set of listeners per event type. '*' is the wildcard subscription.
+    listeners = new Map();
+    append(event) {
+        this.events.push(event);
+        this.notify(event);
+    }
+    getAll() {
+        return this.events;
+    }
+    getByType(type) {
+        return this.events.filter((e) => e.type === type);
+    }
+    replay(fromIndex = 0) {
+        return this.events.slice(fromIndex);
+    }
+    subscribe(type, listener) {
+        let bucket = this.listeners.get(type);
+        if (!bucket) {
+            bucket = new Set();
+            this.listeners.set(type, bucket);
+        }
+        bucket.add(listener);
+        return () => {
+            bucket?.delete(listener);
+        };
+    }
+    notify(event) {
+        const exact = this.listeners.get(event.type);
+        if (exact) {
+            for (const listener of exact) {
+                listener(event);
+            }
+        }
+        const wildcards = this.listeners.get('*');
+        if (wildcards) {
+            for (const listener of wildcards) {
+                listener(event);
+            }
+        }
+    }
+}
+exports.EventStream = EventStream;
+//# sourceMappingURL=event-stream.js.map

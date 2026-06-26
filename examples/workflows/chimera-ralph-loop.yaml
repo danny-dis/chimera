@@ -1,0 +1,14 @@
+# Ralph Loop Workflow
+# Demonstrates: loopNode with fresh_context, and output reference
+nodes:
+  validate-prd:
+    type: prompt
+    prompt: Validate the product requirements document.
+  loop-node:
+    type: loop
+    loop:
+      prompt: Improve implementation based on ${validate-prd.output}
+      until: COMPLETE
+      max_iterations: 15
+      fresh_context: true
+    depends_on: [validate-prd]

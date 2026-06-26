@@ -1,0 +1,7 @@
+export const TOOL_RESULT_MAX_LINES = 2000;
+export const TOOL_RESULT_MAX_BYTES = 50_000;
+export const MICROCOMPACT_TOKEN_THRESHOLD = 0.50;
+export const AUTOCOMPACT_TOKEN_THRESHOLD = 0.80;
+export const REACTIVE_COMPACT_AT = 0.95;
+export const SNIP_MAX_CHARS = 2000;
+export const SNIP_MAX_LINES = 200;

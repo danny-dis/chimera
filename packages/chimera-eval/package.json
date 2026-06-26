@@ -1,0 +1,17 @@
+{
+  "name": "@chimera/eval",
+  "version": "0.0.1",
+  "description": "Evaluation harness: trajectory replay, SWE-bench adapters, cost/quality metrics",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "test": "vitest",
+    "lint": "eslint src/",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@chimera/providers": "workspace:*"
+  }
+}

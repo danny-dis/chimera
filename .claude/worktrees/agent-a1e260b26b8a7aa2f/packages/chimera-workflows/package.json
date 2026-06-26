@@ -1,0 +1,21 @@
+{
+  "name": "@chimera/workflows",
+  "version": "0.0.1",
+  "description": "DAG-based workflow engine: node schemas, executor, discovery, loop/approval gates",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "test": "vitest",
+    "lint": "eslint src/",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "zod": "^3.23.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "vitest": "^1.2.0"
+  }
+}

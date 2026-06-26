@@ -1,0 +1,174 @@
+{
+  "name": "chimera-vscode",
+  "displayName": "Chimera AI",
+  "description": "Parallel multi-agent coding assistant — frontier quality at cheap-model pricing",
+  "version": "0.0.1",
+  "private": true,
+  "publisher": "chimera-ai",
+  "license": "MIT",
+  "icon": "media/icon.png",
+  "engines": {
+    "vscode": "^1.92.0"
+  },
+  "categories": [
+    "Chat",
+    "Programming Languages",
+    "Machine Learning",
+    "Other"
+  ],
+  "keywords": [
+    "ai",
+    "agent",
+    "coding",
+    "multi-agent",
+    "parallel",
+    "code review",
+    "chimera"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "chimera.ask",
+        "title": "Chimera: Ask a Question"
+      },
+      {
+        "command": "chimera.code",
+        "title": "Chimera: Start Code Session"
+      },
+      {
+        "command": "chimera.plan",
+        "title": "Chimera: Plan Implementation"
+      },
+      {
+        "command": "chimera.review",
+        "title": "Chimera: Review Selection"
+      },
+      {
+        "command": "chimera.debug",
+        "title": "Chimera: Debug Task"
+      },
+      {
+        "command": "chimera.explain",
+        "title": "Chimera: Explain Selection"
+      },
+      {
+        "command": "chimera.fix",
+        "title": "Chimera: Fix This"
+      },
+      {
+        "command": "chimera.openChat",
+        "title": "Chimera: Open Chat Panel"
+      },
+      {
+        "command": "chimera.toggleAgentDashboard",
+        "title": "Chimera: Toggle Agent Dashboard"
+      },
+      {
+        "command": "chimera.showCost",
+        "title": "Chimera: Show Cost Report"
+      },
+      {
+        "command": "chimera.setupConfig",
+        "title": "Chimera: Setup Configuration"
+      },
+      {
+        "command": "chimera.startDaemon",
+        "title": "Chimera: Start Daemon"
+      },
+      {
+        "command": "chimera.stopDaemon",
+        "title": "Chimera: Stop Daemon"
+      },
+      {
+        "command": "chimera.restartDaemon",
+        "title": "Chimera: Restart Daemon"
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "chimera.ask",
+        "key": "ctrl+shift+i",
+        "mac": "cmd+shift+i",
+        "when": "editorFocus"
+      },
+      {
+        "command": "chimera.openChat",
+        "key": "ctrl+shift+alt+i",
+        "mac": "cmd+shift+opt+i",
+        "when": "editorFocus"
+      }
+    ],
+    "menus": {
+      "editor/context": [
+        {
+          "command": "chimera.explain",
+          "group": "chimera@1",
+          "when": "editorHasSelection"
+        },
+        {
+          "command": "chimera.fix",
+          "group": "chimera@2",
+          "when": "editorHasSelection"
+        },
+        {
+          "command": "chimera.review",
+          "group": "chimera@3",
+          "when": "editorHasSelection"
+        }
+      ],
+      "explorer/context": [
+        {
+          "command": "chimera.code",
+          "group": "chimera@1",
+          "when": "explorerResourceIsFolder"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "Chimera",
+      "properties": {
+        "chimera.daemonPath": {
+          "type": "string",
+          "default": "",
+          "description": "Path to chimera-daemon binary. Leave empty to use the built-in daemon."
+        },
+        "chimera.autoStartDaemon": {
+          "type": "boolean",
+          "default": true,
+          "description": "Automatically start the chimera daemon when VS Code opens a workspace."
+        },
+        "chimera.maxOutputLines": {
+          "type": "number",
+          "default": 500,
+          "description": "Maximum output lines to keep in chat history."
+        },
+        "chimera.chatFontSize": {
+          "type": "number",
+          "default": 14,
+          "description": "Font size for chat panel."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run esbuild-base -- --minify",
+    "esbuild-base": "esbuild ./src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --format=cjs --platform=node",
+    "build": "npm run esbuild-base -- --sourcemap",
+    "dev": "npm run esbuild-base -- --sourcemap --watch",
+    "test": "vitest --passWithNoTests",
+    "lint": "eslint src/",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "@types/vscode": "^1.92.0",
+    "@types/node": "^22.0.0",
+    "esbuild": "^0.24.0",
+    "typescript": "^5.5.0",
+    "vitest": "^1.2.0"
+  }
+}

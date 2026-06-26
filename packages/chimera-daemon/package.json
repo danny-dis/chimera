@@ -1,0 +1,30 @@
+{
+  "name": "@chimera/daemon",
+  "version": "0.0.1",
+  "private": true,
+  "description": "Chimera daemon process — JSON-RPC stdio server wrapping the core orchestrator",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "bin": {
+    "chimera-daemon": "./dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "test": "vitest",
+    "lint": "eslint src/",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@chimera/core": "workspace:*",
+    "@chimera/providers": "workspace:*",
+    "yaml": "^2.5.0",
+    "zod": "^3.23.0",
+    "pino": "^9.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "vitest": "^1.2.0",
+    "typescript": "^5.5.0"
+  }
+}
