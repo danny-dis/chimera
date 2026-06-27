@@ -22,6 +22,12 @@ interface McpTool {
   inputSchema: Record<string, unknown>;
 }
 
+export interface McpResource {
+  uri: string;
+  name: string;
+  mimeType?: string;
+}
+
 interface McpMessage {
   jsonrpc: '2.0';
   id?: number;
@@ -43,6 +49,7 @@ export class McpClient {
     reject: (reason: Error) => void;
   }>();
   private tools: McpTool[] = [];
+  private resources: McpResource[] = [];
   private connected = false;
 
   constructor(server: McpServerConfig) {
@@ -112,8 +119,15 @@ export class McpClient {
         // Send initialized notification
         this.sendNotification('notifications/initialized', {});
         // List tools
-        const result = await this.sendRequest('tools/list', {}) as { tools?: McpTool[] };
-        this.tools = result.tools ?? [];
+        const toolsResult = await this.sendRequest('tools/list', {}) as { tools?: McpTool[] };
+        this.tools = toolsResult.tools ?? [];
+        // List resources (if server supports it)
+        try {
+          const resResult = await this.sendRequest('resources/list', {}) as { resources?: McpResource[] };
+          this.resources = resResult.resources ?? [];
+        } catch {
+          // Server may not support resources — not an error
+        }
         this.connected = true;
         resolve();
       }).catch(reject);
@@ -132,6 +146,17 @@ export class McpClient {
    */
   getTools(): McpTool[] {
     return [...this.tools];
+  }
+
+  getResources(): McpResource[] {
+    return [...this.resources];
+  }
+
+  async readResource(uri: string): Promise<unknown> {
+    if (!this.connected) {
+      throw new Error(`Not connected to MCP server "${this.server.name}"`);
+    }
+    return this.sendRequest('resources/read', { uri });
   }
 
   /**

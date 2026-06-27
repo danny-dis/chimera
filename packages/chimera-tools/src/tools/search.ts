@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { execa } from 'execa';
 import path from 'path';
+import { readdir } from 'fs/promises';
 import type { ToolDefinition, ToolContext } from '../tool-schema.js';
 import { SearchMatchSchema, MAX_OUTPUT_SIZE } from '../tool-schema.js';
 
@@ -22,14 +23,9 @@ const SearchFilesReturnsSchema = z.object({
 });
 
 async function findRgPath(): Promise<string | null> {
-  // Probe for `rg` on PATH. Return the bare command name so the calling
-  // execa() can resolve it via the OS PATH itself — the absolute path that
-  // `which` prints is Git-Bash style (`/c/Users/...`) on Windows, which
-  // Node's spawn() cannot execute and which would surface as
-  // "The system cannot find the path specified" with exit code 1.
   try {
-    const result = await execa('which', ['rg'], { reject: false });
-    return result.exitCode === 0 && result.stdout.trim() ? 'rg' : null;
+    const result = await execa('rg', ['--version'], { reject: false, timeout: 3000 });
+    return result.exitCode === 0 ? 'rg' : null;
   } catch {
     return null;
   }
@@ -52,7 +48,8 @@ export const searchFilesTool: ToolDefinition<typeof SearchFilesParamsSchema, typ
       : context.workspaceRoot;
 
     const rgPath = await findRgPath();
-    const command = rgPath ?? 'grep';
+    const isWindows = process.platform === 'win32';
+    const command = rgPath ?? (isWindows ? 'findstr' : 'grep');
 
     const args: string[] = [];
 
@@ -80,8 +77,13 @@ export const searchFilesTool: ToolDefinition<typeof SearchFilesParamsSchema, typ
         }
       }
       args.push('--', params.pattern, searchPath);
+    } else if (isWindows) {
+      // Windows fallback: findstr /s /n
+      args.push('/s', '/n');
+      if (!params.caseSensitive) args.push('/i');
+      args.push(params.pattern, path.join(searchPath, '*'));
     } else {
-      // Fallback to grep
+      // Unix fallback: grep
       args.push('-rn');
       if (params.caseSensitive) {
         args.push('--fixed-strings');
@@ -139,18 +141,32 @@ export const searchFilesTool: ToolDefinition<typeof SearchFilesParamsSchema, typ
         }
       }
     } else {
-      // Parse grep output: file:line:column:match
+      // Parse grep/findstr output: file:line:column:match or findstr format
       const lines = stdout.split('\n').filter(Boolean);
       for (const line of lines) {
-        const match = line.match(/^(.+?):(\d+):(\d+):(.*)$/);
-        if (match) {
-          const filePath = path.relative(context.workspaceRoot, match[1]);
+        // Try standard grep format: file:line:column:match
+        const grepMatch = line.match(/^(.+?):(\d+):(\d+):(.*)$/);
+        if (grepMatch) {
+          const filePath = path.relative(context.workspaceRoot, grepMatch[1]);
           filesSearched.add(filePath);
           matches.push({
             file: filePath,
-            line: parseInt(match[2], 10),
-            column: parseInt(match[3], 10),
-            match: match[4].trim(),
+            line: parseInt(grepMatch[2], 10),
+            column: parseInt(grepMatch[3], 10),
+            match: grepMatch[4].trim(),
+          });
+          continue;
+        }
+        // Try findstr format: file:line:match (no column)
+        const findstrMatch = line.match(/^(.+?):(\d+):(.*)$/);
+        if (findstrMatch) {
+          const filePath = path.relative(context.workspaceRoot, findstrMatch[1]);
+          filesSearched.add(filePath);
+          matches.push({
+            file: filePath,
+            line: parseInt(findstrMatch[2], 10),
+            column: 0,
+            match: findstrMatch[3].trim(),
           });
         }
       }
@@ -190,12 +206,11 @@ export const globFilesTool: ToolDefinition<typeof GlobFilesParamsSchema, typeof 
       : context.workspaceRoot;
 
     const rgPath = await findRgPath();
-    const command = rgPath ?? 'find';
 
-    let stdout = '';
+    let files: string[] = [];
 
-    try {
-      if (command.endsWith('rg')) {
+    if (rgPath) {
+      try {
         const result = await execa('rg', [
           '--files',
           '--glob', params.pattern,
@@ -206,28 +221,43 @@ export const globFilesTool: ToolDefinition<typeof GlobFilesParamsSchema, typeof 
           maxBuffer: MAX_OUTPUT_SIZE,
           reject: false,
         });
-        stdout = result.stdout;
-      } else {
-        // Fallback: use find with -name
-        const result = await execa('find', [
-          searchPath,
-          '-name', params.pattern,
-        ], {
-          timeout: 15_000,
-          maxBuffer: MAX_OUTPUT_SIZE,
-          reject: false,
-        });
-        stdout = result.stdout;
+        files = result.stdout
+          .split('\n')
+          .filter(Boolean)
+          .map((f) => path.relative(context.workspaceRoot, f));
+      } catch {
+        files = [];
       }
-    } catch {
-      return { files: [], count: 0 };
-    }
+    } else {
+      // Cross-platform fallback: recursive readdir with simple glob matching
+      const pattern = params.pattern;
+      const regex = new RegExp(
+        '^' +
+          pattern
+            .replace(/[.+^${}()|[\]\\]/g, '\\$&')
+            .replace(/\*/g, '.*')
+            .replace(/\?/g, '.') +
+          '$'
+      );
 
-    const files = stdout
-      .split('\n')
-      .filter(Boolean)
-      .map((f) => path.relative(context.workspaceRoot, f))
-      .slice(0, 500);
+      async function walk(dir: string): Promise<string[]> {
+        const results: string[] = [];
+        try {
+          const entries = await readdir(dir, { withFileTypes: true });
+          for (const entry of entries) {
+            const fullPath = path.join(dir, entry.name);
+            if (entry.isDirectory()) {
+              results.push(...await walk(fullPath));
+            } else if (entry.isFile() && regex.test(entry.name)) {
+              results.push(path.relative(context.workspaceRoot, fullPath));
+            }
+          }
+        } catch { /* skip inaccessible dirs */ }
+        return results;
+      }
+
+      files = (await walk(searchPath)).slice(0, 500);
+    }
 
     return { files, count: files.length };
   },

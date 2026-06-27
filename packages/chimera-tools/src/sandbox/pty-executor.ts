@@ -38,14 +38,20 @@ export class PTYExecutor {
     });
 
     const resolvedCwd = path.resolve(validated.cwd);
-    if (!resolvedCwd.startsWith(this.workspaceRoot)) {
+    const normalizedCwd = resolvedCwd.replace(/[/\\]$/, '');
+    const normalizedRoot = this.workspaceRoot.replace(/[/\\]$/, '');
+    if (!normalizedCwd.startsWith(normalizedRoot) && normalizedCwd !== normalizedRoot) {
       throw new Error(`Working directory ${resolvedCwd} is outside workspace ${this.workspaceRoot}`);
     }
 
     const maxOutputBytes = validated.maxOutputBytes ?? 10 * 1024 * 1024;
     const startTime = Date.now();
 
-    this.currentProcess = execa('bash', ['-c', validated.command], {
+    const isWin = process.platform === 'win32';
+    const shell = isWin ? 'cmd.exe' : 'bash';
+    const shellArgs = isWin ? ['/c', validated.command] : ['-c', validated.command];
+
+    this.currentProcess = execa(shell, shellArgs, {
       cwd: resolvedCwd,
       timeout: validated.timeout,
       env: validated.env,

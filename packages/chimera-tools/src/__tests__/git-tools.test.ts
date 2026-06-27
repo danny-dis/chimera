@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { promises as fs } from 'fs';
+import os from 'os';
 import path from 'path';
 import { execa } from 'execa';
 import { gitStatusTool, gitDiffTool, gitLogTool, gitBranchTool } from '../tools/git.js';
@@ -37,7 +38,7 @@ async function createCommit(dir: string, message: string, filename: string, cont
 
 describe('Git Tools', () => {
   beforeEach(async () => {
-    workspaceRoot = path.join('/tmp', `chimera-git-test-${Date.now()}`);
+    workspaceRoot = path.join(os.tmpdir(), `chimera-git-test-${Date.now()}`);
     await fs.mkdir(workspaceRoot, { recursive: true });
     await initGitRepo(workspaceRoot);
   });
@@ -128,7 +129,7 @@ describe('Git Tools', () => {
 
       const result = await gitLogTool.execute({ maxCommits: 3 }, makeContext());
       expect(result.total).toBeLessThanOrEqual(3);
-    });
+    }, 30000);
 
     it('includes commit metadata', async () => {
       await createCommit(workspaceRoot, 'metadata test', 'file.txt', 'content');

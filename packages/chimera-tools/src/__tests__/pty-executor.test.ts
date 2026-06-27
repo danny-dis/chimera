@@ -1,52 +1,57 @@
 import { describe, it, expect } from 'vitest';
+import os from 'os';
+import path from 'path';
 import { PTYExecutor } from '../sandbox/pty-executor.js';
+
+const isWin = process.platform === 'win32';
+const tmpDir = os.tmpdir();
 
 describe('PTYExecutor', () => {
   describe('command execution', () => {
     it('executes simple commands', async () => {
       const executor = new PTYExecutor({
-        workspaceRoot: '/tmp',
+        workspaceRoot: tmpDir,
         defaultTimeout: 5000,
       });
 
       const result = await executor.execute({
-        command: 'echo hello',
-        cwd: '/tmp',
+        command: isWin ? 'echo hello' : 'echo hello',
+        cwd: tmpDir,
         timeout: 5000,
         env: {},
       });
 
-      expect(result.stdout).toBe('hello');
+      expect(result.stdout.trim()).toBe('hello');
       expect(result.exitCode).toBe(0);
       expect(result.duration).toBeGreaterThanOrEqual(0);
     });
 
     it('captures stderr', async () => {
       const executor = new PTYExecutor({
-        workspaceRoot: '/tmp',
+        workspaceRoot: tmpDir,
         defaultTimeout: 5000,
       });
 
       const result = await executor.execute({
-        command: 'echo error >&2',
-        cwd: '/tmp',
+        command: isWin ? 'node -e "process.stderr.write(\'error\')"' : 'echo error >&2',
+        cwd: tmpDir,
         timeout: 5000,
         env: {},
       });
 
-      expect(result.stderr).toBe('error');
+      expect(result.stderr.trim()).toBe('error');
       expect(result.exitCode).toBe(0);
     });
 
     it('returns non-zero exit code', async () => {
       const executor = new PTYExecutor({
-        workspaceRoot: '/tmp',
+        workspaceRoot: tmpDir,
         defaultTimeout: 5000,
       });
 
       const result = await executor.execute({
-        command: 'exit 42',
-        cwd: '/tmp',
+        command: isWin ? 'exit /b 42' : 'exit 42',
+        cwd: tmpDir,
         timeout: 5000,
         env: {},
       });
@@ -58,13 +63,13 @@ describe('PTYExecutor', () => {
   describe('timeout enforcement', () => {
     it('kills process after timeout', async () => {
       const executor = new PTYExecutor({
-        workspaceRoot: '/tmp',
+        workspaceRoot: tmpDir,
         defaultTimeout: 100,
       });
 
       const result = await executor.execute({
-        command: 'sleep 10',
-        cwd: '/tmp',
+        command: isWin ? 'node -e "setTimeout(()=>{},10000)"' : 'sleep 10',
+        cwd: tmpDir,
         timeout: 100,
         env: {},
       });
@@ -76,17 +81,13 @@ describe('PTYExecutor', () => {
   describe('output truncation', () => {
     it('truncates large output', async () => {
       const executor = new PTYExecutor({
-        workspaceRoot: '/tmp',
+        workspaceRoot: tmpDir,
         defaultTimeout: 5000,
       });
 
-      // Generate 5000 bytes of output to exceed maxOutputBytes. Use `node -e`
-      // because Python is not guaranteed to be on PATH on this machine
-      // (Windows shims make `python3` exit with no stdout), and the test
-      // harness itself runs on Node, so it is always available.
       const result = await executor.execute({
         command: `node -e "process.stdout.write('a'.repeat(5000))"`,
-        cwd: '/tmp',
+        cwd: tmpDir,
         timeout: 5000,
         env: {},
         maxOutputBytes: 1000,
@@ -99,14 +100,16 @@ describe('PTYExecutor', () => {
   describe('working directory enforcement', () => {
     it('rejects cwd outside workspace', async () => {
       const executor = new PTYExecutor({
-        workspaceRoot: '/tmp/workspace',
+        workspaceRoot: path.join(tmpDir, 'workspace'),
         defaultTimeout: 5000,
       });
+
+      const outsideDir = isWin ? 'C:\\Windows\\Temp\\outside' : '/tmp/outside';
 
       await expect(
         executor.execute({
           command: 'echo test',
-          cwd: '/tmp/outside',
+          cwd: outsideDir,
           timeout: 5000,
           env: {},
         }),
@@ -117,31 +120,33 @@ describe('PTYExecutor', () => {
   describe('environment variables', () => {
     it('passes environment variables', async () => {
       const executor = new PTYExecutor({
-        workspaceRoot: '/tmp',
+        workspaceRoot: tmpDir,
         defaultTimeout: 5000,
       });
 
       const result = await executor.execute({
-        command: 'echo $MY_TEST_VAR',
-        cwd: '/tmp',
+        command: isWin
+          ? 'node -e "process.stdout.write(process.env.MY_TEST_VAR || \'\')"'
+          : 'echo $MY_TEST_VAR',
+        cwd: tmpDir,
         timeout: 5000,
         env: { MY_TEST_VAR: 'test_value' },
       });
 
-      expect(result.stdout).toBe('test_value');
+      expect(result.stdout.trim()).toBe('test_value');
     });
   });
 
   describe('kill', () => {
     it('kills running process', async () => {
       const executor = new PTYExecutor({
-        workspaceRoot: '/tmp',
+        workspaceRoot: tmpDir,
         defaultTimeout: 5000,
       });
 
       const promise = executor.execute({
-        command: 'sleep 10',
-        cwd: '/tmp',
+        command: isWin ? 'node -e "setTimeout(()=>{},10000)"' : 'sleep 10',
+        cwd: tmpDir,
         timeout: 10000,
         env: {},
       });
