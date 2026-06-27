@@ -683,17 +683,26 @@ function buildMessages(params) {
     const template = exports.AGENT_PROMPTS[params.role];
     const modeInstructions = template.mode[params.mode] ?? '';
     const modeFormatting = exports.MODE_INSTRUCTIONS[params.mode] ?? '';
+    const systemMessage = {
+        role: 'system',
+        content: exports.CHIMERA_CORE_IDENTITY +
+            '\n\n---\n\n' +
+            template.system +
+            '\n\n---\n\n' +
+            modeInstructions +
+            '\n\n---\n\n' +
+            modeFormatting,
+    };
+    if (params.cacheControl) {
+        // Append a cache_control marker to the system content block so the
+        // provider wrapper can promote it to a prompt-cache breakpoint.
+        systemMessage.cache_control = {
+            type: params.cacheControl.type,
+            ttl: params.cacheControl.ttl ?? '5m',
+        };
+    }
     const messages = [
-        {
-            role: 'system',
-            content: exports.CHIMERA_CORE_IDENTITY +
-                '\n\n---\n\n' +
-                template.system +
-                '\n\n---\n\n' +
-                modeInstructions +
-                '\n\n---\n\n' +
-                modeFormatting,
-        },
+        systemMessage,
     ];
     if (params.context) {
         messages.push({

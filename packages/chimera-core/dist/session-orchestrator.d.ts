@@ -27,14 +27,38 @@ export interface LLMProvider {
             description: string;
             parameters: Record<string, unknown>;
         }>;
+        /**
+         * AbortSignal for cancellation. Providers that don't natively support
+         * signals should treat this as advisory (ignore if undefined). Node
+         * 20.3+ and Node 22+ expose AbortSignal.any/timeout on the global;
+         * the orchestrator guards for these and falls back to a manual
+         * composition on older runtimes.
+         */
+        signal?: AbortSignal;
+        cacheControl?: {
+            type: 'ephemeral';
+            ttl?: '5m' | '1h';
+        };
     }): Promise<{
         content: string;
         toolCalls?: ToolCall[];
         usage: {
             inputTokens: number;
             outputTokens: number;
+            cacheReadTokens?: number;
+            cacheWriteTokens?: number;
         };
     }>;
+    getCost?: (tokens: {
+        input: number;
+        output: number;
+    }) => number;
+    getPricing?: () => {
+        inputPerMillion: number;
+        outputPerMillion: number;
+        cacheReadPerMillion?: number;
+        cacheWritePerMillion?: number;
+    };
 }
 export interface ToolExecutorInterface {
     execute(toolName: string, params: Record<string, unknown>, context: {
@@ -42,6 +66,12 @@ export interface ToolExecutorInterface {
         sessionId: string;
         eventStream: EventStream;
         skillPaths?: string[];
+        /**
+         * Forwarded by the orchestrator from its execute()-scoped
+         * AbortController so long-running tools can be cancelled in tandem
+         * with their parent LLM call.
+         */
+        signal?: AbortSignal;
     }): Promise<{
         success: boolean;
         data?: Record<string, unknown>;
@@ -67,6 +97,17 @@ export interface AgentOutput {
     provider: string;
     model: string;
     tokensUsed: number;
+    /**
+     * Structured review findings, if any. The synthesizer can use
+     * these to surface high-severity reviewer issues as a quality
+     * advisory appended to the user-facing reply. Optional because
+     * not every agent emits findings (e.g., the writer).
+     */
+    issues?: Array<{
+        description: string;
+        severity: 'high' | 'med' | 'low';
+        evidence: string;
+    }>;
 }
 export interface OrchestratorResult {
     status: 'done' | 'blocked' | 'needs_user' | 'error';
@@ -158,6 +199,8 @@ export declare class SessionOrchestrator {
     private handoffProtocol;
     private linter;
     private _workspaceRoot;
+    private maskedObservations;
+    private maskedTokensSaved;
     private workflowExecutor;
     private _sessionId;
     private _writerMessages;
@@ -216,6 +259,41 @@ export declare class SessionOrchestrator {
     private deliberationToOrchestratorResult;
     private finalize;
     private toSynthesisInputs;
+    /**
+     * Run the reviewer step: build the prompt, call the provider, parse
+     * the structured verdict, register the agent in the mesh, and record
+     * the cost.
+     */
+    private runReviewer;
+    /**
+     * Run the challenger step: build the prompt, call the provider,
+     * parse the structured output, register the agent in the mesh, and
+     * record the cost.
+     */
+    private runChallenger;
+    /**
+     * Side-effect helper: push a reviewer result into `outputs` and
+     * append the `verified` event.
+     */
+    private processReviewerResult;
+    /**
+     * Side-effect helper: push a challenger result into `outputs` and
+     * append the `challenged` event.
+     */
+    private processChallengerResult;
+    /**
+     * Convert a parsed review verdict + findings into a human-readable
+     * summary suitable for use as an agent's `content` field.
+     */
+    private buildReviewerSummary;
+    /**
+     * P0.7 — Apply relay-racing observation masking before the next LLM
+     * call. Caps tool/function outputs and trims assistant tool-call
+     * signatures so the writer's context window does not fill up on
+     * redundant tool noise. Mirrors the behavior of @chimera/context's
+     * RelayRacing.maskObservations / RelayRacing.maskToolCalls.
+     */
+    private maskRelayObservations;
     executeQualityGateParallel(params: {
         task: string;
         draft: string;

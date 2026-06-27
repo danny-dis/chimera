@@ -16,6 +16,7 @@ class McpClient {
     messageId = 0;
     pending = new Map();
     tools = [];
+    resources = [];
     connected = false;
     constructor(server) {
         this.server = server;
@@ -76,8 +77,16 @@ class McpClient {
                 // Send initialized notification
                 this.sendNotification('notifications/initialized', {});
                 // List tools
-                const result = await this.sendRequest('tools/list', {});
-                this.tools = result.tools ?? [];
+                const toolsResult = await this.sendRequest('tools/list', {});
+                this.tools = toolsResult.tools ?? [];
+                // List resources (if server supports it)
+                try {
+                    const resResult = await this.sendRequest('resources/list', {});
+                    this.resources = resResult.resources ?? [];
+                }
+                catch {
+                    // Server may not support resources — not an error
+                }
                 this.connected = true;
                 resolve();
             }).catch(reject);
@@ -94,6 +103,15 @@ class McpClient {
      */
     getTools() {
         return [...this.tools];
+    }
+    getResources() {
+        return [...this.resources];
+    }
+    async readResource(uri) {
+        if (!this.connected) {
+            throw new Error(`Not connected to MCP server "${this.server.name}"`);
+        }
+        return this.sendRequest('resources/read', { uri });
     }
     /**
      * Call a tool on the MCP server.

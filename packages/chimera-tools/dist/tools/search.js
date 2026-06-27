@@ -7,6 +7,7 @@ exports.globFilesTool = exports.searchFilesTool = void 0;
 const zod_1 = require("zod");
 const execa_1 = require("execa");
 const path_1 = __importDefault(require("path"));
+const promises_1 = require("fs/promises");
 const tool_schema_js_1 = require("../tool-schema.js");
 // ── search_files ─────────────────────────────────────────────────────────────
 const SearchFilesParamsSchema = zod_1.z.object({
@@ -23,14 +24,9 @@ const SearchFilesReturnsSchema = zod_1.z.object({
     filesSearched: zod_1.z.number(),
 });
 async function findRgPath() {
-    // Probe for `rg` on PATH. Return the bare command name so the calling
-    // execa() can resolve it via the OS PATH itself — the absolute path that
-    // `which` prints is Git-Bash style (`/c/Users/...`) on Windows, which
-    // Node's spawn() cannot execute and which would surface as
-    // "The system cannot find the path specified" with exit code 1.
     try {
-        const result = await (0, execa_1.execa)('which', ['rg'], { reject: false });
-        return result.exitCode === 0 && result.stdout.trim() ? 'rg' : null;
+        const result = await (0, execa_1.execa)('rg', ['--version'], { reject: false, timeout: 3000 });
+        return result.exitCode === 0 ? 'rg' : null;
     }
     catch {
         return null;
@@ -51,7 +47,8 @@ exports.searchFilesTool = {
             ? path_1.default.resolve(context.workspaceRoot, params.path)
             : context.workspaceRoot;
         const rgPath = await findRgPath();
-        const command = rgPath ?? 'grep';
+        const isWindows = process.platform === 'win32';
+        const command = rgPath ?? (isWindows ? 'findstr' : 'grep');
         const args = [];
         if (command.endsWith('rg')) {
             args.push('--json', '--no-heading', '--line-number', '--column', '--max-count', String(params.maxResults));
@@ -73,8 +70,15 @@ exports.searchFilesTool = {
             }
             args.push('--', params.pattern, searchPath);
         }
+        else if (isWindows) {
+            // Windows fallback: findstr /s /n
+            args.push('/s', '/n');
+            if (!params.caseSensitive)
+                args.push('/i');
+            args.push(params.pattern, path_1.default.join(searchPath, '*'));
+        }
         else {
-            // Fallback to grep
+            // Unix fallback: grep
             args.push('-rn');
             if (params.caseSensitive) {
                 args.push('--fixed-strings');
@@ -132,18 +136,32 @@ exports.searchFilesTool = {
             }
         }
         else {
-            // Parse grep output: file:line:column:match
+            // Parse grep/findstr output: file:line:column:match or findstr format
             const lines = stdout.split('\n').filter(Boolean);
             for (const line of lines) {
-                const match = line.match(/^(.+?):(\d+):(\d+):(.*)$/);
-                if (match) {
-                    const filePath = path_1.default.relative(context.workspaceRoot, match[1]);
+                // Try standard grep format: file:line:column:match
+                const grepMatch = line.match(/^(.+?):(\d+):(\d+):(.*)$/);
+                if (grepMatch) {
+                    const filePath = path_1.default.relative(context.workspaceRoot, grepMatch[1]);
                     filesSearched.add(filePath);
                     matches.push({
                         file: filePath,
-                        line: parseInt(match[2], 10),
-                        column: parseInt(match[3], 10),
-                        match: match[4].trim(),
+                        line: parseInt(grepMatch[2], 10),
+                        column: parseInt(grepMatch[3], 10),
+                        match: grepMatch[4].trim(),
+                    });
+                    continue;
+                }
+                // Try findstr format: file:line:match (no column)
+                const findstrMatch = line.match(/^(.+?):(\d+):(.*)$/);
+                if (findstrMatch) {
+                    const filePath = path_1.default.relative(context.workspaceRoot, findstrMatch[1]);
+                    filesSearched.add(filePath);
+                    matches.push({
+                        file: filePath,
+                        line: parseInt(findstrMatch[2], 10),
+                        column: 0,
+                        match: findstrMatch[3].trim(),
                     });
                 }
             }
@@ -177,10 +195,9 @@ exports.globFilesTool = {
             ? path_1.default.resolve(context.workspaceRoot, params.path)
             : context.workspaceRoot;
         const rgPath = await findRgPath();
-        const command = rgPath ?? 'find';
-        let stdout = '';
-        try {
-            if (command.endsWith('rg')) {
+        let files = [];
+        if (rgPath) {
+            try {
                 const result = await (0, execa_1.execa)('rg', [
                     '--files',
                     '--glob', params.pattern,
@@ -191,29 +208,43 @@ exports.globFilesTool = {
                     maxBuffer: tool_schema_js_1.MAX_OUTPUT_SIZE,
                     reject: false,
                 });
-                stdout = result.stdout;
+                files = result.stdout
+                    .split('\n')
+                    .filter(Boolean)
+                    .map((f) => path_1.default.relative(context.workspaceRoot, f));
             }
-            else {
-                // Fallback: use find with -name
-                const result = await (0, execa_1.execa)('find', [
-                    searchPath,
-                    '-name', params.pattern,
-                ], {
-                    timeout: 15_000,
-                    maxBuffer: tool_schema_js_1.MAX_OUTPUT_SIZE,
-                    reject: false,
-                });
-                stdout = result.stdout;
+            catch {
+                files = [];
             }
         }
-        catch {
-            return { files: [], count: 0 };
+        else {
+            // Cross-platform fallback: recursive readdir with simple glob matching
+            const pattern = params.pattern;
+            const regex = new RegExp('^' +
+                pattern
+                    .replace(/[.+^${}()|[\]\\]/g, '\\$&')
+                    .replace(/\*/g, '.*')
+                    .replace(/\?/g, '.') +
+                '$');
+            async function walk(dir) {
+                const results = [];
+                try {
+                    const entries = await (0, promises_1.readdir)(dir, { withFileTypes: true });
+                    for (const entry of entries) {
+                        const fullPath = path_1.default.join(dir, entry.name);
+                        if (entry.isDirectory()) {
+                            results.push(...await walk(fullPath));
+                        }
+                        else if (entry.isFile() && regex.test(entry.name)) {
+                            results.push(path_1.default.relative(context.workspaceRoot, fullPath));
+                        }
+                    }
+                }
+                catch { /* skip inaccessible dirs */ }
+                return results;
+            }
+            files = (await walk(searchPath)).slice(0, 500);
         }
-        const files = stdout
-            .split('\n')
-            .filter(Boolean)
-            .map((f) => path_1.default.relative(context.workspaceRoot, f))
-            .slice(0, 500);
         return { files, count: files.length };
     },
 };

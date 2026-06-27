@@ -69,6 +69,14 @@ function parseCompletionResult(body) {
         inputTokens: usage?.prompt_tokens ?? 0,
         outputTokens: usage?.completion_tokens ?? 0,
     };
+    // OpenAI returns cached-input tokens nested under
+    // `usage.prompt_tokens_details.cached_tokens`. We only attach the
+    // cache field when the nested object is present so non-OpenAI
+    // OpenAI-compatible endpoints (which omit it) stay clean.
+    const promptDetails = usage?.prompt_tokens_details;
+    if (promptDetails?.cached_tokens !== undefined) {
+        tokenUsage.cacheReadTokens = promptDetails.cached_tokens;
+    }
     return {
         content,
         toolCalls,
@@ -96,12 +104,20 @@ function parseStreamChunk(data) {
     }
     const finishReason = choice.finish_reason ?? undefined;
     const usage = data.usage;
-    const tokenUsage = usage
-        ? {
+    let tokenUsage;
+    if (usage) {
+        tokenUsage = {
             inputTokens: usage.prompt_tokens ?? 0,
             outputTokens: usage.completion_tokens ?? 0,
+        };
+        // Same nested `prompt_tokens_details.cached_tokens` shape as
+        // parseCompletionResult; the `stream_options: { include_usage: true }`
+        // request in `stream()` is what populates this object.
+        const promptDetails = usage.prompt_tokens_details;
+        if (promptDetails?.cached_tokens !== undefined) {
+            tokenUsage.cacheReadTokens = promptDetails.cached_tokens;
         }
-        : undefined;
+    }
     if (!content && !toolCalls?.length && !finishReason) {
         return null;
     }
@@ -159,6 +175,13 @@ class OpenAICompatibleProvider {
             messages: mapMessages(prompt),
             stream: false,
         };
+        // NOTE: `options.cacheControl` is intentionally a no-op for
+        // OpenAI-compatible providers. OpenAI automatically caches prompts
+        // (prefix caching on matching chat.completions requests), so no
+        // explicit marker is required. The field is accepted on the shared
+        // CompletionOptions interface so callers can pass it uniformly
+        // without branching on provider.
+        void options?.cacheControl;
         if (options?.temperature !== undefined)
             body.temperature = options.temperature;
         if (options?.topP !== undefined)
@@ -193,6 +216,13 @@ class OpenAICompatibleProvider {
             stream: true,
             stream_options: { include_usage: true },
         };
+        // NOTE: `options.cacheControl` is intentionally a no-op for
+        // OpenAI-compatible providers. OpenAI automatically caches prompts
+        // (prefix caching on matching chat.completions requests), so no
+        // explicit marker is required. The field is accepted on the shared
+        // CompletionOptions interface so callers can pass it uniformly
+        // without branching on provider.
+        void options?.cacheControl;
         if (options?.temperature !== undefined)
             body.temperature = options.temperature;
         if (options?.topP !== undefined)

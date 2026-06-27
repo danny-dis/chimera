@@ -102,6 +102,17 @@ export interface BuildMessagesParams {
     task: string;
     context?: string;
     previousOutput?: string;
+    /**
+     * Optional prompt-cache directive. When set, the returned system message
+     * block carries a `cache_control` field so downstream providers (notably
+     * Anthropic) can attach a prompt-cache breakpoint on it. The
+     * orchestrator should also forward this option to the provider's
+     * `complete()`/`stream()` call.
+     */
+    cacheControl?: {
+        type: 'ephemeral';
+        ttl?: '5m' | '1h';
+    };
 }
 /**
  * Build the message array for an LLM call based on agent role and mode.
@@ -119,6 +130,10 @@ export interface BuildMessagesParams {
 export declare function buildMessages(params: BuildMessagesParams): Array<{
     role: string;
     content: string;
+    cache_control?: {
+        type: 'ephemeral';
+        ttl?: '5m' | '1h';
+    };
 }>;
 /**
  * Build the prompt for generating a workflow script from a task description.

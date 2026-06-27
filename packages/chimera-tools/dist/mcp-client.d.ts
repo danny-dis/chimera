@@ -16,6 +16,11 @@ interface McpTool {
     description: string;
     inputSchema: Record<string, unknown>;
 }
+export interface McpResource {
+    uri: string;
+    name: string;
+    mimeType?: string;
+}
 /**
  * MCP Client — manages connection to an MCP server and adapts its tools.
  */
@@ -25,6 +30,7 @@ export declare class McpClient {
     private messageId;
     private pending;
     private tools;
+    private resources;
     private connected;
     constructor(server: McpServerConfig);
     /**
@@ -35,6 +41,8 @@ export declare class McpClient {
      * Get the list of tools discovered from the server.
      */
     getTools(): McpTool[];
+    getResources(): McpResource[];
+    readResource(uri: string): Promise<unknown>;
     /**
      * Call a tool on the MCP server.
      */

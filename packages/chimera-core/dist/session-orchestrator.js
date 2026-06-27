@@ -34,6 +34,62 @@ function nextAgentId() {
     return `agent-${++agentCounter}`;
 }
 const MAX_TOOL_ITERATIONS = 10;
+/**
+ * Default prompt-cache directive used for every LLM call dispatched by
+ * the orchestrator. The system-prompt prefix is identical across calls
+ * for a given role, so attaching a 5-minute ephemeral cache breakpoint
+ * maximizes cache hit rate without leaking the prompt to long-lived
+ * caches.
+ */
+const DEFAULT_CACHE_CONTROL = { type: 'ephemeral', ttl: '5m' };
+// P0.6 — Tool output truncation caps. Whichever limit is hit first wins.
+const TOOL_OUTPUT_MAX_BYTES = 8 * 1024;
+const TOOL_OUTPUT_MAX_LINES = 200;
+const TOOL_OUTPUT_TRUNCATION_MARKER = '\n\n[... truncated, see event log for full output ...]';
+// P0.7 — RelayRacing observation-masking caps, mirrored from
+// @chimera/context. Inlined here to avoid a new package dependency
+// (chimera-core does not depend on @chimera/context).
+const MASK_OUTPUT_LIMIT = 200;
+const MASK_ARGS_LIMIT = 100;
+/** 5-minute hard cap on a single execute() invocation. */
+const EXECUTE_TIMEOUT_MS = 60_000 * 5;
+const AbortSignalAny = AbortSignal.any;
+const AbortSignalTimeout = AbortSignal.timeout;
+/**
+ * Compose multiple AbortSignals into one. Prefers AbortSignal.any (Node 20.3+ /
+ * Node 22+); falls back to a small AbortController bridge so older runtimes
+ * still get a working "abort when any source aborts" semantic.
+ */
+function composeAbortSignals(signals) {
+    const filtered = signals.filter((s) => s !== undefined);
+    if (filtered.length === 0)
+        return new AbortController().signal;
+    if (filtered.length === 1)
+        return filtered[0];
+    if (typeof AbortSignalAny === 'function')
+        return AbortSignalAny(filtered);
+    const ac = new AbortController();
+    for (const s of filtered) {
+        if (s.aborted) {
+            ac.abort(s.reason);
+            break;
+        }
+        s.addEventListener('abort', () => ac.abort(s.reason), { once: true });
+    }
+    return ac.signal;
+}
+/** Build a timeout signal, preferring AbortSignal.timeout (Node 20.3+). */
+function buildTimeoutSignal(ms) {
+    if (typeof AbortSignalTimeout === 'function')
+        return AbortSignalTimeout(ms);
+    const ac = new AbortController();
+    const timer = setTimeout(() => ac.abort(new Error(`aborted after ${ms}ms`)), ms);
+    // Avoid keeping the event loop alive just for the timer.
+    if (typeof timer.unref === 'function') {
+        timer.unref();
+    }
+    return ac.signal;
+}
 class SessionOrchestrator {
     state = { status: 'idle' };
     eventStream;
@@ -52,6 +108,12 @@ class SessionOrchestrator {
     handoffProtocol;
     linter;
     _workspaceRoot;
+    // P0.7 — relay-racing observation masking. Inlined here (rather than
+    // importing RelayRacing from @chimera/context) because chimera-core does
+    // not depend on @chimera/context. The class is small enough that
+    // mirroring its behavior is cheaper than adding a new package edge.
+    maskedObservations = new Map();
+    maskedTokensSaved = 0;
     workflowExecutor = null;
     _sessionId = `session-${Date.now()}`;
     _writerMessages = [];
@@ -163,6 +225,14 @@ class SessionOrchestrator {
         const { task, mode, providers, preset, costCap = 10 } = params;
         const outputs = [];
         let totalCost = 0;
+        // Single per-execute AbortController. Composed with a 5-minute hard
+        // timeout so a misbehaving LLM cannot wedge a session forever. The
+        // same signal is passed to every LLM call and every tool execution
+        // so we can cancel in-flight work when the reviewer returns PASS
+        // (no challenger output needed) or when the tool loop hits its
+        // iteration cap.
+        const ac = new AbortController();
+        const executeSignal = composeAbortSignals([ac.signal, buildTimeoutSignal(EXECUTE_TIMEOUT_MS)]);
         // Validate mode+preset combination (skip validation for 'auto' preset)
         const resolvedPreset = preset ?? this.mapModeToDeliberationMode(mode);
         if (preset && preset !== 'auto') {
@@ -340,8 +410,10 @@ class SessionOrchestrator {
                 maxTokens: 4096,
                 responseFormat: 'json_object',
                 tools: toolDefs.length > 0 ? toolDefs : undefined,
+                cacheControl: DEFAULT_CACHE_CONTROL,
+                signal: executeSignal,
             });
-            let draftCost = this.estimateCost(draftResult.usage);
+            let draftCost = this.estimateCost(draftResult.usage, providers.writer);
             totalCost += draftCost;
             this.costTracker.recordSpend('writer', draftCost);
             this.logLLMCall('writer', draftResult.usage.inputTokens, draftResult.usage.outputTokens, draftCost);
@@ -350,7 +422,7 @@ class SessionOrchestrator {
             this._writerMessages = [...writerMessages];
             while (draftResult.toolCalls && draftResult.toolCalls.length > 0 && iterations < MAX_TOOL_ITERATIONS) {
                 iterations++;
-                const toolResults = await this.executeToolCalls(draftResult.toolCalls, { sessionId: writerId });
+                const toolResults = await this.executeToolCalls(draftResult.toolCalls, { sessionId: writerId }, executeSignal);
                 toolCallHistory.push(...toolResults);
                 for (const tr of toolResults) {
                     this.logToolCall(tr.toolName, JSON.stringify(tr.args).slice(0, 100), tr.result.result.duration * 0.000001);
@@ -401,8 +473,10 @@ class SessionOrchestrator {
                     maxTokens: 4096,
                     responseFormat: 'json_object',
                     tools: toolDefs.length > 0 ? toolDefs : undefined,
+                    cacheControl: DEFAULT_CACHE_CONTROL,
+                    signal: executeSignal,
                 });
-                const iterCost = this.estimateCost(draftResult.usage);
+                const iterCost = this.estimateCost(draftResult.usage, providers.writer);
                 draftCost += iterCost;
                 totalCost += iterCost;
                 this.costTracker.recordSpend('writer', iterCost);
@@ -442,8 +516,10 @@ class SessionOrchestrator {
                 temperature: 0.2,
                 maxTokens: 4096,
                 responseFormat: 'json_object',
+                cacheControl: DEFAULT_CACHE_CONTROL,
+                signal: executeSignal,
             });
-            const reviewCost = this.estimateCost(reviewResult.usage);
+            const reviewCost = this.estimateCost(reviewResult.usage, providers.reviewer);
             totalCost += reviewCost;
             this.costTracker.recordSpend('reviewer', reviewCost);
             this.logLLMCall('reviewer', reviewResult.usage.inputTokens, reviewResult.usage.outputTokens, reviewCost);
@@ -458,6 +534,7 @@ class SessionOrchestrator {
                 provider: 'llm',
                 model: 'default',
                 tokensUsed: reviewResult.usage.inputTokens + reviewResult.usage.outputTokens,
+                issues: findings,
             });
             this.eventStream.append({
                 type: 'verified',
@@ -489,8 +566,10 @@ class SessionOrchestrator {
                     temperature: 0.5,
                     maxTokens: 4096,
                     responseFormat: 'json_object',
+                    cacheControl: DEFAULT_CACHE_CONTROL,
+                    signal: executeSignal,
                 });
-                const challengeCost = this.estimateCost(challengeResult.usage);
+                const challengeCost = this.estimateCost(challengeResult.usage, providers.challenger);
                 totalCost += challengeCost;
                 this.costTracker.recordSpend('challenger', challengeCost);
                 this.logLLMCall('challenger', challengeResult.usage.inputTokens, challengeResult.usage.outputTokens, challengeCost);
@@ -526,6 +605,12 @@ class SessionOrchestrator {
                 agentCount: outputs.length,
             });
             return { status: 'error', output: '', cost: totalCost, agentCount: outputs.length, events: [...this.eventStream.getAll()] };
+        }
+        finally {
+            // Ensure we never leak a pending timeout signal. The AbortController
+            // is single-use and any future readers of executeSignal would see
+            // the already-aborted state.
+            ac.abort('execute-finished');
         }
     }
     async executeWithDeliberation(task, mode, providers, costCap = 10, preset, complexity) {
@@ -724,6 +809,165 @@ class SessionOrchestrator {
             confidence: o.confidence,
         }));
     }
+    /**
+     * Run the reviewer step: build the prompt, call the provider, parse
+     * the structured verdict, register the agent in the mesh, and record
+     * the cost.
+     */
+    async runReviewer(args) {
+        this.transition({ status: 'verifying', task: args.task, draft: args.draft, agentId: args.reviewerId });
+        this.agentMesh.registerAgent(this.buildAgentConfig(args.reviewerId, 'reviewer', args.costCap));
+        const reviewerMessages = this.buildReviewerPrompt(args.task, args.draft, args.mode);
+        const reviewResult = await args.reviewer.complete(reviewerMessages, {
+            temperature: 0.2,
+            maxTokens: 4096,
+            responseFormat: 'json_object',
+            signal: args.signal,
+        });
+        const reviewCost = this.estimateCost(reviewResult.usage, args.reviewer);
+        this.costTracker.recordSpend('reviewer', reviewCost);
+        const reviewParsed = this.parseJSON(reviewResult.content);
+        const verdict = reviewParsed.verdict ?? 'PASS';
+        const findings = reviewParsed.findings ?? [];
+        const reviewSummary = this.buildReviewerSummary(verdict, findings, reviewParsed.thought);
+        return {
+            verdict,
+            confidence: reviewParsed.confidence ?? 0.5,
+            findings,
+            reviewSummary,
+            reviewContent: reviewResult.content,
+            reviewTokens: reviewResult.usage.inputTokens + reviewResult.usage.outputTokens,
+        };
+    }
+    /**
+     * Run the challenger step: build the prompt, call the provider,
+     * parse the structured output, register the agent in the mesh, and
+     * record the cost.
+     */
+    async runChallenger(args) {
+        this.transition({
+            status: 'challenging',
+            task: args.task,
+            draft: args.draft,
+            review: args.review,
+            agentId: args.challengerId,
+        });
+        this.agentMesh.registerAgent(this.buildAgentConfig(args.challengerId, 'challenger', args.costCap));
+        const challengerMessages = this.buildChallengerPrompt(args.task, args.draft, args.review);
+        const challengeResult = await args.challenger.complete(challengerMessages, {
+            temperature: 0.5,
+            maxTokens: 4096,
+            responseFormat: 'json_object',
+            signal: args.signal,
+        });
+        const challengeCost = this.estimateCost(challengeResult.usage, args.challenger);
+        this.costTracker.recordSpend('challenger', challengeCost);
+        const challengeParsed = this.parseJSON(challengeResult.content);
+        return {
+            response: challengeParsed.response ?? challengeResult.content,
+            confidence: challengeParsed.confidence ?? 0.5,
+            issues: challengeParsed.issues ?? [],
+            alternatives: challengeParsed.filesChanged ?? [],
+            raw: challengeResult.content,
+            rawUsage: challengeResult.usage,
+        };
+    }
+    /**
+     * Side-effect helper: push a reviewer result into `outputs` and
+     * append the `verified` event.
+     */
+    processReviewerResult(outputs, reviewerId, data) {
+        outputs.push({
+            agentId: reviewerId,
+            role: 'reviewer',
+            content: data.reviewSummary,
+            confidence: data.confidence,
+            provider: 'llm',
+            model: 'default',
+            tokensUsed: data.reviewTokens,
+            issues: data.findings,
+        });
+        this.eventStream.append({
+            type: 'verified',
+            agentId: reviewerId,
+            verdict: data.verdict === 'PASS'
+                ? 'pass'
+                : data.verdict === 'FAIL'
+                    ? 'fail'
+                    : 'needs_revision',
+            findings: data.findings.map((f) => ({
+                description: f.description,
+                severity: f.severity,
+                evidence: f.evidence,
+            })),
+        });
+    }
+    /**
+     * Side-effect helper: push a challenger result into `outputs` and
+     * append the `challenged` event.
+     */
+    processChallengerResult(outputs, challengerId, data) {
+        outputs.push({
+            agentId: challengerId,
+            role: 'challenger',
+            content: data.response,
+            confidence: data.confidence,
+            provider: 'llm',
+            model: 'default',
+            tokensUsed: data.rawUsage.inputTokens + data.rawUsage.outputTokens,
+        });
+        this.eventStream.append({
+            type: 'challenged',
+            agentId: challengerId,
+            challenges: data.issues,
+            alternatives: data.alternatives,
+        });
+    }
+    /**
+     * Convert a parsed review verdict + findings into a human-readable
+     * summary suitable for use as an agent's `content` field.
+     */
+    buildReviewerSummary(verdict, findings, _thought) {
+        const verdictLine = `Reviewer verdict: ${verdict}`;
+        if (findings.length === 0)
+            return `${verdictLine}. No issues found.`;
+        const lines = findings.map((f) => `- [${f.severity.toUpperCase()}] ${f.description}`);
+        return `${verdictLine}.\nFindings:\n${lines.join('\n')}`;
+    }
+    /**
+     * P0.7 — Apply relay-racing observation masking before the next LLM
+     * call. Caps tool/function outputs and trims assistant tool-call
+     * signatures so the writer's context window does not fill up on
+     * redundant tool noise. Mirrors the behavior of @chimera/context's
+     * RelayRacing.maskObservations / RelayRacing.maskToolCalls.
+     */
+    maskRelayObservations(messages, agentId) {
+        const masked = [];
+        const result = [];
+        for (const msg of messages) {
+            if (msg.role === 'tool' || (msg.role === 'assistant' && msg.content.length > MASK_OUTPUT_LIMIT)) {
+                const original = msg.content;
+                let maskedContent = original;
+                let tokensSaved = 0;
+                if (original.length > MASK_OUTPUT_LIMIT) {
+                    maskedContent = original.slice(0, MASK_OUTPUT_LIMIT) + '\n\n[... masked ...]';
+                    tokensSaved = Math.floor((original.length - MASK_OUTPUT_LIMIT) / 4);
+                }
+                if (maskedContent !== original) {
+                    masked.push({ original, masked: maskedContent, tokensSaved });
+                    this.maskedTokensSaved += tokensSaved;
+                }
+                result.push({ role: msg.role, content: maskedContent });
+            }
+            else {
+                result.push(msg);
+            }
+        }
+        if (masked.length > 0) {
+            this.maskedObservations.set(agentId, masked);
+        }
+        return result;
+    }
     async executeQualityGateParallel(params) {
         const { task, draft, mode, providers, costCap } = params;
         const startTime = Date.now();
@@ -746,6 +990,7 @@ class SessionOrchestrator {
                 temperature: 0.2,
                 maxTokens: 4096,
                 responseFormat: 'json_object',
+                cacheControl: DEFAULT_CACHE_CONTROL,
             });
             const cost = this.estimateCost(result.usage);
             this.costTracker.recordSpend('reviewer', cost);
@@ -784,8 +1029,9 @@ class SessionOrchestrator {
                     temperature: 0.5,
                     maxTokens: 4096,
                     responseFormat: 'json_object',
+                    cacheControl: DEFAULT_CACHE_CONTROL,
                 });
-                const cost = this.estimateCost(result.usage);
+                const cost = this.estimateCost(result.usage, challenger);
                 this.costTracker.recordSpend('challenger', cost);
                 const parsed = this.parseJSON(result.content);
                 outputs.push({
@@ -893,7 +1139,7 @@ class SessionOrchestrator {
         return true;
     }
     buildWriterPrompt(task, mode) {
-        const messages = (0, prompts_js_1.buildMessages)({ role: 'writer', mode, task });
+        const messages = (0, prompts_js_1.buildMessages)({ role: 'writer', mode, task, cacheControl: DEFAULT_CACHE_CONTROL });
         const outputInstructions = [
             'Respond with valid JSON matching this schema:',
             '{"thought": string, "response": string, "confidence": number 0-1, "filesChanged": string[], "issues": string[], "rationale": string}',
@@ -916,6 +1162,7 @@ class SessionOrchestrator {
                 '',
                 'Evaluate the draft against the task. Return structured JSON.',
             ].join('\n'),
+            cacheControl: DEFAULT_CACHE_CONTROL,
         });
         const outputInstructions = [
             'Respond with valid JSON matching this schema:',
@@ -936,6 +1183,7 @@ class SessionOrchestrator {
                 '',
                 'Critique both the draft and the review. Propose alternatives if needed. Return structured JSON.',
             ].join('\n'),
+            cacheControl: DEFAULT_CACHE_CONTROL,
         });
         const outputInstructions = [
             'Respond with valid JSON matching this schema:',
@@ -958,7 +1206,25 @@ class SessionOrchestrator {
             return {};
         }
     }
-    estimateCost(usage) {
+    estimateCost(usage, provider) {
+        // Provider-truthful path: use the provider's own pricing table so
+        // prompt-caching and per-model rates are honored. We compute from
+        // `getPricing` rather than `getCost` because `getCost` does not
+        // surface the cache rates.
+        if (provider && typeof provider.getCost === 'function' && typeof provider.getPricing === 'function') {
+            const pricing = provider.getPricing();
+            const cacheReadTokens = usage.cacheReadTokens ?? 0;
+            const cacheWriteTokens = usage.cacheWriteTokens ?? 0;
+            const uncached = Math.max(0, usage.inputTokens - cacheReadTokens);
+            const inputCost = (uncached * pricing.inputPerMillion) / 1e6 +
+                (cacheReadTokens * (pricing.cacheReadPerMillion ?? pricing.inputPerMillion)) / 1e6 +
+                (cacheWriteTokens * (pricing.cacheWritePerMillion ?? pricing.inputPerMillion)) / 1e6;
+            const outputCost = (usage.outputTokens * pricing.outputPerMillion) / 1e6;
+            return inputCost + outputCost;
+        }
+        // Fallback: static rates that match the original behavior when no
+        // provider hint is available (e.g. MockProvider path or tests that
+        // don't pass a provider).
         const inputRate = 0.5 / 1_000_000;
         const outputRate = 1.5 / 1_000_000;
         return usage.inputTokens * inputRate + usage.outputTokens * outputRate;
@@ -972,7 +1238,7 @@ class SessionOrchestrator {
             parameters: tool.parameters.toJSON?.() ?? { type: 'object' },
         }));
     }
-    async executeToolCalls(toolCalls, context) {
+    async executeToolCalls(toolCalls, context, signal) {
         if (!this.toolExecutor) {
             return toolCalls.map((tc) => ({
                 toolName: tc.name,
@@ -995,6 +1261,7 @@ class SessionOrchestrator {
                 workspaceRoot: this._workspaceRoot,
                 sessionId: context.sessionId,
                 eventStream: this.eventStream,
+                signal,
             });
             if (result.success && result.data) {
                 const outputCheck = (0, prompt_guard_js_1.checkToolOutput)(JSON.stringify(result.data), tc.name);

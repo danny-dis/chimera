@@ -85,6 +85,16 @@ function parseCompletionResult(body) {
         inputTokens: usage?.input_tokens ?? 0,
         outputTokens: usage?.output_tokens ?? 0,
     };
+    // Anthropic reports prompt-cache usage as separate counters on `usage`.
+    // `cache_creation_input_tokens` is cache-write; `cache_read_input_tokens`
+    // is cache-read. Both can coexist in a single response. Only attach
+    // them when present so mock/test bodies without them stay clean.
+    if (usage?.cache_read_input_tokens !== undefined) {
+        tokenUsage.cacheReadTokens = usage.cache_read_input_tokens;
+    }
+    if (usage?.cache_creation_input_tokens !== undefined) {
+        tokenUsage.cacheWriteTokens = usage.cache_creation_input_tokens;
+    }
     return {
         content,
         toolCalls: toolCalls.length ? toolCalls : undefined,
@@ -105,14 +115,25 @@ function parseStreamChunk(data, type) {
     if (type === 'message_delta') {
         const delta = data.delta;
         const usage = data.usage;
+        if (usage) {
+            const tokenUsage = {
+                inputTokens: 0,
+                outputTokens: usage.output_tokens ?? 0,
+            };
+            // Same Anthropic cache-token field names as parseCompletionResult.
+            if (usage.cache_read_input_tokens !== undefined) {
+                tokenUsage.cacheReadTokens = usage.cache_read_input_tokens;
+            }
+            if (usage.cache_creation_input_tokens !== undefined) {
+                tokenUsage.cacheWriteTokens = usage.cache_creation_input_tokens;
+            }
+            return {
+                finishReason: delta?.stop_reason ?? undefined,
+                usage: tokenUsage,
+            };
+        }
         return {
             finishReason: delta?.stop_reason ?? undefined,
-            usage: usage
-                ? {
-                    inputTokens: 0,
-                    outputTokens: usage.output_tokens ?? 0,
-                }
-                : undefined,
         };
     }
     return null;
@@ -180,7 +201,25 @@ class AnthropicProvider {
             max_tokens: options?.maxTokens ?? this.modelInfo.maxOutputTokens,
         };
         if (systemMessage) {
-            body.system = systemMessage.content;
+            // When cacheControl is set, convert the system field to an array of
+            // content blocks and place the cache_control marker on the LAST
+            // block — Anthropic only honors the marker on the final system
+            // block of the request.
+            if (options?.cacheControl) {
+                body.system = [
+                    {
+                        type: 'text',
+                        text: systemMessage.content,
+                        cache_control: {
+                            type: options.cacheControl.type,
+                            ttl: options.cacheControl.ttl ?? '5m',
+                        },
+                    },
+                ];
+            }
+            else {
+                body.system = systemMessage.content;
+            }
         }
         if (options?.temperature !== undefined)
             body.temperature = options.temperature;
@@ -219,7 +258,23 @@ class AnthropicProvider {
             stream: true,
         };
         if (systemMessage) {
-            body.system = systemMessage.content;
+            // Mirror complete(): when cacheControl is set, send system as an
+            // array with cache_control on the LAST block (Anthropic requirement).
+            if (options?.cacheControl) {
+                body.system = [
+                    {
+                        type: 'text',
+                        text: systemMessage.content,
+                        cache_control: {
+                            type: options.cacheControl.type,
+                            ttl: options.cacheControl.ttl ?? '5m',
+                        },
+                    },
+                ];
+            }
+            else {
+                body.system = systemMessage.content;
+            }
         }
         if (options?.temperature !== undefined)
             body.temperature = options.temperature;

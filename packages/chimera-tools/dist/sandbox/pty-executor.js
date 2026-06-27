@@ -26,12 +26,17 @@ class PTYExecutor {
             maxOutputBytes: options.maxOutputBytes ?? 10 * 1024 * 1024,
         });
         const resolvedCwd = node_path_1.default.resolve(validated.cwd);
-        if (!resolvedCwd.startsWith(this.workspaceRoot)) {
+        const normalizedCwd = resolvedCwd.replace(/[/\\]$/, '');
+        const normalizedRoot = this.workspaceRoot.replace(/[/\\]$/, '');
+        if (!normalizedCwd.startsWith(normalizedRoot) && normalizedCwd !== normalizedRoot) {
             throw new Error(`Working directory ${resolvedCwd} is outside workspace ${this.workspaceRoot}`);
         }
         const maxOutputBytes = validated.maxOutputBytes ?? 10 * 1024 * 1024;
         const startTime = Date.now();
-        this.currentProcess = (0, execa_1.execa)('bash', ['-c', validated.command], {
+        const isWin = process.platform === 'win32';
+        const shell = isWin ? 'cmd.exe' : 'bash';
+        const shellArgs = isWin ? ['/c', validated.command] : ['-c', validated.command];
+        this.currentProcess = (0, execa_1.execa)(shell, shellArgs, {
             cwd: resolvedCwd,
             timeout: validated.timeout,
             env: validated.env,
