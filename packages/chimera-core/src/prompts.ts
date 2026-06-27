@@ -896,6 +896,14 @@ export interface BuildMessagesParams {
   task: string;
   context?: string;
   previousOutput?: string;
+  /**
+   * Optional prompt-cache directive. When set, the returned system message
+   * block carries a `cache_control` field so downstream providers (notably
+   * Anthropic) can attach a prompt-cache breakpoint on it. The
+   * orchestrator should also forward this option to the provider's
+   * `complete()`/`stream()` call.
+   */
+  cacheControl?: { type: 'ephemeral'; ttl?: '5m' | '1h' };
 }
 
 /**
@@ -913,23 +921,34 @@ export interface BuildMessagesParams {
  */
 export function buildMessages(
   params: BuildMessagesParams,
-): Array<{ role: string; content: string }> {
+): Array<{ role: string; content: string; cache_control?: { type: 'ephemeral'; ttl?: '5m' | '1h' } }> {
   const template = AGENT_PROMPTS[params.role];
   const modeInstructions = template.mode[params.mode] ?? '';
   const modeFormatting = MODE_INSTRUCTIONS[params.mode] ?? '';
 
-  const messages: Array<{ role: string; content: string }> = [
-    {
-      role: 'system',
-      content:
-        CHIMERA_CORE_IDENTITY +
-        '\n\n---\n\n' +
-        template.system +
-        '\n\n---\n\n' +
-        modeInstructions +
-        '\n\n---\n\n' +
-        modeFormatting,
-    },
+  const systemMessage: { role: string; content: string; cache_control?: { type: 'ephemeral'; ttl?: '5m' | '1h' } } = {
+    role: 'system',
+    content:
+      CHIMERA_CORE_IDENTITY +
+      '\n\n---\n\n' +
+      template.system +
+      '\n\n---\n\n' +
+      modeInstructions +
+      '\n\n---\n\n' +
+      modeFormatting,
+  };
+
+  if (params.cacheControl) {
+    // Append a cache_control marker to the system content block so the
+    // provider wrapper can promote it to a prompt-cache breakpoint.
+    systemMessage.cache_control = {
+      type: params.cacheControl.type,
+      ttl: params.cacheControl.ttl ?? '5m',
+    };
+  }
+
+  const messages: Array<{ role: string; content: string; cache_control?: { type: 'ephemeral'; ttl?: '5m' | '1h' } }> = [
+    systemMessage,
   ];
 
   if (params.context) {

@@ -19,6 +19,17 @@ export interface ToolDefinition {
 
 export type ResponseFormat = 'text' | 'json_object';
 
+/**
+ * Optional prompt-cache directive. Anthropic uses this to attach a
+ * `cache_control` marker to a system content block so the prefix can be
+ * cached for `ttl` minutes. OpenAI auto-caches prompts and ignores this
+ * field; the type is shared so callers can pass it uniformly.
+ */
+export interface CacheControlOptions {
+  type: 'ephemeral';
+  ttl?: '5m' | '1h';
+}
+
 export interface CompletionOptions {
   temperature?: number;
   topP?: number;
@@ -27,6 +38,7 @@ export interface CompletionOptions {
   tools?: ToolDefinition[];
   toolChoice?: 'auto' | 'required' | 'none' | { type: 'function'; name: string };
   responseFormat?: ResponseFormat;
+  cacheControl?: CacheControlOptions;
 }
 
 export interface TokenUsage {

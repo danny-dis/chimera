@@ -101,11 +101,24 @@ function parseCompletionResult(body: Record<string, unknown>): CompletionResult 
     });
   }
 
-  const usage = body.usage as Record<string, number> | undefined;
-  const tokenUsage = {
-    inputTokens: usage?.prompt_tokens ?? 0,
-    outputTokens: usage?.completion_tokens ?? 0,
+  const usage = body.usage as Record<string, unknown> | undefined;
+  const tokenUsage: {
+    inputTokens: number;
+    outputTokens: number;
+    cacheReadTokens?: number;
+    cacheWriteTokens?: number;
+  } = {
+    inputTokens: (usage?.prompt_tokens as number) ?? 0,
+    outputTokens: (usage?.completion_tokens as number) ?? 0,
   };
+  // OpenAI returns cached-input tokens nested under
+  // `usage.prompt_tokens_details.cached_tokens`. We only attach the
+  // cache field when the nested object is present so non-OpenAI
+  // OpenAI-compatible endpoints (which omit it) stay clean.
+  const promptDetails = usage?.prompt_tokens_details as Record<string, number> | undefined;
+  if (promptDetails?.cached_tokens !== undefined) {
+    tokenUsage.cacheReadTokens = promptDetails.cached_tokens;
+  }
 
   return {
     content,
@@ -139,13 +152,28 @@ function parseStreamChunk(
 
   const finishReason = (choice.finish_reason as string) ?? undefined;
 
-  const usage = data.usage as Record<string, number> | undefined;
-  const tokenUsage = usage
-    ? {
-        inputTokens: usage.prompt_tokens ?? 0,
-        outputTokens: usage.completion_tokens ?? 0,
+  const usage = data.usage as Record<string, unknown> | undefined;
+  let tokenUsage:
+    | {
+        inputTokens: number;
+        outputTokens: number;
+        cacheReadTokens?: number;
+        cacheWriteTokens?: number;
       }
-    : undefined;
+    | undefined;
+  if (usage) {
+    tokenUsage = {
+      inputTokens: (usage.prompt_tokens as number) ?? 0,
+      outputTokens: (usage.completion_tokens as number) ?? 0,
+    };
+    // Same nested `prompt_tokens_details.cached_tokens` shape as
+    // parseCompletionResult; the `stream_options: { include_usage: true }`
+    // request in `stream()` is what populates this object.
+    const promptDetails = usage.prompt_tokens_details as Record<string, number> | undefined;
+    if (promptDetails?.cached_tokens !== undefined) {
+      tokenUsage.cacheReadTokens = promptDetails.cached_tokens;
+    }
+  }
 
   if (!content && !toolCalls?.length && !finishReason) {
     return null;
@@ -214,6 +242,14 @@ export class OpenAICompatibleProvider implements ModelProvider {
       stream: false,
     };
 
+    // NOTE: `options.cacheControl` is intentionally a no-op for
+    // OpenAI-compatible providers. OpenAI automatically caches prompts
+    // (prefix caching on matching chat.completions requests), so no
+    // explicit marker is required. The field is accepted on the shared
+    // CompletionOptions interface so callers can pass it uniformly
+    // without branching on provider.
+    void options?.cacheControl;
+
     if (options?.temperature !== undefined) body.temperature = options.temperature;
     if (options?.topP !== undefined) body.top_p = options.topP;
     if (options?.maxTokens !== undefined) body.max_tokens = options.maxTokens;
@@ -246,6 +282,14 @@ export class OpenAICompatibleProvider implements ModelProvider {
       stream: true,
       stream_options: { include_usage: true },
     };
+
+    // NOTE: `options.cacheControl` is intentionally a no-op for
+    // OpenAI-compatible providers. OpenAI automatically caches prompts
+    // (prefix caching on matching chat.completions requests), so no
+    // explicit marker is required. The field is accepted on the shared
+    // CompletionOptions interface so callers can pass it uniformly
+    // without branching on provider.
+    void options?.cacheControl;
 
     if (options?.temperature !== undefined) body.temperature = options.temperature;
     if (options?.topP !== undefined) body.top_p = options.topP;

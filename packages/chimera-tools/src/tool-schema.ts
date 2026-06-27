@@ -12,6 +12,14 @@ export interface ToolContext {
   eventStream: EventStream;
   costTracker: CostTracker;
   permissionCheck: (tool: string, params: Record<string, unknown>) => PermissionDecision;
+  /**
+   * Optional AbortSignal forwarded by the orchestrator from its
+   * execute()-scoped AbortController. Tools that perform long-running
+   * work (shell, network, etc.) may wire this through to underlying
+   * APIs that support cancellation. Tools that ignore the field
+   * remain correct — the signal is advisory.
+   */
+  signal?: AbortSignal;
 }
 
 export interface ToolResult {
