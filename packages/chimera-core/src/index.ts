@@ -25,9 +25,37 @@ export type { DeliberationMode, UserPreset } from './coordinator/deliberation/ty
 export { BiomeLinter } from './coordinator/biome-linter.js';
 export type { BiomeLinterConfig } from './coordinator/biome-linter.js';
 
+// Cross-vendor review enforcement
+export {
+  extractVendor,
+  areSameVendor,
+  findCrossVendorReviewer,
+  assignCrossVendorProviders,
+  validateCrossVendorReview,
+} from './coordinator/cross-vendor-review.js';
+
+// Purpose guard — every sub-agent must declare purpose
+export {
+  validatePurpose,
+  getAllowedToolsForPurpose,
+  getRecommendedTierForPurpose,
+  ALLOWED_PURPOSES,
+} from './coordinator/purpose-guard.js';
+export type { SubAgentPurpose, PurposeGuardResult } from './coordinator/purpose-guard.js';
+
 // Worktree Isolation
 export { WorktreeIsolation } from './agent/worktree-isolation.js';
 export type { WorktreeInfo } from './agent/worktree-isolation.js';
+
+// Agent YAML — Declarative agent definitions
+export { AgentYamlSchema, validateAgentYaml, safeValidateAgentYaml } from './agent/agent-schema.js';
+export type { AgentYaml, FunctionTool, McpTool, AgentTool, ToolDefinition, ExecutorConfig } from './agent/agent-schema.js';
+export { loadAgentFile, loadAgentsFromDir, discoverAgents, findAgentByName, filterAgentsByRole } from './agent/agent-loader.js';
+export type { AgentLoadError, AgentLoadResult } from './agent/agent-loader.js';
+
+// Harness registry — run agents across multiple backends
+export { HarnessRegistry, createDefaultHarnessRegistry } from './agent/harness-registry.js';
+export type { HarnessType, HarnessRegistration, HarnessConfig } from './agent/harness-registry.js';
 
 // Security
 export { checkUserInput, checkToolOutput, sanitizeForPrompt, AuditLog, SecretDetector, SECRET_PATTERNS } from './security/index.js';

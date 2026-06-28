@@ -51,6 +51,7 @@ export interface EvalScore {
   metrics: Record<string, number>;
   failureCategory?: string;
   notes?: string;
+  judge?: import('./judge-llm.js').JudgeVerdict;
 }
 
 export interface EvalReport {
@@ -95,16 +96,25 @@ export class EvalHarness {
     this.trajectories.set(trajectory.taskId, trajectory);
   }
 
-  scoreTask(taskId: string): EvalScore | null {
+  scoreTask(taskId: string, judgeVerdict?: import('./judge-llm.js').JudgeVerdict): EvalScore | null {
     const task = this.tasks.get(taskId);
     const trajectory = this.trajectories.get(taskId);
     if (!task || !trajectory) return null;
 
     const success = this.evaluateSuccess(task, trajectory);
-    const qualityScore = this.evaluateQuality(task, trajectory);
+    const heuristicQuality = this.evaluateQuality(task, trajectory);
     const costScore = this.evaluateCost(task, trajectory);
     const latencyScore = this.evaluateLatency(task, trajectory);
     const failureCategory = success ? undefined : this.classifyFailure(task, trajectory);
+
+    // Use judge verdict quality if provided, otherwise use heuristic
+    const qualityScore = judgeVerdict?.score ?? heuristicQuality;
+    
+    let notes: string | undefined;
+    if (judgeVerdict) {
+      const pct = Math.round(judgeVerdict.score * 100);
+      notes = `Judge score: ${pct}% — ${judgeVerdict.rationale}`;
+    }
 
     const overallScore = (qualityScore * 0.4) + (costScore * 0.3) + (latencyScore * 0.3);
 
@@ -124,13 +134,16 @@ export class EvalHarness {
         errors: trajectory.steps.filter(s => s.error).length,
       },
       failureCategory,
+      ...(judgeVerdict ? { judge: judgeVerdict } : {}),
+      ...(notes ? { notes } : {}),
     };
   }
 
-  generateReport(runId: string): EvalReport {
+  generateReport(runId: string, verdicts?: Map<string, import('./judge-llm.js').JudgeVerdict>): EvalReport {
     const tasks: EvalScore[] = [];
     for (const taskId of this.tasks.keys()) {
-      const score = this.scoreTask(taskId);
+      const verdict = verdicts?.get(taskId);
+      const score = this.scoreTask(taskId, verdict);
       if (score) tasks.push(score);
     }
 

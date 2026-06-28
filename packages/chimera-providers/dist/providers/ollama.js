@@ -1,6 +1,7 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.OllamaProvider = void 0;
+const capabilities_js_1 = require("../types/capabilities.js");
 const errors_js_1 = require("../errors.js");
 const DEFAULT_BASE_URL = 'http://localhost:11434';
 const DEFAULT_TIMEOUT_MS = 120_000;
@@ -163,6 +164,9 @@ class OllamaProvider {
     }
     getPricing() {
         return { ...FREE_PRICING };
+    }
+    getCapabilities() {
+        return { ...capabilities_js_1.OLLAMA_CAPABILITIES };
     }
     supportsToolCalling() {
         return false;

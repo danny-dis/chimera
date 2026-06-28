@@ -1,6 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.StreamingError = exports.InvalidConfigError = exports.ProviderUnavailableError = exports.QuotaExceededError = exports.RateLimitError = exports.ProviderError = void 0;
+exports.NoProviderConfiguredError = exports.StreamingError = exports.InvalidConfigError = exports.ProviderUnavailableError = exports.QuotaExceededError = exports.RateLimitError = exports.ProviderError = void 0;
 class ProviderError extends Error {
     provider;
     statusCode;
@@ -49,4 +49,13 @@ class StreamingError extends ProviderError {
     }
 }
 exports.StreamingError = StreamingError;
+class NoProviderConfiguredError extends ProviderError {
+    checkedLocations;
+    constructor(message, checkedLocations = [], provider) {
+        super(message, provider);
+        this.name = 'NoProviderConfiguredError';
+        this.checkedLocations = checkedLocations;
+    }
+}
+exports.NoProviderConfiguredError = NoProviderConfiguredError;
 //# sourceMappingURL=errors.js.map

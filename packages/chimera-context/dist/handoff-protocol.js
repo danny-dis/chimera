@@ -2,6 +2,7 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.HandoffProtocol = void 0;
 const fs_1 = require("fs");
+const output_ref_js_1 = require("./output-ref.js");
 class HandoffProtocol {
     proposals = new Map();
     checkpoints = [];
@@ -448,6 +449,26 @@ class HandoffProtocol {
     }
     checkCapabilities(_doc) {
         return true;
+    }
+    // ── Output-ref wiring ──────────────────────────────────────────────
+    /**
+     * Resolve a `$nodeId.output.field` reference against a producer's output.
+     * Returns the field value, or null for declared-optional absent fields.
+     * Throws `OutputRefError` for strict failures (not-in-schema, producer-not-run, etc.).
+     */
+    readOutputField(nodeId, field, nodeOutput) {
+        const resolution = (0, output_ref_js_1.resolveNodeOutputField)(nodeOutput, nodeId, field);
+        if (resolution.kind === 'empty')
+            return null;
+        return resolution.value;
+    }
+    /**
+     * Like `readOutputField`, but returns a `FieldResolution` object that
+     * distinguishes "value present" from "explicitly empty" — useful for
+     * callers that need to log the empty case rather than swallow it.
+     */
+    readOutputFieldWithState(nodeId, field, nodeOutput) {
+        return (0, output_ref_js_1.resolveNodeOutputField)(nodeOutput, nodeId, field);
     }
 }
 exports.HandoffProtocol = HandoffProtocol;

@@ -1,4 +1,5 @@
 import { Message, CompletionOptions, CompletionResult, StreamChunk, ModelInfo, PricingInfo, ModelProvider } from '../types/provider.js';
+import { ProviderCapabilities } from '../types/capabilities.js';
 export interface AnthropicOptions {
     pricing?: PricingInfo;
     modelInfo?: Partial<ModelInfo>;
@@ -28,6 +29,7 @@ export declare class AnthropicProvider implements ModelProvider {
         output: number;
     }): number;
     getPricing(): PricingInfo;
+    getCapabilities(): ProviderCapabilities;
     supportsToolCalling(): boolean;
     supportsStructuredOutput(): boolean;
     supportsVision(): boolean;

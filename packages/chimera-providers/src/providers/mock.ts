@@ -9,6 +9,10 @@ import {
   ModelProvider,
   TokenUsage,
 } from '../types/provider.js';
+import {
+  ProviderCapabilities,
+  DEFAULT_CAPABILITIES,
+} from '../types/capabilities.js';
 
 export interface MockProviderOptions {
   /** Model id to advertise. Default: 'mock-default'. */
@@ -155,6 +159,14 @@ export class MockProvider implements ModelProvider {
 
   getPricing(): PricingInfo {
     return { ...this.options.pricing };
+  }
+
+  getCapabilities(): ProviderCapabilities {
+    return {
+      ...DEFAULT_CAPABILITIES,
+      functionCalling: true,
+      structuredOutput: 'best-effort',
+    };
   }
 
   supportsToolCalling(): boolean {

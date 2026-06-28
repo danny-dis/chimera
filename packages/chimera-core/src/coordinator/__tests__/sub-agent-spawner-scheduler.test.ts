@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { SubAgentSpawner } from '../sub-agent-spawner.js';
 import { EventStream } from '../../event-stream.js';
+import { DynamicConcurrencyEngine } from '../../agent/dynamic-concurrency-engine.js';
 import type { LLMProvider } from '../../session-orchestrator.js';
 
 describe('SubAgentSpawner Scheduler', () => {
@@ -101,5 +102,92 @@ describe('SubAgentSpawner Scheduler', () => {
 
     await spawner.executeAll(tasks);
     expect(order).toEqual(['high', 'low']);
+  });
+
+  it('uses DynamicConcurrencyEngine for dynamic permits', async () => {
+    let active = 0;
+    let peak = 0;
+
+    const provider: LLMProvider = {
+      async complete() {
+        active++;
+        peak = Math.max(peak, active);
+        await new Promise(resolve => setTimeout(resolve, 30));
+        active--;
+        return { content: 'Done', usage: { inputTokens: 10, outputTokens: 10 } };
+      },
+    };
+
+    const engine = new DynamicConcurrencyEngine();
+    const spawner = new SubAgentSpawner(eventStream, {}, engine);
+
+    const tasks = Array.from({ length: 6 }, (_, i) => ({
+      id: `task-${i}`, description: `Task ${i}`, dependencies: [],
+      context: '', provider, estimatedTokens: 100,
+    }));
+
+    await spawner.executeAll(tasks);
+    expect(peak).toBeGreaterThanOrEqual(1);
+    expect(peak).toBeLessThanOrEqual(6);
+  });
+
+  it('retries on rate limit errors with exponential backoff', async () => {
+    let callCount = 0;
+    const provider: LLMProvider = {
+      async complete() {
+        callCount++;
+        if (callCount <= 2) {
+          throw new Error('429 Too Many Requests');
+        }
+        return { content: 'Success', usage: { inputTokens: 10, outputTokens: 10 } };
+      },
+    };
+
+    const spawner = new SubAgentSpawner(eventStream, {}, undefined, { baseBackoffMs: 10, maxBackoffMs: 50 });
+    const tasks = [{
+      id: 'rate-limited', description: 'Rate limited task', dependencies: [],
+      context: '', provider, estimatedTokens: 100,
+    }];
+
+    const results = await spawner.executeAll(tasks);
+    expect(results[0].status).toBe('success');
+    expect(callCount).toBe(3);
+  });
+
+  it('emits provider_rate_limited event on 429', async () => {
+    const provider: LLMProvider = {
+      async complete() {
+        throw new Error('429 rate limit exceeded');
+      },
+    };
+
+    const spawner = new SubAgentSpawner(eventStream, {}, undefined, { baseBackoffMs: 10, maxBackoffMs: 50 });
+    const tasks = [{
+      id: 'fail', description: 'Failing task', dependencies: [],
+      context: '', provider, estimatedTokens: 100,
+    }];
+
+    await spawner.executeAll(tasks);
+    const events = eventStream.getAll();
+    const rateLimited = events.filter((e) => (e as { type: string }).type === 'provider_rate_limited');
+    expect(rateLimited.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it('gives up after max retries on persistent rate limits', async () => {
+    const provider: LLMProvider = {
+      async complete() {
+        throw new Error('429 Too Many Requests');
+      },
+    };
+
+    const spawner = new SubAgentSpawner(eventStream, {}, undefined, { baseBackoffMs: 10, maxBackoffMs: 50, maxRetries: 2 });
+    const tasks = [{
+      id: 'persistent', description: 'Always rate limited', dependencies: [],
+      context: '', provider, estimatedTokens: 100,
+    }];
+
+    const results = await spawner.executeAll(tasks);
+    expect(results[0].status).toBe('error');
+    expect(results[0].error).toContain('Rate limited after');
   });
 });

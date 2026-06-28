@@ -55,10 +55,10 @@ async function findMarkdownFilesRecursive(dir, _prefix, _opts) {
     catch { /* dir doesn't exist */ }
     return results;
 }
-// Local stubs for @chimera/isolation functions
-async function execFileAsync(_cmd, _args) {
-    throw new Error('execFileAsync not available in chimera stub');
-}
+// Real implementation using child_process
+const child_process_1 = require("child_process");
+const util_1 = require("util");
+const execFileAsync = (0, util_1.promisify)(child_process_1.execFile);
 // Local stubs for @chimera/providers functions
 function isRegisteredProvider(_provider) { return true; }
 function getProviderCapabilities(_provider) {

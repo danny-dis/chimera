@@ -1,8 +1,8 @@
 "use strict";
 // @chimera/tools — Tool registry and core tools
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.PTYExecutor = exports.Sandbox = exports.PathRestrictionEngine = exports.CommandPolicy = exports.PermissionEngine = exports.allTools = exports.McpManager = exports.McpClient = exports.lspTool = exports.createWorkflowTool = exports.createSkillTool = exports.skillLoadTool = exports.TaskStatusSchema = exports.TaskSchema = exports.taskUpdateTool = exports.taskListTool = exports.taskCreateTool = exports.questionTool = exports.todoReadTool = exports.todoWriteTool = exports.webSearchTool = exports.webFetchTool = exports.searchReplaceTool = exports.editBlockTool = exports.applyPatchTool = exports.gitBranchTool = exports.gitLogTool = exports.gitDiffTool = exports.gitStatusTool = exports.runShellCommandTool = exports.globFilesTool = exports.searchFilesTool = exports.MediaBlockSchema = exports.listDirectoryTool = exports.writeFileTool = exports.readFileTool = exports.ToolExecutor = exports.ToolRegistry = exports.buildTool = exports.TOOL_DEFAULTS = exports.IGNORED_DIRS = exports.MAX_SHELL_TIMEOUT = exports.DEFAULT_SHELL_TIMEOUT = exports.MAX_OUTPUT_SIZE = exports.MAX_FILE_SIZE = exports.GitCommitSchema = exports.GitFileStatusSchema = exports.SearchMatchSchema = exports.FileEntrySchema = exports.PathSchema = void 0;
-exports.SecretDetector = exports.EnvironmentFilter = void 0;
+exports.createPolicyStackFromConfig = exports.PolicyStack = exports.PathRestrictionEngine = exports.CommandPolicy = exports.PermissionEngine = exports.allTools = exports.McpManager = exports.McpClient = exports.lspTool = exports.createWorkflowTool = exports.createSkillTool = exports.skillLoadTool = exports.TaskStatusSchema = exports.TaskSchema = exports.taskUpdateTool = exports.taskListTool = exports.taskCreateTool = exports.questionTool = exports.todoReadTool = exports.todoWriteTool = exports.webSearchTool = exports.webFetchTool = exports.searchReplaceTool = exports.editBlockTool = exports.applyPatchTool = exports.gitBranchTool = exports.gitLogTool = exports.gitDiffTool = exports.gitStatusTool = exports.runShellCommandTool = exports.globFilesTool = exports.searchFilesTool = exports.MediaBlockSchema = exports.listDirectoryTool = exports.writeFileTool = exports.readFileTool = exports.ToolExecutor = exports.ToolRegistry = exports.buildTool = exports.TOOL_DEFAULTS = exports.IGNORED_DIRS = exports.MAX_SHELL_TIMEOUT = exports.DEFAULT_SHELL_TIMEOUT = exports.MAX_OUTPUT_SIZE = exports.MAX_FILE_SIZE = exports.GitCommitSchema = exports.GitFileStatusSchema = exports.SearchMatchSchema = exports.FileEntrySchema = exports.PathSchema = void 0;
+exports.SecretDetector = exports.EnvironmentFilter = exports.PTYExecutor = exports.Sandbox = exports.createBuiltinPolicy = exports.getBuiltinPolicyNames = exports.networkPolicy = exports.destructiveCommandsPolicy = exports.maxToolCallsPolicy = exports.costBudgetPolicy = exports.trustedProjectPolicy = exports.workspaceWritePolicy = exports.readOnlyPolicy = exports.askOnOsTools = void 0;
 // Schema and types
 var tool_schema_js_1 = require("./tool-schema.js");
 Object.defineProperty(exports, "PathSchema", { enumerable: true, get: function () { return tool_schema_js_1.PathSchema; } });
@@ -123,6 +123,22 @@ var command_policy_js_1 = require("./permission/command-policy.js");
 Object.defineProperty(exports, "CommandPolicy", { enumerable: true, get: function () { return command_policy_js_1.CommandPolicy; } });
 var path_restrictions_js_1 = require("./permission/path-restrictions.js");
 Object.defineProperty(exports, "PathRestrictionEngine", { enumerable: true, get: function () { return path_restrictions_js_1.PathRestrictionEngine; } });
+// Policy stack — three-level governance (Omnigent pattern)
+var policy_stack_js_1 = require("./permission/policy-stack.js");
+Object.defineProperty(exports, "PolicyStack", { enumerable: true, get: function () { return policy_stack_js_1.PolicyStack; } });
+Object.defineProperty(exports, "createPolicyStackFromConfig", { enumerable: true, get: function () { return policy_stack_js_1.createPolicyStackFromConfig; } });
+// Builtin policies
+var builtins_js_1 = require("./permission/builtins.js");
+Object.defineProperty(exports, "askOnOsTools", { enumerable: true, get: function () { return builtins_js_1.askOnOsTools; } });
+Object.defineProperty(exports, "readOnlyPolicy", { enumerable: true, get: function () { return builtins_js_1.readOnlyPolicy; } });
+Object.defineProperty(exports, "workspaceWritePolicy", { enumerable: true, get: function () { return builtins_js_1.workspaceWritePolicy; } });
+Object.defineProperty(exports, "trustedProjectPolicy", { enumerable: true, get: function () { return builtins_js_1.trustedProjectPolicy; } });
+Object.defineProperty(exports, "costBudgetPolicy", { enumerable: true, get: function () { return builtins_js_1.costBudgetPolicy; } });
+Object.defineProperty(exports, "maxToolCallsPolicy", { enumerable: true, get: function () { return builtins_js_1.maxToolCallsPolicy; } });
+Object.defineProperty(exports, "destructiveCommandsPolicy", { enumerable: true, get: function () { return builtins_js_1.destructiveCommandsPolicy; } });
+Object.defineProperty(exports, "networkPolicy", { enumerable: true, get: function () { return builtins_js_1.networkPolicy; } });
+Object.defineProperty(exports, "getBuiltinPolicyNames", { enumerable: true, get: function () { return builtins_js_1.getBuiltinPolicyNames; } });
+Object.defineProperty(exports, "createBuiltinPolicy", { enumerable: true, get: function () { return builtins_js_1.createBuiltinPolicy; } });
 // Sandbox
 var sandbox_js_1 = require("./sandbox/sandbox.js");
 Object.defineProperty(exports, "Sandbox", { enumerable: true, get: function () { return sandbox_js_1.Sandbox; } });

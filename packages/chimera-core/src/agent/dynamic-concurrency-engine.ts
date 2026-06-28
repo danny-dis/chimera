@@ -4,6 +4,10 @@ import { type ProviderConfig } from '@chimera/providers';
 import { EventLoopMonitor } from './event-loop-monitor';
 import { ProviderQuotaTracker } from './provider-quota-tracker';
 
+export const MIN_CONCURRENCY = 1;
+export const MAX_CONCURRENCY = 500;
+const DEFAULT_RECALCULATION_INTERVAL_MS = 5000;
+
 export type ConcurrencyMode = 'default' | 'high' | 'interactive';
 
 export interface ConcurrencyOverrides {
@@ -16,13 +20,15 @@ export class DynamicConcurrencyEngine {
   private loopMonitor: EventLoopMonitor;
   private quotaTrackers: Map<string, ProviderQuotaTracker> = new Map();
   private readonly DEFAULT_SOFT_LIMIT = 5;
-  private readonly HARD_LIMIT = 500;
-  private readonly MEMORY_PER_AGENT_MB = 10; // MB
+  private readonly MEMORY_PER_AGENT_MB = 10;
+  private recalculationTimer: ReturnType<typeof setInterval> | null = null;
+  private lastSuggestedConcurrency: number = MIN_CONCURRENCY;
+  private recalculationListeners: Set<(concurrency: number) => void> = new Set();
 
   constructor() {
     this.governor = new ConcurrencyGovernor({
       baseConcurrency: this.DEFAULT_SOFT_LIMIT,
-      maxConcurrency: this.HARD_LIMIT,
+      maxConcurrency: MAX_CONCURRENCY,
     });
     this.loopMonitor = new EventLoopMonitor();
   }
@@ -86,7 +92,47 @@ export class DynamicConcurrencyEngine {
       suggested = Math.min(suggested, Math.max(1, Math.floor(quota.rpmRemaining / 10)));
     }
 
-    // Always cap by hard limit
-    return Math.min(suggested, this.HARD_LIMIT);
+    // Always enforce hard safety bounds
+    this.lastSuggestedConcurrency = Math.max(MIN_CONCURRENCY, Math.min(suggested, MAX_CONCURRENCY));
+    return this.lastSuggestedConcurrency;
+  }
+
+  recalculate(
+    providerConfig?: ProviderConfig,
+    overrides?: ConcurrencyOverrides,
+    activeAgentCount: number = 0,
+  ): number {
+    const concurrency = this.getSuggestedConcurrency(providerConfig, overrides, activeAgentCount);
+    for (const listener of this.recalculationListeners) {
+      listener(concurrency);
+    }
+    return concurrency;
+  }
+
+  startRecalculation(intervalMs: number = DEFAULT_RECALCULATION_INTERVAL_MS): void {
+    if (this.recalculationTimer !== null) {
+      return;
+    }
+    this.recalculationTimer = setInterval(() => {
+      this.recalculate();
+    }, intervalMs);
+  }
+
+  stopRecalculation(): void {
+    if (this.recalculationTimer !== null) {
+      clearInterval(this.recalculationTimer);
+      this.recalculationTimer = null;
+    }
+  }
+
+  onRecalculation(listener: (concurrency: number) => void): () => void {
+    this.recalculationListeners.add(listener);
+    return () => {
+      this.recalculationListeners.delete(listener);
+    };
+  }
+
+  getLastSuggestedConcurrency(): number {
+    return this.lastSuggestedConcurrency;
   }
 }

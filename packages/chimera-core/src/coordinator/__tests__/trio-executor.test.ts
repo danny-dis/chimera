@@ -71,17 +71,17 @@ describe('TrioExecutor — smoke', () => {
     const executor = new TrioExecutor({ eventStream, registry, costTracker });
 
     const writerFactory = () => makeMockProvider([
-      { match: 'You are the writer', content: 'Draft: the answer is 42.' },
+      { match: 'You are a code writer', content: 'Draft: the answer is 42.' },
     ]);
     const reviewerFactory = () => makeMockProvider([
-      { match: 'You are the reviewer', content: JSON.stringify({
+      { match: 'You are a code reviewer', content: JSON.stringify({
         verdict: 'pass',
         issues: [],
         commentary: 'looks good',
       }) },
     ]);
     const challengerFactory = () => makeMockProvider([
-      { match: 'You are the challenger', content: JSON.stringify({
+      { match: 'You are a challenger', content: JSON.stringify({
         challenges: ['what about edge cases?'],
         alternatives: ['consider also X'],
       }) },
@@ -133,8 +133,8 @@ describe('TrioExecutor — smoke', () => {
     const registry = makeRegistry();
     const executor = new TrioExecutor({ eventStream, registry });
 
-    const writerFactory = () => makeMockProvider([{ match: 'You are the writer', content: 'draft' }]);
-    const reviewerFactory = () => makeMockProvider([{ match: 'You are the reviewer', content: 'review' }]);
+    const writerFactory = () => makeMockProvider([{ match: 'You are a code writer', content: 'draft' }]);
+    const reviewerFactory = () => makeMockProvider([{ match: 'You are a code reviewer', content: 'review' }]);
 
     const result = await executor.executeWithAnalysis(
       'task',

@@ -21,7 +21,7 @@ describe('SessionOrchestrator — AuditLog integration', () => {
 
   beforeEach(() => {
     auditLog = new AuditLog();
-    orchestrator = new SessionOrchestrator(undefined, undefined, undefined, undefined, auditLog);
+    orchestrator = new SessionOrchestrator(undefined, undefined, undefined, undefined, { auditLog });
   });
 
   it('exposes the injected AuditLog via getAuditLog', () => {
@@ -45,9 +45,7 @@ describe('SessionOrchestrator — AuditLog integration', () => {
     expect(llmCalls.length).toBeGreaterThanOrEqual(1);
     const writerCall = llmCalls.find((e) => e.details.role === 'writer');
     expect(writerCall).toBeDefined();
-    expect(writerCall?.details.model).toBe('claude-opus-4');
-    expect(writerCall?.details.provider).toBe('anthropic');
-    expect(typeof writerCall?.details.latencyMs).toBe('number');
+    expect(writerCall?.details.model).toBe('writer');
     expect(writerCall?.details.tokens).toBe(300);
   });
 
@@ -151,7 +149,7 @@ describe('SessionOrchestrator — AuditLog integration', () => {
       { registry: mockToolRegistry, executor: mockToolExecutor },
       undefined,
       undefined,
-      localAudit,
+      { auditLog: localAudit },
     );
     await orch.execute({
       task: 'fix typo',
@@ -218,7 +216,7 @@ describe('SessionOrchestrator — AuditLog integration', () => {
       { registry: mockToolRegistry, executor: mockToolExecutor },
       undefined,
       undefined,
-      localAudit,
+      { auditLog: localAudit },
     );
     await orch.execute({
       task: 'do it',

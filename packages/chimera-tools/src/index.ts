@@ -111,9 +111,27 @@ export const allTools = [
 ] as const;
 
 // Permission engine
-export { PermissionEngine, type PermissionProfile } from './permission/policy.js';
+export { PermissionEngine, type PermissionProfile, type PermissionMode, type PermissionRule, type PermissionCondition } from './permission/policy.js';
 export { CommandPolicy } from './permission/command-policy.js';
 export { PathRestrictionEngine } from './permission/path-restrictions.js';
+
+// Policy stack — three-level governance (Omnigent pattern)
+export { PolicyStack, createPolicyStackFromConfig } from './permission/policy-stack.js';
+export type { PolicyLevel } from './permission/policy-stack.js';
+
+// Builtin policies
+export {
+  askOnOsTools,
+  readOnlyPolicy,
+  workspaceWritePolicy,
+  trustedProjectPolicy,
+  costBudgetPolicy,
+  maxToolCallsPolicy,
+  destructiveCommandsPolicy,
+  networkPolicy,
+  getBuiltinPolicyNames,
+  createBuiltinPolicy,
+} from './permission/builtins.js';
 
 // Sandbox
 export { Sandbox } from './sandbox/sandbox.js';

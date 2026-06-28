@@ -26,6 +26,7 @@ class FusionExecutor {
         // ── Recursion guard ───────────────────────────────────────────────
         const maxDepth = config.maxDepth ?? 1;
         if (context.depth >= maxDepth) {
+            this.safeEmit({ type: 'fusion_recursion_blocked', depth: context.depth, maxDepth });
             return this.degraded('recursion limit reached', totalTokens, totalCostUsd, startTime);
         }
         // Resolve Panel Models ──────────────────────────────────────────
@@ -87,7 +88,9 @@ class FusionExecutor {
                 this.recordSpend(v.modelId, cost);
             }
             else {
-                this.safeEmit({ type: 'fusion_provider_error', modelId: 'unknown', error: String(res.reason) });
+                const errStr = String(res.reason);
+                this.safeEmit({ type: 'fusion_provider_error', modelId: 'unknown', error: errStr });
+                panelResults.push({ modelId: 'unknown', content: '', inputTokens: 0, outputTokens: 0, durationMs: 0, error: errStr });
             }
         }
         if (panelResults.length === 0) {
@@ -140,30 +143,52 @@ class FusionExecutor {
                 }
             }
         }
-        // ── Judge Step ────────────────────────────────────────────────────
+        // ── Budget enforcement (after panel calls, before judge) ──────────
+        if (config.budgetUsd !== undefined) {
+            const currentCost = this.costTracker?.getTotalCost() ?? 0;
+            if (currentCost >= config.budgetUsd) {
+                this.safeEmit({ type: 'fusion_budget_exceeded', currentCost, budget: config.budgetUsd });
+                return this.degraded('budget exceeded', totalTokens, totalCostUsd, startTime);
+            }
+        }
+        // ── Judge Step (with failover chain) ──────────────────────────────
         const judgeStart = Date.now();
         let analysis;
-        try {
-            const judgeProvider = providerFactory(config.judgeModel);
-            const prompt = this.buildJudgePrompt(task, panelResults);
-            const judgeRes = await judgeProvider.complete([{ role: 'user', content: prompt }], { responseFormat: 'json_object', temperature: config.temperature, maxTokens: config.maxCompletionTokens });
-            const parsed = JSON.parse(judgeRes.content);
-            analysis = {
-                thought: parsed.thought ?? '',
-                finalResponse: parsed.finalResponse ?? judgeRes.content,
-                consensus: parsed.consensus ?? [],
-                conflicts: parsed.conflicts ?? [],
-                uniqueInsights: parsed.uniqueInsights ?? [],
-                blindSpots: parsed.blindSpots ?? [],
-                confidence: parsed.confidence ?? 0.8,
-            };
-            totalTokens += (judgeRes.usage?.inputTokens ?? 0) + (judgeRes.usage?.outputTokens ?? 0);
-            const cost = this.computeCost(config.judgeModel, judgeRes.usage?.inputTokens ?? 0, judgeRes.usage?.outputTokens ?? 0);
-            totalCostUsd += cost;
-            this.recordSpend(config.judgeModel, cost);
+        const judgeModels = [config.judgeModel, ...(config.judgeFailover ?? [])];
+        const prompt = this.buildJudgePrompt(task, panelResults);
+        for (const judgeModel of judgeModels) {
+            try {
+                const judgeProvider = providerFactory(judgeModel);
+                const judgeRes = await judgeProvider.complete([{ role: 'user', content: prompt }], { responseFormat: 'json_object', temperature: config.temperature, maxTokens: config.maxCompletionTokens });
+                let parsed;
+                try {
+                    parsed = JSON.parse(judgeRes.content);
+                }
+                catch {
+                    this.safeEmit({ type: 'fusion_judge_parse_error', raw: judgeRes.content });
+                    return this.degraded('judge returned non-JSON output', totalTokens, totalCostUsd, startTime);
+                }
+                analysis = {
+                    thought: parsed.thought ?? '',
+                    finalResponse: parsed.finalResponse ?? judgeRes.content,
+                    consensus: parsed.consensus ?? [],
+                    conflicts: parsed.conflicts ?? [],
+                    uniqueInsights: parsed.uniqueInsights ?? [],
+                    blindSpots: parsed.blindSpots ?? [],
+                    confidence: parsed.confidence ?? 0.8,
+                };
+                totalTokens += (judgeRes.usage?.inputTokens ?? 0) + (judgeRes.usage?.outputTokens ?? 0);
+                const cost = this.computeCost(judgeModel, judgeRes.usage?.inputTokens ?? 0, judgeRes.usage?.outputTokens ?? 0);
+                totalCostUsd += cost;
+                this.recordSpend(judgeModel, cost);
+                break;
+            }
+            catch (err) {
+                this.safeEmit({ type: 'fusion_fallback_judge', failedModel: judgeModel, error: String(err) });
+            }
         }
-        catch (err) {
-            return this.degraded(`judge failed: ${String(err)}`, totalTokens, totalCostUsd, startTime);
+        if (!analysis) {
+            return this.degraded('all judges failed', totalTokens, totalCostUsd, startTime);
         }
         this.safeEmit({ type: 'fusion_completed', task, durationMs: Date.now() - startTime, totalCostUsd });
         return {
@@ -213,9 +238,6 @@ class FusionExecutor {
     recordSpend(modelId, costUsd) {
         if (this.costTracker && costUsd > 0)
             this.costTracker.recordSpend(modelId, costUsd);
-    }
-    isOverBudget(config, currentCost) {
-        return config.budgetUsd !== undefined && config.budgetUsd > 0 && currentCost > config.budgetUsd;
     }
     safeEmit(event) {
         try {

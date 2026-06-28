@@ -139,7 +139,7 @@ exports.ChimeraEventSchema = zod_1.z.discriminatedUnion('type', [
     }),
     zod_1.z.object({
         type: zod_1.z.literal('deliberation_result'),
-        mode: zod_1.z.enum(['solo', 'duo', 'trio', 'fusion', 'hive', 'merge', 'auto']),
+        mode: zod_1.z.enum(['solo', 'duo', 'trio', 'fusion', 'hive', 'merge', 'swarm', 'auto']),
         output: zod_1.z.string(),
         analysis: zod_1.z.object({
             thought: zod_1.z.string(),
@@ -261,7 +261,7 @@ exports.ChimeraEventSchema = zod_1.z.discriminatedUnion('type', [
         type: zod_1.z.literal('auto_preset_selected'),
         task: zod_1.z.string(),
         complexity: zod_1.z.number(),
-        selectedPreset: zod_1.z.enum(['solo', 'duo', 'trio', 'fusion', 'merge', 'hive', 'auto']),
+        selectedPreset: zod_1.z.enum(['solo', 'duo', 'trio', 'fusion', 'merge', 'hive', 'swarm', 'auto']),
         taskType: zod_1.z.string(),
         timestamp: zod_1.z.number(),
     }),
@@ -282,6 +282,50 @@ exports.ChimeraEventSchema = zod_1.z.discriminatedUnion('type', [
     zod_1.z.object({
         type: zod_1.z.literal('error'),
         message: zod_1.z.string(),
+    }),
+    // --- Fusion mode telemetry ---
+    zod_1.z.object({
+        type: zod_1.z.literal('fusion_started'),
+        task: zod_1.z.string(),
+        models: zod_1.z.array(zod_1.z.string()),
+        judge: zod_1.z.string(),
+    }),
+    zod_1.z.object({
+        type: zod_1.z.literal('fusion_completed'),
+        task: zod_1.z.string(),
+        durationMs: zod_1.z.number(),
+        totalCostUsd: zod_1.z.number(),
+    }),
+    zod_1.z.object({
+        type: zod_1.z.literal('fusion_provider_error'),
+        modelId: zod_1.z.string(),
+        error: zod_1.z.string(),
+    }),
+    zod_1.z.object({
+        type: zod_1.z.literal('fusion_budget_exceeded'),
+        currentCost: zod_1.z.number(),
+        budget: zod_1.z.number(),
+    }),
+    zod_1.z.object({
+        type: zod_1.z.literal('fusion_recursion_blocked'),
+        depth: zod_1.z.number(),
+        maxDepth: zod_1.z.number(),
+    }),
+    zod_1.z.object({
+        type: zod_1.z.literal('fusion_fallback_judge'),
+        failedModel: zod_1.z.string(),
+        error: zod_1.z.string(),
+    }),
+    zod_1.z.object({
+        type: zod_1.z.literal('fusion_judge_parse_error'),
+        raw: zod_1.z.string(),
+    }),
+    // --- Dynamic concurrency telemetry ---
+    zod_1.z.object({
+        type: zod_1.z.literal('provider_rate_limited'),
+        providerId: zod_1.z.string(),
+        retryAfterMs: zod_1.z.number(),
+        remainingRpm: zod_1.z.number(),
     }),
 ]);
 //# sourceMappingURL=events.js.map

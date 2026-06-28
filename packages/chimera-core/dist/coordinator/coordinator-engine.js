@@ -26,18 +26,24 @@ class CoordinatorEngine {
         this.eventStream = params.eventStream;
         this.config = { ...DEFAULT_CONFIG, ...params.config };
     }
+    safeEmit(event) {
+        try {
+            this.eventStream.append(event);
+        }
+        catch { /* ignore */ }
+    }
     /**
      * Execute a task using parallel sub-agents.
      */
     async execute(task, context) {
         // Step 1: Decompose
-        this.eventStream.append({
+        this.safeEmit({
             type: 'task_classified',
             complexity: { score: 0.8, dimensions: { decomposability: 0.9 } },
             estimatedCost: 0,
         });
         const decomposition = await this.decomposer.decompose(task, context);
-        this.eventStream.append({
+        this.safeEmit({
             type: 'agent_spawned',
             agentId: 'coordinator',
             role: 'writer',
@@ -61,7 +67,7 @@ class CoordinatorEngine {
         const aggregated = await this.aggregator.aggregate(results);
         // Step 5: Handle unresolved conflicts
         if (!aggregated.resolved && this.config.conflictResolution === 'escalate') {
-            this.eventStream.append({
+            this.safeEmit({
                 type: 'handoff_triggered',
                 fromAgent: 'coordinator',
                 toAgent: 'user',

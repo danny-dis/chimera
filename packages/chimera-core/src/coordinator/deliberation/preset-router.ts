@@ -51,7 +51,7 @@ export class PresetRouter {
     // "fusion" and "hive" here are task *types* (keyword classifications),
     // not presets — they happen to share names with the presets they map to.
     this.taskTypeOverrides = config?.taskTypeOverrides ?? {
-      debug: 'trio',    // debug tasks → writer+reviewer+challenger
+      debug: 'solo',    // debug tasks → single-agent fix
       review: 'duo',    // review tasks → two-perspective analysis
       fusion: 'fusion', // "compare/alternatives" tasks → multi-model panel + judge
       hive: 'hive',     // "multiple/several" tasks → decompose + parallel execution
@@ -103,11 +103,9 @@ export class PresetRouter {
    *
    * Priority order:
    *   1. Task type signals (debug, review, hive, fusion) → override
-   *   2. Very high complexity (>= 0.8) + 2+ providers → fusion
-   *   3. High complexity (>= 0.7) + decomposable signals → hive
-   *   4. High complexity (>= 0.6) + 2+ providers → trio
-   *   5. Medium complexity (>= 0.3) + 2+ providers → duo
-   *   6. Low complexity (< 0.3) → solo
+   *   2. High complexity (>= 0.6) + 2+ providers → trio
+   *   3. Medium complexity (>= 0.3) + 2+ providers → duo
+   *   4. Low complexity (< 0.3) → solo
    */
   private selectByComplexity(
     complexity: ComplexityScore,
@@ -115,20 +113,6 @@ export class PresetRouter {
   ): DeliberationMode {
     const { solo, duo } = this.thresholds;
     const providerCount = availableProviders.length;
-
-    // Very high complexity → fusion (multi-perspective analysis with judge)
-    if (complexity.overall >= 0.8 && providerCount >= 2) {
-      return 'fusion';
-    }
-
-    // High complexity + decomposable signals → hive (parallel subtask execution)
-    if (complexity.overall >= 0.7 && providerCount >= 2) {
-      const hasDecomposableSignals =
-        complexity.dimensions.codeVolume > 0.6 || complexity.dimensions.architecturalDepth > 0.6;
-      if (hasDecomposableSignals) {
-        return 'hive';
-      }
-    }
 
     // Low complexity → solo
     if (complexity.overall < solo) {

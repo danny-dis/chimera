@@ -1,6 +1,7 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.GoogleProvider = void 0;
+const capabilities_js_1 = require("../types/capabilities.js");
 const errors_js_1 = require("../errors.js");
 const GOOGLE_BASE_URL = 'https://generativelanguage.googleapis.com';
 const DEFAULT_TIMEOUT_MS = 60_000;
@@ -306,6 +307,9 @@ class GoogleProvider {
     }
     getPricing() {
         return { ...this.pricing };
+    }
+    getCapabilities() {
+        return { ...capabilities_js_1.GOOGLE_CAPABILITIES };
     }
     supportsToolCalling() {
         return true;

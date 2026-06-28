@@ -39,10 +39,10 @@ export declare const HookDefinitionSchema: z.ZodObject<{
     env?: Record<string, string>;
     priority?: number;
     id?: string;
+    enabled?: boolean;
     event?: "error" | "pre-tool-use" | "post-tool-use" | "pre-execution" | "post-execution" | "stop" | "session-start" | "session-end" | "subagent-start" | "subagent-stop" | "user-prompt-submit" | "budget-warning";
     script?: string;
     canModify?: boolean;
-    enabled?: boolean;
     toolFilter?: string;
     dataFilter?: string;
 }, {
@@ -52,10 +52,10 @@ export declare const HookDefinitionSchema: z.ZodObject<{
     env?: Record<string, string>;
     priority?: number;
     id?: string;
+    enabled?: boolean;
     event?: "error" | "pre-tool-use" | "post-tool-use" | "pre-execution" | "post-execution" | "stop" | "session-start" | "session-end" | "subagent-start" | "subagent-stop" | "user-prompt-submit" | "budget-warning";
     script?: string;
     canModify?: boolean;
-    enabled?: boolean;
     toolFilter?: string;
     dataFilter?: string;
 }>;

@@ -23,7 +23,6 @@ export declare class FusionExecutor {
     private computeCost;
     private lookupModel;
     private recordSpend;
-    private isOverBudget;
     private safeEmit;
     private degraded;
 }

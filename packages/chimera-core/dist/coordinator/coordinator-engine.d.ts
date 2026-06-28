@@ -16,6 +16,7 @@ export declare class CoordinatorEngine {
         eventStream: EventStream;
         config?: Partial<CoordinatorConfig>;
     });
+    private safeEmit;
     /**
      * Execute a task using parallel sub-agents.
      */

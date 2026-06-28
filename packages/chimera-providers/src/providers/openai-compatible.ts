@@ -9,6 +9,10 @@ import {
   ModelProvider,
 } from '../types/provider.js';
 import {
+  ProviderCapabilities,
+  DEFAULT_CAPABILITIES,
+} from '../types/capabilities.js';
+import {
   ProviderError,
   RateLimitError,
   QuotaExceededError,
@@ -376,6 +380,14 @@ export class OpenAICompatibleProvider implements ModelProvider {
 
   getPricing(): PricingInfo {
     return { ...this.pricing };
+  }
+
+  getCapabilities(): ProviderCapabilities {
+    return {
+      ...DEFAULT_CAPABILITIES,
+      functionCalling: true,
+      structuredOutput: 'best-effort',
+    };
   }
 
   supportsToolCalling(): boolean {

@@ -1,5 +1,4 @@
-// @chimera/isolation — Worktree-based isolation for parallel agent runs.
-// Public API is exported below; implementation files live in providers/.
+// @chimera/isolation — Isolation for parallel agent runs (worktrees + cloud sandboxes).
 
 export {
   WorktreeProvider,
@@ -24,6 +23,16 @@ export {
   cleanupStaleWorktrees,
   removeWorktree,
 } from './cleanup.js';
+
+// Cloud sandbox providers
+export { E2BProvider } from './providers/e2b.js';
+export type { E2BConfig } from './providers/e2b.js';
+export { ModalProvider } from './providers/modal.js';
+export type { ModalConfig } from './providers/modal.js';
+
+// Sandbox registry
+export { SandboxRegistry, createDefaultSandboxRegistry } from './sandbox-registry.js';
+export type { SandboxProviderRegistration } from './sandbox-registry.js';
 
 // Public types
 export type {

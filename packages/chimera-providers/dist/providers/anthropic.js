@@ -1,6 +1,7 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.AnthropicProvider = void 0;
+const capabilities_js_1 = require("../types/capabilities.js");
 const errors_js_1 = require("../errors.js");
 const ANTHROPIC_BASE_URL = 'https://api.anthropic.com';
 const ANTHROPIC_API_VERSION = '2023-06-01';
@@ -357,6 +358,9 @@ class AnthropicProvider {
     }
     getPricing() {
         return { ...this.pricing };
+    }
+    getCapabilities() {
+        return { ...capabilities_js_1.ANTHROPIC_CAPABILITIES };
     }
     supportsToolCalling() {
         return true;

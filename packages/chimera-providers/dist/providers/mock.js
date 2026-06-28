@@ -2,6 +2,7 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.MockProvider = void 0;
 exports.createDefaultMockProvider = createDefaultMockProvider;
+const capabilities_js_1 = require("../types/capabilities.js");
 /**
  * A deterministic, offline ModelProvider used as a default when no real
  * API keys are configured. Useful for:
@@ -107,6 +108,13 @@ class MockProvider {
     }
     getPricing() {
         return { ...this.options.pricing };
+    }
+    getCapabilities() {
+        return {
+            ...capabilities_js_1.DEFAULT_CAPABILITIES,
+            functionCalling: true,
+            structuredOutput: 'best-effort',
+        };
     }
     supportsToolCalling() {
         return true;

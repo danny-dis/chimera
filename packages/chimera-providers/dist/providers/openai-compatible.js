@@ -1,6 +1,7 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.OpenAICompatibleProvider = void 0;
+const capabilities_js_1 = require("../types/capabilities.js");
 const errors_js_1 = require("../errors.js");
 const DEFAULT_PRICING = {
     inputPerMillion: 0,
@@ -305,6 +306,13 @@ class OpenAICompatibleProvider {
     }
     getPricing() {
         return { ...this.pricing };
+    }
+    getCapabilities() {
+        return {
+            ...capabilities_js_1.DEFAULT_CAPABILITIES,
+            functionCalling: true,
+            structuredOutput: 'best-effort',
+        };
     }
     supportsToolCalling() {
         return true;

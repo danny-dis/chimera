@@ -17,6 +17,10 @@ export const ProviderConfigSchema = z.object({
     maxParallelInstances: z.number().positive(),
     rateLimitRpm: z.number().positive(),
   }),
+  rateLimits: z.object({
+    rpm: z.number().positive().optional(),
+    tpm: z.number().positive().optional(),
+  }).optional(),
 });
 
 export type ProviderConfig = z.infer<typeof ProviderConfigSchema>;

@@ -3,22 +3,27 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.DynamicConcurrencyEngine = void 0;
+exports.DynamicConcurrencyEngine = exports.MAX_CONCURRENCY = exports.MIN_CONCURRENCY = void 0;
 const os_1 = __importDefault(require("os"));
 const concurrency_governor_1 = require("./concurrency-governor");
 const event_loop_monitor_1 = require("./event-loop-monitor");
 const provider_quota_tracker_1 = require("./provider-quota-tracker");
+exports.MIN_CONCURRENCY = 1;
+exports.MAX_CONCURRENCY = 500;
+const DEFAULT_RECALCULATION_INTERVAL_MS = 5000;
 class DynamicConcurrencyEngine {
     governor;
     loopMonitor;
     quotaTrackers = new Map();
     DEFAULT_SOFT_LIMIT = 5;
-    HARD_LIMIT = 500;
-    MEMORY_PER_AGENT_MB = 10; // MB
+    MEMORY_PER_AGENT_MB = 10;
+    recalculationTimer = null;
+    lastSuggestedConcurrency = exports.MIN_CONCURRENCY;
+    recalculationListeners = new Set();
     constructor() {
         this.governor = new concurrency_governor_1.ConcurrencyGovernor({
             baseConcurrency: this.DEFAULT_SOFT_LIMIT,
-            maxConcurrency: this.HARD_LIMIT,
+            maxConcurrency: exports.MAX_CONCURRENCY,
         });
         this.loopMonitor = new event_loop_monitor_1.EventLoopMonitor();
     }
@@ -68,8 +73,39 @@ class DynamicConcurrencyEngine {
             const quota = tracker.getStatus();
             suggested = Math.min(suggested, Math.max(1, Math.floor(quota.rpmRemaining / 10)));
         }
-        // Always cap by hard limit
-        return Math.min(suggested, this.HARD_LIMIT);
+        // Always enforce hard safety bounds
+        this.lastSuggestedConcurrency = Math.max(exports.MIN_CONCURRENCY, Math.min(suggested, exports.MAX_CONCURRENCY));
+        return this.lastSuggestedConcurrency;
+    }
+    recalculate(providerConfig, overrides, activeAgentCount = 0) {
+        const concurrency = this.getSuggestedConcurrency(providerConfig, overrides, activeAgentCount);
+        for (const listener of this.recalculationListeners) {
+            listener(concurrency);
+        }
+        return concurrency;
+    }
+    startRecalculation(intervalMs = DEFAULT_RECALCULATION_INTERVAL_MS) {
+        if (this.recalculationTimer !== null) {
+            return;
+        }
+        this.recalculationTimer = setInterval(() => {
+            this.recalculate();
+        }, intervalMs);
+    }
+    stopRecalculation() {
+        if (this.recalculationTimer !== null) {
+            clearInterval(this.recalculationTimer);
+            this.recalculationTimer = null;
+        }
+    }
+    onRecalculation(listener) {
+        this.recalculationListeners.add(listener);
+        return () => {
+            this.recalculationListeners.delete(listener);
+        };
+    }
+    getLastSuggestedConcurrency() {
+        return this.lastSuggestedConcurrency;
     }
 }
 exports.DynamicConcurrencyEngine = DynamicConcurrencyEngine;

@@ -12,6 +12,10 @@ export interface SkillFrontmatter {
     inputs?: Record<string, string>;
     /** Modes this skill applies to. ['all'] or omitted = every mode. */
     modes?: string[];
+    /** File path patterns that trigger this skill. Glob syntax: *, **, ?. Omitted = always active. */
+    paths?: string[];
+    /** Tools this skill is allowed to use. Omitted = unrestricted. */
+    allowedTools?: string[];
 }
 /** Result of loading a skill: raw content, parsed frontmatter, and source. */
 export interface LoadedSkill {
@@ -24,6 +28,10 @@ export interface LoadedSkill {
     inputsSchema: z.ZodTypeAny;
     /** Modes this skill applies to. ['all'] = every mode. */
     modes: string[];
+    /** File path patterns that trigger this skill. Empty = always active. */
+    paths: string[];
+    /** Tools this skill is allowed to use. Empty = unrestricted. */
+    allowedTools: string[];
 }
 /** A pack record returned by `loadSkillsForMode` — content + provenance. */
 export interface SkillRecord {
@@ -114,6 +122,15 @@ export declare function loadSkillsForMode(opts: {
     workspaceRoot: string;
     eventStream?: import('../event-stream.js').EventStream;
 }): Array<SkillRecord>;
+/**
+ * Check if a file path matches any of the given glob-like patterns.
+ * Supports: *, **, ? wildcards. Simple implementation without external deps.
+ *
+ * - `*` matches any characters except `/`
+ * - `**` matches any characters including `/`
+ * - `?` matches exactly one character except `/`
+ */
+export declare function matchesPathPatterns(filePath: string, patterns: string[]): boolean;
 export { resolveSkillPack };
 /**
  * Enumerate every discoverable skill across all known directories. Unlike

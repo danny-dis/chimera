@@ -39,7 +39,7 @@ interface EventCounter {
   fusion_provider_error: number;
   fusion_judge_error: number;
   fusion_judge_parse_error: number;
-  fusion_recurision_blocked: number;
+  fusion_recursion_blocked: number;
   fusion_config_invalid: number;
   fusion_fallback_judge: number;
   fusion_budget_exceeded: number;
@@ -53,7 +53,7 @@ function attachCounter(eventStream: EventStream): EventCounter {
     fusion_provider_error: 0,
     fusion_judge_error: 0,
     fusion_judge_parse_error: 0,
-    fusion_recurision_blocked: 0,
+    fusion_recursion_blocked: 0,
     fusion_config_invalid: 0,
     fusion_fallback_judge: 0,
     fusion_budget_exceeded: 0,
@@ -220,12 +220,12 @@ async function metricRecursion(): Promise<MetricResult> {
     { depth: 2 }
   );
 
-  const blockedEvents = eventStream.getAll().filter((e) => (e as { type: string }).type === 'fusion_recurision_blocked');
+  const blockedEvents = eventStream.getAll().filter((e) => (e as { type: string }).type === 'fusion_recursion_blocked');
   const score: Score = (result.degraded && blockedEvents.length === 1) ? 1 : 0;
   return {
     name: 'Recursion',
     score,
-    expected: 'degraded=true with reason "recursion limit reached", 1 fusion_recurision_blocked event',
+    expected: 'degraded=true with reason "recursion limit reached", 1 fusion_recursion_blocked event',
     actual: `degraded=${result.degraded}, reason="${result.degradationReason}", blockedEvents=${blockedEvents.length}`,
   };
 }

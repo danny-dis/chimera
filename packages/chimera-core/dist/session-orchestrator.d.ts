@@ -209,6 +209,12 @@ export declare class SessionOrchestrator {
     private recallService;
     private autoDream;
     private _extractionCursor;
+    toolCallHistory: Array<{
+        toolName: string;
+        args: Record<string, unknown>;
+        result: any;
+    }>;
+    private _lastComplexity;
     constructor(eventStream?: EventStream, tools?: {
         registry: ToolRegistryInterface;
         executor: ToolExecutorInterface;

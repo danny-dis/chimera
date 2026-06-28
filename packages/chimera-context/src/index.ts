@@ -33,3 +33,12 @@ export type {
   HandoffChecklist,
   HandoffDelta,
 } from './types.js';
+
+// Output-ref resolver (for $nodeId.output.field references)
+export { resolveNodeOutputField, OutputRefError, declaredFieldsFromSchema } from './output-ref.js';
+export type {
+  NodeOutput,
+  NodeOutputState,
+  FieldResolution,
+  OutputRefErrorReason,
+} from './output-ref.js';

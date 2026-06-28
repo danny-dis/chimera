@@ -1,8 +1,8 @@
 "use strict";
 // @chimera/core — Core orchestrator, event stream, and agent mesh coordination
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.fingerprintPayload = exports.SIDEQUERY_NO_LEAK_MARKER = exports.setSideQueryChannel = exports.sideQuery = exports.parseSkillPack = exports.SKILL_BUNDLES = exports._resetLegacyWarnings = exports.buildInputsSchema = exports.parseSkillFile = exports.loadSkillsForMode = exports.loadSkill = exports.listAllSkills = exports.detectCompletionSignal = exports.runLoopStep = exports.defaultWorkflowFor = exports.registerBuiltInWorkflows = exports.runWorkflow = exports.WorkflowDispatcher = exports.WorkflowLoader = exports.WorkflowAutoLoader = exports.WorkflowRegistry = exports.SECRET_PATTERNS = exports.SecretDetector = exports.AuditLog = exports.sanitizeForPrompt = exports.checkToolOutput = exports.checkUserInput = exports.WorktreeIsolation = exports.BiomeLinter = exports.DeliberationEngine = exports.ResultAggregator = exports.SubAgentSpawner = exports.TaskDecomposer = exports.CoordinatorEngine = exports.AgentMemory = exports.LocalEmbeddingProvider = exports.VectorStore = exports.LongTermMemory = exports.bootstrap = exports.buildWorkflowGeneratorPrompt = exports.buildMessages = exports.RECOVERY_PROMPTS = exports.MODE_INSTRUCTIONS = exports.AGENT_PROMPTS = exports.ResponseSynthesizer = exports.SessionOrchestrator = exports.CostTracker = exports.TaskRouter = exports.AgentMesh = exports.EventStream = void 0;
-exports.buildStylePrompt = exports.getOutputStyle = exports.loadOutputStyles = void 0;
+exports.WorkflowAutoLoader = exports.WorkflowRegistry = exports.SECRET_PATTERNS = exports.SecretDetector = exports.AuditLog = exports.sanitizeForPrompt = exports.checkToolOutput = exports.checkUserInput = exports.createDefaultHarnessRegistry = exports.HarnessRegistry = exports.filterAgentsByRole = exports.findAgentByName = exports.discoverAgents = exports.loadAgentsFromDir = exports.loadAgentFile = exports.safeValidateAgentYaml = exports.validateAgentYaml = exports.AgentYamlSchema = exports.WorktreeIsolation = exports.ALLOWED_PURPOSES = exports.getRecommendedTierForPurpose = exports.getAllowedToolsForPurpose = exports.validatePurpose = exports.validateCrossVendorReview = exports.assignCrossVendorProviders = exports.findCrossVendorReviewer = exports.areSameVendor = exports.extractVendor = exports.BiomeLinter = exports.DeliberationEngine = exports.ResultAggregator = exports.SubAgentSpawner = exports.TaskDecomposer = exports.CoordinatorEngine = exports.AgentMemory = exports.LocalEmbeddingProvider = exports.VectorStore = exports.LongTermMemory = exports.bootstrap = exports.buildWorkflowGeneratorPrompt = exports.buildMessages = exports.RECOVERY_PROMPTS = exports.MODE_INSTRUCTIONS = exports.AGENT_PROMPTS = exports.ResponseSynthesizer = exports.SessionOrchestrator = exports.CostTracker = exports.TaskRouter = exports.AgentMesh = exports.EventStream = void 0;
+exports.buildStylePrompt = exports.getOutputStyle = exports.loadOutputStyles = exports.fingerprintPayload = exports.SIDEQUERY_NO_LEAK_MARKER = exports.setSideQueryChannel = exports.sideQuery = exports.parseSkillPack = exports.SKILL_BUNDLES = exports._resetLegacyWarnings = exports.buildInputsSchema = exports.parseSkillFile = exports.loadSkillsForMode = exports.loadSkill = exports.listAllSkills = exports.detectCompletionSignal = exports.runLoopStep = exports.defaultWorkflowFor = exports.registerBuiltInWorkflows = exports.runWorkflow = exports.WorkflowDispatcher = exports.WorkflowLoader = void 0;
 var event_stream_js_1 = require("./event-stream.js");
 Object.defineProperty(exports, "EventStream", { enumerable: true, get: function () { return event_stream_js_1.EventStream; } });
 var agent_mesh_js_1 = require("./agent-mesh.js");
@@ -39,9 +39,37 @@ var index_js_3 = require("./coordinator/deliberation/index.js");
 Object.defineProperty(exports, "DeliberationEngine", { enumerable: true, get: function () { return index_js_3.DeliberationEngine; } });
 var biome_linter_js_1 = require("./coordinator/biome-linter.js");
 Object.defineProperty(exports, "BiomeLinter", { enumerable: true, get: function () { return biome_linter_js_1.BiomeLinter; } });
+// Cross-vendor review enforcement
+var cross_vendor_review_js_1 = require("./coordinator/cross-vendor-review.js");
+Object.defineProperty(exports, "extractVendor", { enumerable: true, get: function () { return cross_vendor_review_js_1.extractVendor; } });
+Object.defineProperty(exports, "areSameVendor", { enumerable: true, get: function () { return cross_vendor_review_js_1.areSameVendor; } });
+Object.defineProperty(exports, "findCrossVendorReviewer", { enumerable: true, get: function () { return cross_vendor_review_js_1.findCrossVendorReviewer; } });
+Object.defineProperty(exports, "assignCrossVendorProviders", { enumerable: true, get: function () { return cross_vendor_review_js_1.assignCrossVendorProviders; } });
+Object.defineProperty(exports, "validateCrossVendorReview", { enumerable: true, get: function () { return cross_vendor_review_js_1.validateCrossVendorReview; } });
+// Purpose guard — every sub-agent must declare purpose
+var purpose_guard_js_1 = require("./coordinator/purpose-guard.js");
+Object.defineProperty(exports, "validatePurpose", { enumerable: true, get: function () { return purpose_guard_js_1.validatePurpose; } });
+Object.defineProperty(exports, "getAllowedToolsForPurpose", { enumerable: true, get: function () { return purpose_guard_js_1.getAllowedToolsForPurpose; } });
+Object.defineProperty(exports, "getRecommendedTierForPurpose", { enumerable: true, get: function () { return purpose_guard_js_1.getRecommendedTierForPurpose; } });
+Object.defineProperty(exports, "ALLOWED_PURPOSES", { enumerable: true, get: function () { return purpose_guard_js_1.ALLOWED_PURPOSES; } });
 // Worktree Isolation
 var worktree_isolation_js_1 = require("./agent/worktree-isolation.js");
 Object.defineProperty(exports, "WorktreeIsolation", { enumerable: true, get: function () { return worktree_isolation_js_1.WorktreeIsolation; } });
+// Agent YAML — Declarative agent definitions
+var agent_schema_js_1 = require("./agent/agent-schema.js");
+Object.defineProperty(exports, "AgentYamlSchema", { enumerable: true, get: function () { return agent_schema_js_1.AgentYamlSchema; } });
+Object.defineProperty(exports, "validateAgentYaml", { enumerable: true, get: function () { return agent_schema_js_1.validateAgentYaml; } });
+Object.defineProperty(exports, "safeValidateAgentYaml", { enumerable: true, get: function () { return agent_schema_js_1.safeValidateAgentYaml; } });
+var agent_loader_js_1 = require("./agent/agent-loader.js");
+Object.defineProperty(exports, "loadAgentFile", { enumerable: true, get: function () { return agent_loader_js_1.loadAgentFile; } });
+Object.defineProperty(exports, "loadAgentsFromDir", { enumerable: true, get: function () { return agent_loader_js_1.loadAgentsFromDir; } });
+Object.defineProperty(exports, "discoverAgents", { enumerable: true, get: function () { return agent_loader_js_1.discoverAgents; } });
+Object.defineProperty(exports, "findAgentByName", { enumerable: true, get: function () { return agent_loader_js_1.findAgentByName; } });
+Object.defineProperty(exports, "filterAgentsByRole", { enumerable: true, get: function () { return agent_loader_js_1.filterAgentsByRole; } });
+// Harness registry — run agents across multiple backends
+var harness_registry_js_1 = require("./agent/harness-registry.js");
+Object.defineProperty(exports, "HarnessRegistry", { enumerable: true, get: function () { return harness_registry_js_1.HarnessRegistry; } });
+Object.defineProperty(exports, "createDefaultHarnessRegistry", { enumerable: true, get: function () { return harness_registry_js_1.createDefaultHarnessRegistry; } });
 // Security
 var index_js_4 = require("./security/index.js");
 Object.defineProperty(exports, "checkUserInput", { enumerable: true, get: function () { return index_js_4.checkUserInput; } });

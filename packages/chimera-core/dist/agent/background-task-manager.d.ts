@@ -2,36 +2,39 @@ import { EventEmitter } from 'events';
 export interface BackgroundTask<T = any> {
     id: string;
     description: string;
-    status: 'queued' | 'running' | 'completed' | 'failed';
+    status: 'queued' | 'running' | 'completed' | 'failed' | 'cancelled';
     priority: number;
     createdAt: number;
     startedAt?: number;
     completedAt?: number;
     result?: T;
     error?: string;
+    timeoutMs?: number;
     execute: () => Promise<T>;
+}
+export interface TaskStats {
+    total: number;
+    queued: number;
+    running: number;
+    completed: number;
+    failed: number;
+    cancelled: number;
 }
 export declare class BackgroundTaskManager extends EventEmitter {
     private queue;
     private activeWorkers;
     private maxWorkers;
+    private abortControllers;
     constructor(maxWorkers?: number);
-    /**
-     * Adjusts the maximum number of parallel workers at runtime.
-     */
     setMaxWorkers(count: number): void;
-    /**
-     * Adds a task to the background execution queue.
-     */
     addTask<T>(task: Omit<BackgroundTask<T>, 'status' | 'createdAt'>): string;
-    /**
-     * Gets the status of a specific task.
-     */
+    cancelTask(taskId: string): boolean;
     getTaskStatus(taskId: string): BackgroundTask | undefined;
-    /**
-     * Lists all tasks in the manager.
-     */
-    listTasks(): BackgroundTask[];
+    listTasks(filter?: {
+        status?: BackgroundTask['status'];
+    }): BackgroundTask[];
+    getStats(): TaskStats;
+    waitForTask(taskId: string, timeoutMs?: number): Promise<BackgroundTask>;
     private sortQueue;
     private processQueue;
 }

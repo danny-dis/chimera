@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { McpClient, type McpServerConfig } from '../mcp-client.js';
+import { McpClient, McpManager, type McpServerConfig, type McpConfigFile } from '../mcp-client.js';
 import { spawn } from 'child_process';
 import { EventEmitter } from 'events';
 
@@ -220,5 +220,149 @@ describe('McpClient', () => {
 
     await expect(connectPromise).rejects.toThrow('connection timed out');
     vi.useRealTimers();
+  });
+
+  it('uses double-underscore tool naming convention', async () => {
+    const client = new McpClient(config);
+    const connectPromise = client.connect();
+
+    await vi.waitFor(() => mockProcess.stdin.write.mock.calls.some((c: any) => c[0].includes('"method":"initialize"')));
+    const initId = JSON.parse(mockProcess.stdin.write.mock.calls.find((c: any) => c[0].includes('"method":"initialize"'))[0]).id;
+    mockProcess.stdout.emit('data', Buffer.from(JSON.stringify({ jsonrpc: '2.0', id: initId, result: { protocolVersion: '2024-11-05', capabilities: {}, serverInfo: { name: 't', version: '1' } } }) + '\n'));
+
+    await vi.waitFor(() => mockProcess.stdin.write.mock.calls.some((c: any) => c[0].includes('"method":"tools/list"')));
+    const listId = JSON.parse(mockProcess.stdin.write.mock.calls.find((c: any) => c[0].includes('"method":"tools/list"'))[0]).id;
+    mockProcess.stdout.emit('data', Buffer.from(JSON.stringify({ jsonrpc: '2.0', id: listId, result: { tools: [{ name: 'my-tool', description: 'Test', inputSchema: {} }] } }) + '\n'));
+
+    await vi.waitFor(() => mockProcess.stdin.write.mock.calls.some((c: any) => c[0].includes('"method":"resources/list"')));
+    const resId = JSON.parse(mockProcess.stdin.write.mock.calls.find((c: any) => c[0].includes('"method":"resources/list"'))[0]).id;
+    mockProcess.stdout.emit('data', Buffer.from(JSON.stringify({ jsonrpc: '2.0', id: resId, result: { resources: [] } }) + '\n'));
+
+    await connectPromise;
+
+    const defs = client.toToolDefinitions();
+    expect(defs[0].name).toBe('mcp__test-server__my-tool');
+  });
+
+  it('filters tools by includeTools', async () => {
+    const filteredConfig: McpServerConfig = { ...config, includeTools: ['hello'] };
+    const client = new McpClient(filteredConfig);
+    const connectPromise = client.connect();
+
+    await vi.waitFor(() => mockProcess.stdin.write.mock.calls.some((c: any) => c[0].includes('"method":"initialize"')));
+    const initId = JSON.parse(mockProcess.stdin.write.mock.calls.find((c: any) => c[0].includes('"method":"initialize"'))[0]).id;
+    mockProcess.stdout.emit('data', Buffer.from(JSON.stringify({ jsonrpc: '2.0', id: initId, result: { protocolVersion: '2024-11-05', capabilities: {}, serverInfo: { name: 't', version: '1' } } }) + '\n'));
+
+    await vi.waitFor(() => mockProcess.stdin.write.mock.calls.some((c: any) => c[0].includes('"method":"tools/list"')));
+    const listId = JSON.parse(mockProcess.stdin.write.mock.calls.find((c: any) => c[0].includes('"method":"tools/list"'))[0]).id;
+    mockProcess.stdout.emit('data', Buffer.from(JSON.stringify({ jsonrpc: '2.0', id: listId, result: { tools: [{ name: 'hello', description: 'Hi', inputSchema: {} }, { name: 'goodbye', description: 'Bye', inputSchema: {} }] } }) + '\n'));
+
+    await vi.waitFor(() => mockProcess.stdin.write.mock.calls.some((c: any) => c[0].includes('"method":"resources/list"')));
+    const resId = JSON.parse(mockProcess.stdin.write.mock.calls.find((c: any) => c[0].includes('"method":"resources/list"'))[0]).id;
+    mockProcess.stdout.emit('data', Buffer.from(JSON.stringify({ jsonrpc: '2.0', id: resId, result: { resources: [] } }) + '\n'));
+
+    await connectPromise;
+
+    const defs = client.toToolDefinitions();
+    expect(defs).toHaveLength(1);
+    expect(defs[0].name).toContain('hello');
+  });
+
+  it('filters tools by excludeTools', async () => {
+    const filteredConfig: McpServerConfig = { ...config, excludeTools: ['goodbye'] };
+    const client = new McpClient(filteredConfig);
+    const connectPromise = client.connect();
+
+    await vi.waitFor(() => mockProcess.stdin.write.mock.calls.some((c: any) => c[0].includes('"method":"initialize"')));
+    const initId = JSON.parse(mockProcess.stdin.write.mock.calls.find((c: any) => c[0].includes('"method":"initialize"'))[0]).id;
+    mockProcess.stdout.emit('data', Buffer.from(JSON.stringify({ jsonrpc: '2.0', id: initId, result: { protocolVersion: '2024-11-05', capabilities: {}, serverInfo: { name: 't', version: '1' } } }) + '\n'));
+
+    await vi.waitFor(() => mockProcess.stdin.write.mock.calls.some((c: any) => c[0].includes('"method":"tools/list"')));
+    const listId = JSON.parse(mockProcess.stdin.write.mock.calls.find((c: any) => c[0].includes('"method":"tools/list"'))[0]).id;
+    mockProcess.stdout.emit('data', Buffer.from(JSON.stringify({ jsonrpc: '2.0', id: listId, result: { tools: [{ name: 'hello', description: 'Hi', inputSchema: {} }, { name: 'goodbye', description: 'Bye', inputSchema: {} }] } }) + '\n'));
+
+    await vi.waitFor(() => mockProcess.stdin.write.mock.calls.some((c: any) => c[0].includes('"method":"resources/list"')));
+    const resId = JSON.parse(mockProcess.stdin.write.mock.calls.find((c: any) => c[0].includes('"method":"resources/list"'))[0]).id;
+    mockProcess.stdout.emit('data', Buffer.from(JSON.stringify({ jsonrpc: '2.0', id: resId, result: { resources: [] } }) + '\n'));
+
+    await connectPromise;
+
+    const defs = client.toToolDefinitions();
+    expect(defs).toHaveLength(1);
+    expect(defs[0].name).toContain('hello');
+  });
+
+  it('tracks connection status', async () => {
+    const client = new McpClient(config);
+    const statuses: string[] = [];
+    client.onStatusChange((s) => statuses.push(s));
+
+    expect(client.getStatus()).toBe('disconnected');
+
+    const connectPromise = client.connect();
+    expect(statuses).toContain('connecting');
+
+    await vi.waitFor(() => mockProcess.stdin.write.mock.calls.some((c: any) => c[0].includes('"method":"initialize"')));
+    const initId = JSON.parse(mockProcess.stdin.write.mock.calls.find((c: any) => c[0].includes('"method":"initialize"'))[0]).id;
+    mockProcess.stdout.emit('data', Buffer.from(JSON.stringify({ jsonrpc: '2.0', id: initId, result: { protocolVersion: '2024-11-05', capabilities: {}, serverInfo: { name: 't', version: '1' } } }) + '\n'));
+
+    await vi.waitFor(() => mockProcess.stdin.write.mock.calls.some((c: any) => c[0].includes('"method":"tools/list"')));
+    const listId = JSON.parse(mockProcess.stdin.write.mock.calls.find((c: any) => c[0].includes('"method":"tools/list"'))[0]).id;
+    mockProcess.stdout.emit('data', Buffer.from(JSON.stringify({ jsonrpc: '2.0', id: listId, result: { tools: [] } }) + '\n'));
+
+    await vi.waitFor(() => mockProcess.stdin.write.mock.calls.some((c: any) => c[0].includes('"method":"resources/list"')));
+    const resId = JSON.parse(mockProcess.stdin.write.mock.calls.find((c: any) => c[0].includes('"method":"resources/list"'))[0]).id;
+    mockProcess.stdout.emit('data', Buffer.from(JSON.stringify({ jsonrpc: '2.0', id: resId, result: { resources: [] } }) + '\n'));
+
+    await connectPromise;
+    expect(statuses).toContain('connected');
+  });
+});
+
+describe('McpManager', () => {
+  it('loads config from .mcp.json format', () => {
+    const configFile: McpConfigFile = {
+      mcpServers: {
+        'my-server': { transport: 'stdio', command: 'node', args: ['server.js'] },
+        'remote-server': { transport: 'http', url: 'http://localhost:3000' },
+      },
+    };
+
+    const configs = McpManager.loadConfigFile(configFile);
+    expect(configs).toHaveLength(2);
+    expect(configs[0].name).toBe('my-server');
+    expect(configs[0].transport).toBe('stdio');
+    expect(configs[1].name).toBe('remote-server');
+    expect(configs[1].url).toBe('http://localhost:3000');
+  });
+
+  it('collects all tools from connected servers', async () => {
+    const manager = new McpManager();
+    const mockProcess = new EventEmitter();
+    (mockProcess as any).stdout = new EventEmitter();
+    (mockProcess as any).stderr = new EventEmitter();
+    (mockProcess as any).stdin = { write: vi.fn() };
+    (mockProcess as any).kill = vi.fn();
+    (spawn as any).mockReturnValue(mockProcess);
+
+    const config: McpServerConfig = { name: 'test', transport: 'stdio', command: 'node' };
+    const toolsPromise = manager.addServer(config);
+
+    await vi.waitFor(() => (mockProcess.stdin.write as any).mock.calls.some((c: any) => c[0].includes('"method":"initialize"')));
+    const initId = JSON.parse((mockProcess.stdin.write as any).mock.calls.find((c: any) => c[0].includes('"method":"initialize"'))[0]).id;
+    mockProcess.stdout.emit('data', Buffer.from(JSON.stringify({ jsonrpc: '2.0', id: initId, result: { protocolVersion: '2024-11-05', capabilities: {}, serverInfo: { name: 't', version: '1' } } }) + '\n'));
+
+    await vi.waitFor(() => (mockProcess.stdin.write as any).mock.calls.some((c: any) => c[0].includes('"method":"tools/list"')));
+    const listId = JSON.parse((mockProcess.stdin.write as any).mock.calls.find((c: any) => c[0].includes('"method":"tools/list"'))[0]).id;
+    mockProcess.stdout.emit('data', Buffer.from(JSON.stringify({ jsonrpc: '2.0', id: listId, result: { tools: [{ name: 'tool1', description: 'T1', inputSchema: {} }] } }) + '\n'));
+
+    await vi.waitFor(() => (mockProcess.stdin.write as any).mock.calls.some((c: any) => c[0].includes('"method":"resources/list"')));
+    const resId = JSON.parse((mockProcess.stdin.write as any).mock.calls.find((c: any) => c[0].includes('"method":"resources/list"'))[0]).id;
+    mockProcess.stdout.emit('data', Buffer.from(JSON.stringify({ jsonrpc: '2.0', id: resId, result: { resources: [] } }) + '\n'));
+
+    await toolsPromise;
+    const allTools = manager.getAllTools();
+    expect(allTools).toHaveLength(1);
+    expect(allTools[0].name).toContain('tool1');
   });
 });

@@ -948,6 +948,7 @@ Decision deferred until Phase A completes. Likely candidates: dynamic concurrenc
 - **2026-06-16 (claude)**: Updated `DynamicConcurrencyEngine` to factor in `ProviderConfig.constraints.maxParallelInstances` as a hard cap.
 - **2026-06-16 (claude)**: Implemented `DynamicConcurrencyEngine` with base soft limit of 5, hard limit of 500, and user override support. Verified with unit tests.
 - **2026-06-26 (mimo)**: Implemented Auto-Memory System (section 22) and Context Engine memory wiring (section 3). New files: `memory-persistence.ts`, `auto-extract.ts`, `recall-service.ts`, `auto-dream.ts` (chimera-core), `auto-skill-service.ts` (chimera-learning). SessionOrchestrator updated with unconditional maskObservations, handoff doc injection, DI for all 4 new services. 24 new tests pass. Checklist: 38→48 complete, 63→53 pending.
+- **2026-06-27 (mimo)**: End-user readiness fixes. Fixed 4 runtime crashes: (1) workflow validator `execFileAsync` stub → real `child_process.execFile`, (2) web search tool now returns graceful empty result instead of throwing, (3) eval package exports `judgeTrajectory`, `formatJudgeScore`, `sideQuery` + new `judge-llm.ts` implementation, (4) `HandoffProtocol.readOutputField`/`readOutputFieldWithState` methods implemented using output-ref resolver. Added `NoProviderConfiguredError` class to providers/errors.ts. Test results: eval 8→0 failures, context 9→0 failures, workflows fixed. 17 remaining provider failures are pre-existing (config.yaml fallback feature not yet implemented).
 
 ---
 

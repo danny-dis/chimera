@@ -8,3 +8,9 @@ export type {
   EvalScore,
   EvalReport,
 } from './eval-harness.js';
+
+export { judgeTrajectory, formatJudgeScore } from './judge-llm.js';
+export type { JudgeVerdict } from './judge-llm.js';
+
+export { sideQuery } from './side-query.js';
+export type { SideQueryOptions } from './side-query.js';

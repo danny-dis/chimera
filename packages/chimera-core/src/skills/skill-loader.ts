@@ -52,6 +52,10 @@ export interface SkillFrontmatter {
   inputs?: Record<string, string>;
   /** Modes this skill applies to. ['all'] or omitted = every mode. */
   modes?: string[];
+  /** File path patterns that trigger this skill. Glob syntax: *, **, ?. Omitted = always active. */
+  paths?: string[];
+  /** Tools this skill is allowed to use. Omitted = unrestricted. */
+  allowedTools?: string[];
 }
 
 /** Result of loading a skill: raw content, parsed frontmatter, and source. */
@@ -65,6 +69,10 @@ export interface LoadedSkill {
   inputsSchema: z.ZodTypeAny;
   /** Modes this skill applies to. ['all'] = every mode. */
   modes: string[];
+  /** File path patterns that trigger this skill. Empty = always active. */
+  paths: string[];
+  /** Tools this skill is allowed to use. Empty = unrestricted. */
+  allowedTools: string[];
 }
 
 /** A pack record returned by `loadSkillsForMode` — content + provenance. */
@@ -104,6 +112,8 @@ export function parseSkillFile(raw: string): { frontmatter: SkillFrontmatter; bo
           description: typeof parsed.description === 'string' ? parsed.description : undefined,
           inputs: isStringRecord(parsed.inputs) ? parsed.inputs : undefined,
           modes: Array.isArray(parsed.modes) ? parsed.modes.filter((m: unknown) => typeof m === 'string') : undefined,
+          paths: Array.isArray(parsed.paths) ? parsed.paths.filter((p: unknown) => typeof p === 'string') : undefined,
+          allowedTools: Array.isArray(parsed.allowedTools) ? parsed.allowedTools.filter((t: unknown) => typeof t === 'string') : undefined,
         };
       }
     }
@@ -270,6 +280,8 @@ export function loadSkill(
       path: `<bundled:${bundled.name}>`,
       inputsSchema: buildInputsSchema(undefined),
       modes: bundled.modes.includes('all') ? ['all'] : [...bundled.modes],
+      paths: [],
+      allowedTools: [],
     };
   }
 
@@ -296,6 +308,8 @@ export function loadSkill(
     path: resolved.absPath,
     inputsSchema,
     modes: frontmatter.modes ?? ['all'],
+    paths: frontmatter.paths ?? [],
+    allowedTools: frontmatter.allowedTools ?? [],
   };
 }
 
@@ -406,6 +420,58 @@ function emitSkillLoaded(
   }
 }
 
+// ---------------------------------------------------------------------------
+// Path pattern matching
+// ---------------------------------------------------------------------------
+
+/**
+ * Check if a file path matches any of the given glob-like patterns.
+ * Supports: *, **, ? wildcards. Simple implementation without external deps.
+ *
+ * - `*` matches any characters except `/`
+ * - `**` matches any characters including `/`
+ * - `?` matches exactly one character except `/`
+ */
+export function matchesPathPatterns(filePath: string, patterns: string[]): boolean {
+  if (patterns.length === 0) return true;
+  const normalized = filePath.replace(/\\/g, '/');
+  return patterns.some((pattern) => matchesSinglePattern(normalized, pattern.replace(/\\/g, '/')));
+}
+
+function matchesSinglePattern(filePath: string, pattern: string): boolean {
+  const regex = globToRegex(pattern);
+  return regex.test(filePath);
+}
+
+function globToRegex(glob: string): RegExp {
+  let regexStr = '^';
+  let i = 0;
+  while (i < glob.length) {
+    const c = glob[i];
+    if (c === '*') {
+      if (glob[i + 1] === '*') {
+        regexStr += '.*';
+        i += 2;
+        if (glob[i] === '/') i++;
+      } else {
+        regexStr += '[^/]*';
+        i++;
+      }
+    } else if (c === '?') {
+      regexStr += '[^/]';
+      i++;
+    } else if (c === '.') {
+      regexStr += '\\.';
+      i++;
+    } else {
+      regexStr += c;
+      i++;
+    }
+  }
+  regexStr += '$';
+  return new RegExp(regexStr);
+}
+
 // Re-export resolveSkillPack for convenience so callers that need the
 // async variant can `import { resolveSkillPack } from '@chimera/core'`.
 export { resolveSkillPack };
@@ -469,6 +535,8 @@ export function listAllSkills(workspaceRoot: string): LoadedSkill[] {
         path: abs,
         inputsSchema: buildInputsSchema(frontmatter.inputs),
         modes: frontmatter.modes ?? ['all'],
+        paths: frontmatter.paths ?? [],
+        allowedTools: frontmatter.allowedTools ?? [],
       });
     }
   }

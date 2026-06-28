@@ -53,11 +53,9 @@ export declare class PresetRouter {
      *
      * Priority order:
      *   1. Task type signals (debug, review, hive, fusion) → override
-     *   2. Very high complexity (>= 0.8) + 2+ providers → fusion
-     *   3. High complexity (>= 0.7) + decomposable signals → hive
-     *   4. High complexity (>= 0.6) + 2+ providers → trio
-     *   5. Medium complexity (>= 0.3) + 2+ providers → duo
-     *   6. Low complexity (< 0.3) → solo
+     *   2. High complexity (>= 0.6) + 2+ providers → trio
+     *   3. Medium complexity (>= 0.3) + 2+ providers → duo
+     *   4. Low complexity (< 0.3) → solo
      */
     private selectByComplexity;
 }

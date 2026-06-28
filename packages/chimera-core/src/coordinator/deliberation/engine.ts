@@ -4,11 +4,8 @@
  *
  * The engine is a **thin facade**. It owns no new logic — each mode
  * delegates to the existing executor (`SoloExecutor`, `DuoExecutor`,
- * `TrioExecutor`, `ResultAggregator`) and normalizes the result to the
- * unified `DeliberationResult` shape. The `fusion` mode throws
- * `Error('fusion mode pending')` because `fusion-executor.ts` does not
- * exist yet; the gap is documented in the section 19.5 report and is
- * the subject of its own future work item.
+ * `TrioExecutor`, `FusionExecutor`, `ResultAggregator`) and normalizes
+ * the result to the unified `DeliberationResult` shape.
  *
  * Determinism: the engine adds no new side effects. All events emitted
  * are produced by the underlying executors; the engine only routes and
@@ -65,6 +62,7 @@ import type {
   SoloDeliberationConfig,
   TrioDeliberationConfig,
   HiveDeliberationConfig,
+  SwarmDeliberationConfig,
   AutoDeliberationConfig,
 } from './types.js';
 
@@ -93,6 +91,8 @@ export class DeliberationEngine {
         return this.runMerge(config);
       case 'hive':
         return this.runHive(config);
+      case 'swarm':
+        return this.runSwarm(config);
       case 'auto':
         return this.runAuto(config);
       default: {
@@ -124,7 +124,20 @@ export class DeliberationEngine {
       ...(cfg.reasoning !== undefined
         ? { reasoning: cfg.reasoning as { effort?: 'low' | 'medium' | 'high'; maxTokens?: number } }
         : {}),
+      ...(cfg.eternalCoT !== undefined ? { eternalCoT: cfg.eternalCoT } : {}),
     };
+
+    // Auto-CoT: enable thinker if complexity is high or no router available (safe default)
+    // eternalCoT: true overrides to always-on, eternalCoT: false overrides to always-off
+    if (cfg.eternalCoT === undefined) {
+      if (this.deps.taskRouter) {
+        const complexity = await this.deps.taskRouter.classifyTask(cfg.task);
+        soloConfig.eternalCoT = complexity.overall >= 0.5;
+      } else {
+        soloConfig.eternalCoT = true;
+      }
+    }
+
     const context: SoloContext = { depth: this.deps.context?.depth ?? 0 };
 
     const inner: SoloResult = await executor.executeWithAnalysis(
@@ -217,14 +230,9 @@ export class DeliberationEngine {
   // ── Preset: fusion ────────────────────────────────────────────────
 
   /**
-   * Fusion mode is intentionally not implemented here. `fusion-executor.ts`
-   * does not exist yet (only the type file `fusion-types.ts` does). The
-   * test in `__tests__/fusion-executor.test.ts` references a missing
-   * module and is itself a known gap tracked by another section.
-   *
-   * Routing is wired (this method exists, the dispatch is correct) so
-   * the moment `FusionExecutor` lands, only this one method needs to
-   * change.
+   * Fusion mode: parallel panel of analysis models → judge synthesizes
+   * structured analysis. Delegates to FusionExecutor which handles
+   * panel calls, adversarial round, budget enforcement, and judge failover.
    */
   private async runFusion(cfg: FusionDeliberationConfig): Promise<DeliberationResult> {
     const startTime = Date.now();
@@ -371,6 +379,77 @@ export class DeliberationEngine {
       ...(aggregated.resolved
         ? {}
         : { degradationReason: 'unresolved conflicts after hive merge' }),
+    };
+  }
+
+  // ── Preset: swarm ────────────────────────────────────────────────
+
+  private async runSwarm(cfg: SwarmDeliberationConfig): Promise<DeliberationResult> {
+    const startTime = Date.now();
+
+    const { SwarmOrchestrator } = await import('../../agent/swarm-orchestrator.js');
+    const swarm = new SwarmOrchestrator({
+      config: {
+        maxAgents: cfg.maxAgents ?? 50,
+        maxConcurrency: cfg.maxConcurrency ?? 10,
+        clusterSize: cfg.clusterSize ?? 15,
+        staggerDelayMs: cfg.staggerDelayMs ?? 50,
+      },
+      eventStream: this.deps.eventStream,
+      costTracker: this.deps.costTracker,
+    });
+
+    // Build provider pool from all available providers
+    const providerIds = this.deps.availableProviders ?? [];
+    if (providerIds.length === 0) {
+      return {
+        mode: 'swarm',
+        output: '',
+        analysis: { thought: '', finalResponse: '', consensus: [], conflicts: [], uniqueInsights: [], blindSpots: [], confidence: 0 },
+        totalTokens: 0,
+        totalCostUsd: 0,
+        durationMs: Date.now() - startTime,
+        degraded: true,
+        degradationReason: 'no providers available for swarm',
+      };
+    }
+
+    swarm.registerProviders(
+      providerIds.map((id) => ({ id, provider: this.deps.providerFactory(id), weight: 1 })),
+    );
+
+    // Decompose task into subtasks
+    const subtasks = cfg.task
+      .split(/\n+/)
+      .filter((l) => l.trim().length > 0)
+      .map((part, i) => ({
+        id: `swarm-${i}`,
+        description: part.replace(/^\d+\.\s*/, '').trim(),
+        priority: 10 - i,
+      }));
+
+    const tasks = subtasks.length > 0 ? subtasks : [{ id: 'swarm-main', description: cfg.task, priority: 10 }];
+    const result = await swarm.execute(tasks);
+
+    const analysis: DeliberationAnalysis = {
+      thought: `Swarm executed ${result.totalAgents} agents (${result.completed} completed, ${result.failed} failed)`,
+      finalResponse: result.output,
+      consensus: [],
+      conflicts: result.failed > 0 ? [`${result.failed} agents failed`] : [],
+      uniqueInsights: result.clusterResults ?? [],
+      blindSpots: [],
+      confidence: result.failed === 0 ? 0.8 : Math.max(0.3, 0.8 - result.failed * 0.1),
+    };
+
+    return {
+      mode: 'swarm',
+      output: result.output,
+      analysis,
+      totalTokens: result.totalTokens,
+      totalCostUsd: result.totalCostUsd,
+      durationMs: result.durationMs,
+      degraded: result.failed > 0,
+      ...(result.failed > 0 ? { degradationReason: `${result.failed}/${result.totalAgents} agents failed` } : {}),
     };
   }
 
@@ -570,6 +649,8 @@ export class DeliberationEngine {
         };
       case 'merge':
         return { ...base, mode: 'merge', subTaskResults: [], mergeModel: selectModel('synthesizer') };
+      case 'swarm':
+        return { ...base, mode: 'swarm', maxAgents: 50, maxConcurrency: 10 };
       default:
         return { ...base, mode: 'solo', model: selectModel('writer') };
     }

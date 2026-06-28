@@ -19,4 +19,8 @@ export declare class InvalidConfigError extends ProviderError {
 export declare class StreamingError extends ProviderError {
     constructor(message: string, provider?: string);
 }
+export declare class NoProviderConfiguredError extends ProviderError {
+    readonly checkedLocations: string[];
+    constructor(message: string, checkedLocations?: string[], provider?: string);
+}
 //# sourceMappingURL=errors.d.ts.map

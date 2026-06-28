@@ -54,6 +54,14 @@ export {
 export { MockProvider, createDefaultMockProvider } from './providers/mock.js';
 export type { MockProviderOptions } from './providers/mock.js';
 
+// OpenAI-compatible provider (base for OpenRouter, etc.)
+export { OpenAICompatibleProvider } from './providers/openai-compatible.js';
+export type { OpenAICompatibleConfig, OpenAICompatibleOptions } from './providers/openai-compatible.js';
+
+// OpenRouter — routes to 200+ models via single API key
+export { OpenRouterProvider } from './providers/openrouter.js';
+export type { OpenRouterConfig, OpenRouterOptions } from './providers/openrouter.js';
+
 export type {
   ToolCall,
   Message,
@@ -67,3 +75,18 @@ export type {
   PricingInfo,
   ModelProvider,
 } from './types/provider.js';
+
+export {
+  ProviderCapabilitiesSchema,
+  StructuredOutputLevel,
+  DEFAULT_CAPABILITIES,
+  ANTHROPIC_CAPABILITIES,
+  OPENAI_CAPABILITIES,
+  OPENROUTER_CAPABILITIES,
+  OLLAMA_CAPABILITIES,
+  GOOGLE_CAPABILITIES,
+} from './types/capabilities.js';
+
+export type {
+  ProviderCapabilities,
+} from './types/capabilities.js';

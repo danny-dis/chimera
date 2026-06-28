@@ -13,4 +13,6 @@ export type { ContextLayer, BudgetAllocation, BudgetReport, } from './context-bu
 export { runCompactionPipeline, applyToolResultBudget, snipCompact, microCompact, contextCollapse, } from './compaction/index.js';
 export type { CompactionPipelineResult } from './compaction/index.js';
 export type { ChimeraEvent, HandoffDocument, HandoffChecklist, HandoffDelta, } from './types.js';
+export { resolveNodeOutputField, OutputRefError, declaredFieldsFromSchema } from './output-ref.js';
+export type { NodeOutput, NodeOutputState, FieldResolution, OutputRefErrorReason, } from './output-ref.js';
 //# sourceMappingURL=index.d.ts.map

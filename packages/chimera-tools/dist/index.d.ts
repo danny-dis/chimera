@@ -1119,9 +1119,12 @@ export declare const allTools: readonly [import("./tool-schema.js").ToolDefiniti
     operation?: string;
     formatted?: string;
 }>>];
-export { PermissionEngine, type PermissionProfile } from './permission/policy.js';
+export { PermissionEngine, type PermissionProfile, type PermissionMode, type PermissionRule, type PermissionCondition } from './permission/policy.js';
 export { CommandPolicy } from './permission/command-policy.js';
 export { PathRestrictionEngine } from './permission/path-restrictions.js';
+export { PolicyStack, createPolicyStackFromConfig } from './permission/policy-stack.js';
+export type { PolicyLevel } from './permission/policy-stack.js';
+export { askOnOsTools, readOnlyPolicy, workspaceWritePolicy, trustedProjectPolicy, costBudgetPolicy, maxToolCallsPolicy, destructiveCommandsPolicy, networkPolicy, getBuiltinPolicyNames, createBuiltinPolicy, } from './permission/builtins.js';
 export { Sandbox } from './sandbox/sandbox.js';
 export { PTYExecutor } from './sandbox/pty-executor.js';
 export { EnvironmentFilter } from './sandbox/env-filter.js';

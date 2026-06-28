@@ -8,6 +8,10 @@ import {
   ModelProvider,
 } from '../types/provider.js';
 import {
+  ProviderCapabilities,
+  OLLAMA_CAPABILITIES,
+} from '../types/capabilities.js';
+import {
   ProviderError,
   ProviderUnavailableError,
   StreamingError,
@@ -212,6 +216,10 @@ export class OllamaProvider implements ModelProvider {
 
   getPricing(): PricingInfo {
     return { ...FREE_PRICING };
+  }
+
+  getCapabilities(): ProviderCapabilities {
+    return { ...OLLAMA_CAPABILITIES };
   }
 
   supportsToolCalling(): boolean {

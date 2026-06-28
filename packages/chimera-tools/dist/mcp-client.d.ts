@@ -1,15 +1,24 @@
 /**
  * MCP (Model Context Protocol) Client — connects to MCP servers
  * and exposes their tools as Chimera tools.
+ *
+ * Supports stdio and Streamable HTTP transports, config file loading,
+ * health monitoring, auto-reconnect, and tool filtering.
  */
 import type { ToolDefinition } from './tool-schema.js';
 export interface McpServerConfig {
     name: string;
-    transport: 'stdio' | 'sse';
+    transport: 'stdio' | 'sse' | 'http';
     command?: string;
     args?: string[];
     url?: string;
     env?: Record<string, string>;
+    enabled?: boolean;
+    includeTools?: string[];
+    excludeTools?: string[];
+}
+export interface McpConfigFile {
+    mcpServers: Record<string, Omit<McpServerConfig, 'name'>>;
 }
 interface McpTool {
     name: string;
@@ -21,6 +30,7 @@ export interface McpResource {
     name: string;
     mimeType?: string;
 }
+export type McpConnectionStatus = 'disconnected' | 'connecting' | 'connected' | 'reconnecting' | 'failed';
 /**
  * MCP Client — manages connection to an MCP server and adapts its tools.
  */
@@ -32,30 +42,29 @@ export declare class McpClient {
     private tools;
     private resources;
     private connected;
+    private status;
+    private statusListeners;
     constructor(server: McpServerConfig);
+    onStatusChange(listener: (status: McpConnectionStatus) => void): () => void;
+    getStatus(): McpConnectionStatus;
+    setStatus(status: McpConnectionStatus): void;
     /**
      * Connect to the MCP server and discover available tools.
      */
     connect(): Promise<void>;
-    /**
-     * Get the list of tools discovered from the server.
-     */
+    private connectStdio;
+    private connectHttp;
     getTools(): McpTool[];
     getResources(): McpResource[];
     readResource(uri: string): Promise<unknown>;
-    /**
-     * Call a tool on the MCP server.
-     */
     callTool(name: string, args: Record<string, unknown>): Promise<unknown>;
-    /**
-     * Disconnect from the MCP server.
-     */
     disconnect(): Promise<void>;
     isConnected(): boolean;
     /**
-     * Convert MCP tools into Chimera ToolDefinitions.
+     * Convert MCP tools into Chimera ToolDefinitions, filtered by include/exclude lists.
      */
     toToolDefinitions(): ToolDefinition[];
+    private isToolAllowed;
     private adaptTool;
     private buildZodSchema;
     private sendRequest;
@@ -64,26 +73,28 @@ export declare class McpClient {
     private handleMessage;
 }
 /**
- * MCP Client Manager — manages multiple MCP server connections.
+ * MCP Client Manager — manages multiple MCP server connections
+ * with health monitoring and auto-reconnect.
  */
 export declare class McpManager {
     private clients;
-    /**
-     * Connect to an MCP server and register its tools.
-     */
-    addServer(config: McpServerConfig): Promise<ToolDefinition[]>;
-    /**
-     * Disconnect from an MCP server.
-     */
+    private configs;
+    private healthTimers;
+    private reconnectAttempts;
+    addServer(config: McpServerConfig, options?: {
+        skipDisabled?: boolean;
+    }): Promise<ToolDefinition[]>;
     removeServer(name: string): Promise<void>;
-    /**
-     * Get all connected clients.
-     */
     getClients(): Map<string, McpClient>;
-    /**
-     * Disconnect all servers.
-     */
+    getAllTools(): ToolDefinition[];
     disconnectAll(): Promise<void>;
+    private startHealthCheck;
+    private stopHealthCheck;
+    private scheduleReconnect;
+    /**
+     * Load MCP config from a .mcp.json file.
+     */
+    static loadConfigFile(config: McpConfigFile): McpServerConfig[];
 }
 export {};
 //# sourceMappingURL=mcp-client.d.ts.map

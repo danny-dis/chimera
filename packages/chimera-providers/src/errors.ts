@@ -47,3 +47,13 @@ export class StreamingError extends ProviderError {
     this.name = 'StreamingError';
   }
 }
+
+export class NoProviderConfiguredError extends ProviderError {
+  public readonly checkedLocations: string[];
+  
+  constructor(message: string, checkedLocations: string[] = [], provider?: string) {
+    super(message, provider);
+    this.name = 'NoProviderConfiguredError';
+    this.checkedLocations = checkedLocations;
+  }
+}

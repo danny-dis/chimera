@@ -18,11 +18,11 @@ import { Mode, type ToolCall, type ToolCallResult } from './types/agent.js';
 const VALID_MODE_PRESET_COMBOS: Record<Mode, readonly DeliberationMode[]> = {
   ask:    ['solo'],
   plan:   ['solo', 'duo'],
-  code:   ['auto', 'solo', 'duo', 'trio', 'fusion', 'hive'],
-  debug:  ['auto', 'solo', 'duo', 'trio', 'fusion'],
-  review: ['auto', 'duo', 'trio', 'fusion'],
+  code:   ['auto', 'solo', 'duo', 'trio', 'fusion', 'hive', 'swarm'],
+  debug:  ['auto', 'solo', 'duo', 'trio', 'fusion', 'swarm'],
+  review: ['auto', 'duo', 'trio', 'fusion', 'swarm'],
   oal:    ['solo'],
-  auto:   ['auto', 'solo', 'duo', 'trio', 'fusion', 'hive'],
+  auto:   ['auto', 'solo', 'duo', 'trio', 'fusion', 'hive', 'swarm'],
 };
 import { ChimeraEvent } from './types/events.js';
 import { ComplexityScore } from './types/router.js';
@@ -39,7 +39,6 @@ import type { MemoryPersistence } from './memory/memory-persistence.js';
 import type { AutoExtractService } from './memory/auto-extract.js';
 import type { RecallService } from './memory/recall-service.js';
 import type { AutoDreamService } from './memory/auto-dream.js';
-
 export interface LLMProvider {
   complete(
     messages: Array<{ role: string; content: string }>,
@@ -313,6 +312,8 @@ export class SessionOrchestrator {
   private recallService: RecallService | null = null;
   private autoDream: AutoDreamService | null = null;
   private _extractionCursor: number = 0;
+  public toolCallHistory: Array<{ toolName: string; args: Record<string, unknown>; result: any }> = [];
+  private _lastComplexity: { overall: number; dimensions: Record<string, number> } | null = null;
 
   constructor(
     eventStream?: EventStream,
@@ -402,20 +403,37 @@ export class SessionOrchestrator {
       timestamp: new Date().toISOString(),
       task,
       mode,
-      messages: [],
-      toolCallHistory: [],
+      messages: [...this._writerMessages],
+      toolCallHistory: this.toolCallHistory.slice(-100),
       events,
-      costSpend: {},
+      costSpend: Object.fromEntries(
+        [...(this.costTracker as any).spend.entries()] as [string, number][],
+      ),
       metadata: {
         agentCount: events.filter((e) => (e as any).type === 'agent_spawned').length,
         turnCount: events.filter((e) => (e as any).type === 'draft_proposed').length,
         status: this.state.status === 'error' ? 'failed' : this.state.status === 'complete' ? 'completed' : 'active',
         auditLogSize: this.auditLog.size(),
+        lastComplexity: this._lastComplexity,
       },
     };
   }
 
   async restoreState(checkpoint: any): Promise<void> {
+    if (checkpoint.messages && Array.isArray(checkpoint.messages)) {
+      this._writerMessages = [...checkpoint.messages];
+    }
+    if (checkpoint.toolCallHistory && Array.isArray(checkpoint.toolCallHistory)) {
+      this.toolCallHistory = [...checkpoint.toolCallHistory];
+    }
+    if (checkpoint.metadata?.lastComplexity) {
+      this._lastComplexity = checkpoint.metadata.lastComplexity;
+    }
+    if (checkpoint.events && Array.isArray(checkpoint.events)) {
+      for (const event of checkpoint.events) {
+        this.eventStream.append(event);
+      }
+    }
     if (checkpoint.metadata?.status === 'completed') {
       this.transition({ status: 'complete', result: checkpoint.task ?? '', cost: 0 });
     } else if (checkpoint.metadata?.status === 'failed') {
@@ -497,7 +515,7 @@ export class SessionOrchestrator {
 
       const injectionCheck = checkUserInput(task);
       if (!injectionCheck.safe && injectionCheck.confidence > 0.85) {
-        this.logSecurityEvent('prompt_injection_detected', injectionCheck.confidence, injectionCheck.flags);
+        this.logSecurityEvent('prompt_injection_detected', injectionCheck.confidence, injectionCheck.flags, { type: 'injection', decision: 'block', payload: task });
         this.eventStream.append({
           type: 'final_response',
           status: 'blocked',
@@ -586,6 +604,7 @@ export class SessionOrchestrator {
 
       this.transition({ status: 'classifying', task });
       const complexity = await this.taskRouter.classifyTask(task);
+      this._lastComplexity = complexity;
 
       let resolvedMode: Mode = mode;
       if (mode === 'auto') {
@@ -671,23 +690,23 @@ export class SessionOrchestrator {
       let draftCost = this.estimateCost(draftResult.usage, providers.writer);
       totalCost += draftCost;
       this.costTracker.recordSpend('writer', draftCost);
-      this.logLLMCall('writer', draftResult.usage.inputTokens, draftResult.usage.outputTokens, draftCost);
+      this.logLLMCall('writer', draftResult.usage?.inputTokens ?? 0, draftResult.usage?.outputTokens ?? 0, draftCost, { role: 'writer' });
 
-      const toolCallHistory: Array<{ toolName: string; args: Record<string, unknown>; result: ToolCallResult }> = [];
+      this.toolCallHistory = [];
       let iterations = 0;
       this._writerMessages = [...writerMessages];
       while (draftResult.toolCalls && draftResult.toolCalls.length > 0 && iterations < MAX_TOOL_ITERATIONS) {
         iterations++;
         const toolResults = await this.executeToolCalls(draftResult.toolCalls, { sessionId: writerId }, executeSignal);
-        toolCallHistory.push(...toolResults);
+        this.toolCallHistory.push(...toolResults.map(tr => ({ toolName: tr.toolName, args: tr.args, result: tr.result.result })));
 
         for (const tr of toolResults) {
-          this.logToolCall(tr.toolName, JSON.stringify(tr.args).slice(0, 100), tr.result.result.duration * 0.000001);
+          this.logToolCall(tr.toolName, JSON.stringify(tr.args).slice(0, 100), tr.result.result.duration * 0.000001, { duration: tr.result.result.duration });
         }
 
         const toolMessages = this.buildToolResultMessages(writerMessages, draftResult, toolResults);
 
-        const inputTokens = draftResult.usage.inputTokens + draftResult.usage.outputTokens;
+        const inputTokens = (draftResult.usage?.inputTokens ?? 0) + (draftResult.usage?.outputTokens ?? 0);
         const threshold = this.relayRacing.trackTokens('default', inputTokens);
 
         let maskedMessages = this.relayRacing.maskObservations(toolMessages);
@@ -748,12 +767,14 @@ export class SessionOrchestrator {
         draftCost += iterCost;
         totalCost += iterCost;
         this.costTracker.recordSpend('writer', iterCost);
-        this.logLLMCall('writer', draftResult.usage.inputTokens, draftResult.usage.outputTokens, iterCost);
+        this.logLLMCall('writer', draftResult.usage.inputTokens, draftResult.usage.outputTokens, iterCost, { role: 'writer' });
       }
 
       const draftParsed = this.parseJSON<StructuredOutput>(draftResult.content);
       const draftContent = draftParsed.response ?? draftResult.content;
       const draftConfidence = draftParsed.confidence ?? 0.5;
+
+      this._writerMessages.push({ role: 'assistant', content: draftContent });
 
       outputs.push({
         agentId: writerId,
@@ -762,7 +783,7 @@ export class SessionOrchestrator {
         confidence: draftConfidence,
         provider: 'llm',
         model: 'default',
-        tokensUsed: draftResult.usage.inputTokens + draftResult.usage.outputTokens,
+        tokensUsed: (draftResult.usage?.inputTokens ?? 0) + (draftResult.usage?.outputTokens ?? 0),
       });
 
       this.eventStream.append({
@@ -799,7 +820,7 @@ export class SessionOrchestrator {
       const reviewCost = this.estimateCost(reviewResult.usage, providers.reviewer);
       totalCost += reviewCost;
       this.costTracker.recordSpend('reviewer', reviewCost);
-      this.logLLMCall('reviewer', reviewResult.usage.inputTokens, reviewResult.usage.outputTokens, reviewCost);
+      this.logLLMCall('reviewer', reviewResult.usage?.inputTokens ?? 0, reviewResult.usage?.outputTokens ?? 0, reviewCost, { role: 'reviewer' });
 
       const reviewParsed = this.parseJSON<ReviewVerdict>(reviewResult.content);
       const verdict = reviewParsed.verdict ?? 'PASS';
@@ -812,7 +833,7 @@ export class SessionOrchestrator {
         confidence: reviewParsed.confidence ?? 0.5,
         provider: 'llm',
         model: 'default',
-        tokensUsed: reviewResult.usage.inputTokens + reviewResult.usage.outputTokens,
+        tokensUsed: (reviewResult.usage?.inputTokens ?? 0) + (reviewResult.usage?.outputTokens ?? 0),
         issues: findings,
       });
 
@@ -857,7 +878,7 @@ export class SessionOrchestrator {
         const challengeCost = this.estimateCost(challengeResult.usage, providers.challenger);
         totalCost += challengeCost;
         this.costTracker.recordSpend('challenger', challengeCost);
-        this.logLLMCall('challenger', challengeResult.usage.inputTokens, challengeResult.usage.outputTokens, challengeCost);
+        this.logLLMCall('challenger', challengeResult.usage?.inputTokens ?? 0, challengeResult.usage?.outputTokens ?? 0, challengeCost, { role: 'challenger' });
 
         const challengeParsed = this.parseJSON<StructuredOutput>(challengeResult.content);
 
@@ -868,7 +889,7 @@ export class SessionOrchestrator {
           confidence: challengeParsed.confidence ?? 0.5,
           provider: 'llm',
           model: 'default',
-          tokensUsed: challengeResult.usage.inputTokens + challengeResult.usage.outputTokens,
+          tokensUsed: (challengeResult.usage?.inputTokens ?? 0) + (challengeResult.usage?.outputTokens ?? 0),
         });
 
         this.eventStream.append({
@@ -944,10 +965,11 @@ export class SessionOrchestrator {
     switch (mode) {
       case 'code':
       case 'debug': {
-        // Complexity-gated selection: trivial → solo, medium → duo, complex → trio
+        // Complexity-gated selection: trivial → solo, medium → duo, complex → trio, very complex → fusion
         if (!complexity) return 'trio'; // fallback when no complexity available
         if (complexity.overall < 0.3) return 'solo';  // trivial: single model
         if (complexity.overall < 0.6) return 'duo';   // medium: two models
+        if (complexity.overall >= 0.8) return 'fusion'; // high-stakes: multi-model deliberation
         return 'trio';                                 // complex: full pipeline
       }
       case 'review':
@@ -970,6 +992,15 @@ export class SessionOrchestrator {
     const delibMode = preset ?? this.mapModeToDeliberationMode(mode, complexity);
     const base = { task, budgetUsd: costCap, temperature: 0.7, maxCompletionTokens: 4096 };
 
+    // Override to fusion when task explicitly requests multi-model deliberation
+    if (delibMode !== 'fusion' && !preset) {
+      const lower = task.toLowerCase();
+      const fusionKeywords = ['compare', 'debate', 'perspectives', 'alternatives', 'tradeoffs', 'consensus'];
+      if (fusionKeywords.some((k) => lower.includes(k))) {
+        return { ...base, mode: 'fusion', analysisModels: ['default'], judgeModel: 'default' };
+      }
+    }
+
     switch (delibMode) {
       case 'solo':
         return { ...base, mode: 'solo', model: 'default' };
@@ -983,8 +1014,16 @@ export class SessionOrchestrator {
           reviewer: 'default',
           ...(providers.challenger ? { challenger: 'default' } : {}),
         };
-      case 'fusion':
-        return { ...base, mode: 'fusion', analysisModels: ['default'], judgeModel: 'default' };
+      case 'fusion': {
+        const modelIds = this._registry
+          ? this._registry.getAll()
+              .filter((m: import('@chimera/providers').ModelEntry) => !m.deprecated)
+              .map((m: import('@chimera/providers').ModelEntry) => m.id)
+          : ['default'];
+        const panel = modelIds.slice(0, 3);
+        const judge = modelIds[modelIds.length - 1] ?? 'default';
+        return { ...base, mode: 'fusion', analysisModels: panel, judgeModel: judge };
+      }
       case 'hive': {
         // Build model pool from registry for capability-based routing
         const modelIds = this._registry
@@ -1195,7 +1234,7 @@ export class SessionOrchestrator {
       findings,
       reviewSummary,
       reviewContent: reviewResult.content,
-      reviewTokens: reviewResult.usage.inputTokens + reviewResult.usage.outputTokens,
+      reviewTokens: (reviewResult.usage?.inputTokens ?? 0) + (reviewResult.usage?.outputTokens ?? 0),
     };
   }
 
@@ -1441,8 +1480,7 @@ export class SessionOrchestrator {
         confidence: parsed.confidence ?? 0.5,
         provider: 'llm',
         model: 'default',
-        tokensUsed: result.usage.inputTokens + result.usage.outputTokens,
-      });
+        tokensUsed: (result.usage?.inputTokens ?? 0) + (result.usage?.outputTokens ?? 0),      });
 
       this.eventStream.append({
         type: 'verified',
@@ -1486,8 +1524,7 @@ export class SessionOrchestrator {
             confidence: parsed.confidence ?? 0.5,
             provider: 'llm',
             model: 'default',
-            tokensUsed: result.usage.inputTokens + result.usage.outputTokens,
-          });
+            tokensUsed: (result.usage?.inputTokens ?? 0) + (result.usage?.outputTokens ?? 0),          });
 
           this.eventStream.append({
             type: 'challenged',
@@ -1565,32 +1602,44 @@ export class SessionOrchestrator {
     }
   }
 
-  private logLLMCall(model: string, inputTokens: number, outputTokens: number, cost: number): void {
+  private logLLMCall(model: string, inputTokens: number, outputTokens: number, cost: number, details?: Record<string, unknown>): void {
     this.auditLog.logLLMCall({
       sessionId: this._sessionId,
       model,
       inputTokens,
       outputTokens,
       tokenCost: cost,
+      details: {
+        ...details,
+        tokens: inputTokens + outputTokens,
+      },
     });
   }
 
-  private logToolCall(tool: string, paramsHash: string, cost: number): void {
+  private logToolCall(tool: string, paramsHash: string, cost: number, details?: Record<string, unknown>): void {
     this.auditLog.logToolCall({
       sessionId: this._sessionId,
       tool,
       paramsHash,
       userApproved: true,
       tokenCost: cost,
+      details: {
+        toolName: tool,
+        decision: 'allow',
+        ...details,
+      },
     });
   }
 
-  private logSecurityEvent(event: string, confidence: number, flags: string[]): void {
+  private logSecurityEvent(event: string, confidence: number, flags: string[], details?: Record<string, unknown>): void {
     this.auditLog.logSecurityEvent({
       sessionId: this._sessionId,
       event,
       confidence,
       flags,
+      details: {
+        ...details,
+      },
     });
   }
 
@@ -1775,7 +1824,7 @@ export class SessionOrchestrator {
       if (result.success && result.data) {
         const outputCheck = checkToolOutput(JSON.stringify(result.data), tc.name);
         if (!outputCheck.safe && outputCheck.confidence > 0.8) {
-          this.logSecurityEvent('tool_output_injection', outputCheck.confidence, outputCheck.flags);
+          this.logSecurityEvent('tool_output_injection', outputCheck.confidence, outputCheck.flags, { type: 'injection', decision: 'sanitize', payload: JSON.stringify(result.data) });
           result.success = false;
           result.error = `Tool output sanitized: potential injection detected (${outputCheck.flags.join(', ')})`;
           result.data = undefined;

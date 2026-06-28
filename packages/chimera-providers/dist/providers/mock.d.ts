@@ -1,4 +1,5 @@
 import { Message, ToolCall, CompletionOptions, CompletionResult, StreamChunk, ModelInfo, PricingInfo, ModelProvider } from '../types/provider.js';
+import { ProviderCapabilities } from '../types/capabilities.js';
 export interface MockProviderOptions {
     /** Model id to advertise. Default: 'mock-default'. */
     model?: string;
@@ -51,6 +52,7 @@ export declare class MockProvider implements ModelProvider {
         output: number;
     }): number;
     getPricing(): PricingInfo;
+    getCapabilities(): ProviderCapabilities;
     supportsToolCalling(): boolean;
     supportsStructuredOutput(): boolean;
     supportsVision(): boolean;

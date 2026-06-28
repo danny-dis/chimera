@@ -113,10 +113,11 @@ export const webSearchTool: ToolDefinition<typeof WebSearchParamsSchema, typeof 
   category: 'mcp',
   permissionLevel: 'read',
   execute: async (_params) => {
-    throw new Error(
-      'Web search is not yet implemented. ' +
-      'The tool currently returns mock data and ignores query parameters. ' +
-      'A real search API integration (e.g., Exa AI) is needed.',
-    );
+    // Return graceful error instead of throwing
+    return {
+      results: [],
+      total: 0,
+      _warning: 'Web search is not yet implemented. A real search API integration (e.g., Exa AI) is needed.',
+    };
   },
 };

@@ -1,4 +1,5 @@
 import type { ChimeraEvent, HandoffDocument, HandoffChecklist, HandoffDelta } from './types.js';
+import { type NodeOutput, type FieldResolution } from './output-ref.js';
 export type HandoffProposal = {
     claimId: string;
     type: 'fact' | 'plan' | 'warning' | 'decision';
@@ -42,5 +43,17 @@ export declare class HandoffProtocol {
     private checkReferences;
     private checkClaims;
     private checkCapabilities;
+    /**
+     * Resolve a `$nodeId.output.field` reference against a producer's output.
+     * Returns the field value, or null for declared-optional absent fields.
+     * Throws `OutputRefError` for strict failures (not-in-schema, producer-not-run, etc.).
+     */
+    readOutputField(nodeId: string, field: string, nodeOutput: NodeOutput): unknown | null;
+    /**
+     * Like `readOutputField`, but returns a `FieldResolution` object that
+     * distinguishes "value present" from "explicitly empty" — useful for
+     * callers that need to log the empty case rather than swallow it.
+     */
+    readOutputFieldWithState(nodeId: string, field: string, nodeOutput: NodeOutput): FieldResolution;
 }
 //# sourceMappingURL=handoff-protocol.d.ts.map

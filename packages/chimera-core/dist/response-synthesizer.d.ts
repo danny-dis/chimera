@@ -32,6 +32,15 @@ export interface SynthesisResult {
     needsUserEscalation: boolean;
     escalationReason?: string;
 }
+/**
+ * ResponseSynthesizer — merges outputs from multiple agents into a unified response.
+ *
+ * Follows the "moderator-not-debater" pattern from Omnigent:
+ * - The synthesizer is a moderator, not a third debater
+ * - Its role is to surface agreements, disagreements, and converge
+ * - It does NOT inject its own position as a third competing view
+ * - The synthesis is a combined answer, NOT a new third position
+ */
 export declare class ResponseSynthesizer {
     private eventStream?;
     constructor(eventStream?: EventStream);
@@ -47,6 +56,7 @@ export declare class ResponseSynthesizer {
     private buildResolvedResponse;
     private buildEscalationResponse;
     private calculateOverallConfidence;
+    private safeEmit;
     private emitEvents;
 }
 //# sourceMappingURL=response-synthesizer.d.ts.map

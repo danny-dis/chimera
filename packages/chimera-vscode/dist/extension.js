@@ -1320,6 +1320,26 @@ ${selection.slice(0, 4e3)}
       }
     })
   );
+  const fileWatcher = vscode5.workspace.createFileSystemWatcher("**/*");
+  fileWatcher.onDidChange((uri) => {
+    if (daemon?.isReady) {
+      daemon.call("file_changed", { path: uri.fsPath, type: "changed" }).catch(() => {
+      });
+    }
+  });
+  fileWatcher.onDidCreate((uri) => {
+    if (daemon?.isReady) {
+      daemon.call("file_changed", { path: uri.fsPath, type: "created" }).catch(() => {
+      });
+    }
+  });
+  fileWatcher.onDidDelete((uri) => {
+    if (daemon?.isReady) {
+      daemon.call("file_changed", { path: uri.fsPath, type: "deleted" }).catch(() => {
+      });
+    }
+  });
+  context.subscriptions.push(fileWatcher);
   console.log("[chimera] Extension activated successfully.");
 }
 function deactivate() {

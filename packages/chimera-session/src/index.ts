@@ -8,6 +8,19 @@ export { SessionStore as ConversationSessionStore, FileStorageAdapter } from './
 export type { Message } from './session-store.js';
 import type { Message } from './session-store.js';
 
+// Session sync protocol — multi-device synchronization
+export {
+  SessionSynchronizer,
+  FileSyncAdapter,
+  createSessionSynchronizer,
+} from './sync-protocol.js';
+export type {
+  SyncEvent,
+  SyncEventType,
+  SessionSyncState,
+  SyncAdapter,
+} from './sync-protocol.js';
+
 export interface SessionCheckpoint {
   sessionId: string;
   timestamp: string;

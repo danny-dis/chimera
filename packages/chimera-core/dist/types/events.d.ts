@@ -473,7 +473,7 @@ export declare const ChimeraEventSchema: z.ZodDiscriminatedUnion<"type", [z.ZodO
     agentCount?: number;
 }>, z.ZodObject<{
     type: z.ZodLiteral<"deliberation_result">;
-    mode: z.ZodEnum<["solo", "duo", "trio", "fusion", "hive", "merge", "auto"]>;
+    mode: z.ZodEnum<["solo", "duo", "trio", "fusion", "hive", "merge", "swarm", "auto"]>;
     output: z.ZodString;
     analysis: z.ZodObject<{
         thought: z.ZodString;
@@ -499,7 +499,7 @@ export declare const ChimeraEventSchema: z.ZodDiscriminatedUnion<"type", [z.ZodO
     }>;
 }, "strip", z.ZodTypeAny, {
     type?: "deliberation_result";
-    mode?: "solo" | "duo" | "trio" | "fusion" | "hive" | "merge" | "auto";
+    mode?: "solo" | "duo" | "trio" | "fusion" | "hive" | "merge" | "swarm" | "auto";
     output?: string;
     analysis?: {
         confidence?: number;
@@ -511,7 +511,7 @@ export declare const ChimeraEventSchema: z.ZodDiscriminatedUnion<"type", [z.ZodO
     };
 }, {
     type?: "deliberation_result";
-    mode?: "solo" | "duo" | "trio" | "fusion" | "hive" | "merge" | "auto";
+    mode?: "solo" | "duo" | "trio" | "fusion" | "hive" | "merge" | "swarm" | "auto";
     output?: string;
     analysis?: {
         confidence?: number;
@@ -786,21 +786,21 @@ export declare const ChimeraEventSchema: z.ZodDiscriminatedUnion<"type", [z.ZodO
     type: z.ZodLiteral<"auto_preset_selected">;
     task: z.ZodString;
     complexity: z.ZodNumber;
-    selectedPreset: z.ZodEnum<["solo", "duo", "trio", "fusion", "merge", "hive", "auto"]>;
+    selectedPreset: z.ZodEnum<["solo", "duo", "trio", "fusion", "merge", "hive", "swarm", "auto"]>;
     taskType: z.ZodString;
     timestamp: z.ZodNumber;
 }, "strip", z.ZodTypeAny, {
     type?: "auto_preset_selected";
     complexity?: number;
     task?: string;
-    selectedPreset?: "solo" | "duo" | "trio" | "fusion" | "hive" | "merge" | "auto";
+    selectedPreset?: "solo" | "duo" | "trio" | "fusion" | "hive" | "merge" | "swarm" | "auto";
     taskType?: string;
     timestamp?: number;
 }, {
     type?: "auto_preset_selected";
     complexity?: number;
     task?: string;
-    selectedPreset?: "solo" | "duo" | "trio" | "fusion" | "hive" | "merge" | "auto";
+    selectedPreset?: "solo" | "duo" | "trio" | "fusion" | "hive" | "merge" | "swarm" | "auto";
     taskType?: string;
     timestamp?: number;
 }>, z.ZodObject<{
@@ -848,6 +848,108 @@ export declare const ChimeraEventSchema: z.ZodDiscriminatedUnion<"type", [z.ZodO
 }, {
     type?: "error";
     message?: string;
+}>, z.ZodObject<{
+    type: z.ZodLiteral<"fusion_started">;
+    task: z.ZodString;
+    models: z.ZodArray<z.ZodString, "many">;
+    judge: z.ZodString;
+}, "strip", z.ZodTypeAny, {
+    type?: "fusion_started";
+    task?: string;
+    models?: string[];
+    judge?: string;
+}, {
+    type?: "fusion_started";
+    task?: string;
+    models?: string[];
+    judge?: string;
+}>, z.ZodObject<{
+    type: z.ZodLiteral<"fusion_completed">;
+    task: z.ZodString;
+    durationMs: z.ZodNumber;
+    totalCostUsd: z.ZodNumber;
+}, "strip", z.ZodTypeAny, {
+    type?: "fusion_completed";
+    durationMs?: number;
+    task?: string;
+    totalCostUsd?: number;
+}, {
+    type?: "fusion_completed";
+    durationMs?: number;
+    task?: string;
+    totalCostUsd?: number;
+}>, z.ZodObject<{
+    type: z.ZodLiteral<"fusion_provider_error">;
+    modelId: z.ZodString;
+    error: z.ZodString;
+}, "strip", z.ZodTypeAny, {
+    type?: "fusion_provider_error";
+    error?: string;
+    modelId?: string;
+}, {
+    type?: "fusion_provider_error";
+    error?: string;
+    modelId?: string;
+}>, z.ZodObject<{
+    type: z.ZodLiteral<"fusion_budget_exceeded">;
+    currentCost: z.ZodNumber;
+    budget: z.ZodNumber;
+}, "strip", z.ZodTypeAny, {
+    type?: "fusion_budget_exceeded";
+    currentCost?: number;
+    budget?: number;
+}, {
+    type?: "fusion_budget_exceeded";
+    currentCost?: number;
+    budget?: number;
+}>, z.ZodObject<{
+    type: z.ZodLiteral<"fusion_recursion_blocked">;
+    depth: z.ZodNumber;
+    maxDepth: z.ZodNumber;
+}, "strip", z.ZodTypeAny, {
+    type?: "fusion_recursion_blocked";
+    depth?: number;
+    maxDepth?: number;
+}, {
+    type?: "fusion_recursion_blocked";
+    depth?: number;
+    maxDepth?: number;
+}>, z.ZodObject<{
+    type: z.ZodLiteral<"fusion_fallback_judge">;
+    failedModel: z.ZodString;
+    error: z.ZodString;
+}, "strip", z.ZodTypeAny, {
+    type?: "fusion_fallback_judge";
+    error?: string;
+    failedModel?: string;
+}, {
+    type?: "fusion_fallback_judge";
+    error?: string;
+    failedModel?: string;
+}>, z.ZodObject<{
+    type: z.ZodLiteral<"fusion_judge_parse_error">;
+    raw: z.ZodString;
+}, "strip", z.ZodTypeAny, {
+    type?: "fusion_judge_parse_error";
+    raw?: string;
+}, {
+    type?: "fusion_judge_parse_error";
+    raw?: string;
+}>, z.ZodObject<{
+    type: z.ZodLiteral<"provider_rate_limited">;
+    providerId: z.ZodString;
+    retryAfterMs: z.ZodNumber;
+    remainingRpm: z.ZodNumber;
+}, "strip", z.ZodTypeAny, {
+    type?: "provider_rate_limited";
+    providerId?: string;
+    retryAfterMs?: number;
+    remainingRpm?: number;
+}, {
+    type?: "provider_rate_limited";
+    providerId?: string;
+    retryAfterMs?: number;
+    remainingRpm?: number;
 }>]>;
 export type ChimeraEvent = ChimeraEventBase;
 //# sourceMappingURL=events.d.ts.map

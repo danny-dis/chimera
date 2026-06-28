@@ -3,6 +3,8 @@ export type { Session, SessionSummary, ListOptions, StorageAdapter } from './ses
 export { SessionStore as ConversationSessionStore, FileStorageAdapter } from './session-store.js';
 export type { Message } from './session-store.js';
 import type { Message } from './session-store.js';
+export { SessionSynchronizer, FileSyncAdapter, createSessionSynchronizer, } from './sync-protocol.js';
+export type { SyncEvent, SyncEventType, SessionSyncState, SyncAdapter, } from './sync-protocol.js';
 export interface SessionCheckpoint {
     sessionId: string;
     timestamp: string;

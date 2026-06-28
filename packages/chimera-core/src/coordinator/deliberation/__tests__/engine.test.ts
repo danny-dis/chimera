@@ -171,11 +171,11 @@ describe('DeliberationEngine — trio preset', () => {
       registry,
       providerFactory: makeFactory({
         [MOCK_IDS.writer]: makeMockProvider([
-          { match: 'You are the writer', content: 'draft answer' },
+          { match: 'You are a code writer', content: 'draft answer' },
         ]),
         [MOCK_IDS.reviewer]: makeMockProvider([
           {
-            match: 'You are the reviewer',
+            match: 'You are a code reviewer',
             content: JSON.stringify({ verdict: 'pass', issues: [], commentary: 'ok' }),
           },
         ]),

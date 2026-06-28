@@ -1,7 +1,7 @@
 "use strict";
 // @chimera/context — Context engine and relay racing
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.contextCollapse = exports.microCompact = exports.snipCompact = exports.applyToolResultBudget = exports.runCompactionPipeline = exports.ContextBudget = exports.ToolContextRelay = exports.HandoffProtocol = exports.RelayRacing = exports.VectorStore = exports.TfIdfEmbeddingProvider = exports.ContextEngine = void 0;
+exports.declaredFieldsFromSchema = exports.OutputRefError = exports.resolveNodeOutputField = exports.contextCollapse = exports.microCompact = exports.snipCompact = exports.applyToolResultBudget = exports.runCompactionPipeline = exports.ContextBudget = exports.ToolContextRelay = exports.HandoffProtocol = exports.RelayRacing = exports.VectorStore = exports.TfIdfEmbeddingProvider = exports.ContextEngine = void 0;
 var context_engine_js_1 = require("./context-engine.js");
 Object.defineProperty(exports, "ContextEngine", { enumerable: true, get: function () { return context_engine_js_1.ContextEngine; } });
 var embedding_provider_js_1 = require("./embedding-provider.js");
@@ -22,4 +22,9 @@ Object.defineProperty(exports, "applyToolResultBudget", { enumerable: true, get:
 Object.defineProperty(exports, "snipCompact", { enumerable: true, get: function () { return index_js_1.snipCompact; } });
 Object.defineProperty(exports, "microCompact", { enumerable: true, get: function () { return index_js_1.microCompact; } });
 Object.defineProperty(exports, "contextCollapse", { enumerable: true, get: function () { return index_js_1.contextCollapse; } });
+// Output-ref resolver (for $nodeId.output.field references)
+var output_ref_js_1 = require("./output-ref.js");
+Object.defineProperty(exports, "resolveNodeOutputField", { enumerable: true, get: function () { return output_ref_js_1.resolveNodeOutputField; } });
+Object.defineProperty(exports, "OutputRefError", { enumerable: true, get: function () { return output_ref_js_1.OutputRefError; } });
+Object.defineProperty(exports, "declaredFieldsFromSchema", { enumerable: true, get: function () { return output_ref_js_1.declaredFieldsFromSchema; } });
 //# sourceMappingURL=index.js.map

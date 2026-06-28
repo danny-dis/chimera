@@ -2,6 +2,8 @@ import { promises as fs } from 'fs';
 import path from 'path';
 import { randomBytes } from 'crypto';
 export { SessionStore as ConversationSessionStore, FileStorageAdapter } from './session-store.js';
+// Session sync protocol — multi-device synchronization
+export { SessionSynchronizer, FileSyncAdapter, createSessionSynchronizer, } from './sync-protocol.js';
 export class CheckpointStore {
     storePath;
     constructor(storePath) {

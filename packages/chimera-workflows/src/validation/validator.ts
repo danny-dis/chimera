@@ -52,10 +52,11 @@ async function findMarkdownFilesRecursive(
   return results;
 }
 
-// Local stubs for @chimera/isolation functions
-async function execFileAsync(_cmd: string, _args: string[]): Promise<string> {
-  throw new Error('execFileAsync not available in chimera stub');
-}
+// Real implementation using child_process
+import { execFile } from 'child_process';
+import { promisify } from 'util';
+
+const execFileAsync = promisify(execFile);
 
 // Local stubs for @chimera/providers functions
 function isRegisteredProvider(_provider: string): boolean { return true; }

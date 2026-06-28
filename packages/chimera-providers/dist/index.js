@@ -1,7 +1,7 @@
 "use strict";
 // @chimera/providers — Provider abstraction layer
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.createDefaultMockProvider = exports.MockProvider = exports.StreamingError = exports.InvalidConfigError = exports.ProviderUnavailableError = exports.QuotaExceededError = exports.RateLimitError = exports.ProviderError = exports.ModelComparator = exports.CostProjectionEngine = exports.RateLimiter = exports.BudgetEnforcer = exports.ProviderCostTracker = exports.CostCalculator = exports.ModelEntrySchema = exports.ModelRegistry = exports.ProviderConfigSchema = exports.listModels = exports.ProviderFactory = exports.ProviderRegistry = void 0;
+exports.GOOGLE_CAPABILITIES = exports.OLLAMA_CAPABILITIES = exports.OPENROUTER_CAPABILITIES = exports.OPENAI_CAPABILITIES = exports.ANTHROPIC_CAPABILITIES = exports.DEFAULT_CAPABILITIES = exports.StructuredOutputLevel = exports.ProviderCapabilitiesSchema = exports.OpenRouterProvider = exports.OpenAICompatibleProvider = exports.createDefaultMockProvider = exports.MockProvider = exports.StreamingError = exports.InvalidConfigError = exports.ProviderUnavailableError = exports.QuotaExceededError = exports.RateLimitError = exports.ProviderError = exports.ModelComparator = exports.CostProjectionEngine = exports.RateLimiter = exports.BudgetEnforcer = exports.ProviderCostTracker = exports.CostCalculator = exports.ModelEntrySchema = exports.ModelRegistry = exports.ProviderConfigSchema = exports.listModels = exports.ProviderFactory = exports.ProviderRegistry = void 0;
 var provider_registry_js_1 = require("./provider-registry.js");
 Object.defineProperty(exports, "ProviderRegistry", { enumerable: true, get: function () { return provider_registry_js_1.ProviderRegistry; } });
 var provider_factory_js_1 = require("./provider-factory.js");
@@ -35,4 +35,19 @@ Object.defineProperty(exports, "StreamingError", { enumerable: true, get: functi
 var mock_js_1 = require("./providers/mock.js");
 Object.defineProperty(exports, "MockProvider", { enumerable: true, get: function () { return mock_js_1.MockProvider; } });
 Object.defineProperty(exports, "createDefaultMockProvider", { enumerable: true, get: function () { return mock_js_1.createDefaultMockProvider; } });
+// OpenAI-compatible provider (base for OpenRouter, etc.)
+var openai_compatible_js_1 = require("./providers/openai-compatible.js");
+Object.defineProperty(exports, "OpenAICompatibleProvider", { enumerable: true, get: function () { return openai_compatible_js_1.OpenAICompatibleProvider; } });
+// OpenRouter — routes to 200+ models via single API key
+var openrouter_js_1 = require("./providers/openrouter.js");
+Object.defineProperty(exports, "OpenRouterProvider", { enumerable: true, get: function () { return openrouter_js_1.OpenRouterProvider; } });
+var capabilities_js_1 = require("./types/capabilities.js");
+Object.defineProperty(exports, "ProviderCapabilitiesSchema", { enumerable: true, get: function () { return capabilities_js_1.ProviderCapabilitiesSchema; } });
+Object.defineProperty(exports, "StructuredOutputLevel", { enumerable: true, get: function () { return capabilities_js_1.StructuredOutputLevel; } });
+Object.defineProperty(exports, "DEFAULT_CAPABILITIES", { enumerable: true, get: function () { return capabilities_js_1.DEFAULT_CAPABILITIES; } });
+Object.defineProperty(exports, "ANTHROPIC_CAPABILITIES", { enumerable: true, get: function () { return capabilities_js_1.ANTHROPIC_CAPABILITIES; } });
+Object.defineProperty(exports, "OPENAI_CAPABILITIES", { enumerable: true, get: function () { return capabilities_js_1.OPENAI_CAPABILITIES; } });
+Object.defineProperty(exports, "OPENROUTER_CAPABILITIES", { enumerable: true, get: function () { return capabilities_js_1.OPENROUTER_CAPABILITIES; } });
+Object.defineProperty(exports, "OLLAMA_CAPABILITIES", { enumerable: true, get: function () { return capabilities_js_1.OLLAMA_CAPABILITIES; } });
+Object.defineProperty(exports, "GOOGLE_CAPABILITIES", { enumerable: true, get: function () { return capabilities_js_1.GOOGLE_CAPABILITIES; } });
 //# sourceMappingURL=index.js.map

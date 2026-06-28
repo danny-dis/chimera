@@ -255,11 +255,11 @@ describe('Flow: duo preset', () => {
 describe('Flow: trio preset', () => {
   it('prompt → writer → reviewer → challenger → synthesize → final', async () => {
     const writer = mockProvider([
-      { match: /You are the writer/, content: 'TRIO DRAFT: use a hash map' },
+      { match: /You are a code writer/, content: 'TRIO DRAFT: use a hash map' },
     ]);
     const reviewer = mockProvider([
       {
-        match: /You are the reviewer/,
+        match: /You are a code reviewer/,
         content: JSON.stringify({
           verdict: 'pass',
           issues: [],
@@ -512,11 +512,11 @@ describe('Flow: auto preset', () => {
 
   it('high complexity with 2+ providers → auto-selects trio', async () => {
     const writer = mockProvider([
-      { match: /You are the writer/, content: 'Trio draft' },
+      { match: /You are a code writer/, content: 'Trio draft' },
     ]);
     const reviewer = mockProvider([
       {
-        match: /You are the reviewer/,
+        match: /You are a code reviewer/,
         content: JSON.stringify({ verdict: 'pass', issues: [], commentary: 'ok' }),
       },
     ]);
@@ -539,6 +539,10 @@ describe('Flow: auto preset', () => {
           apiDesign: 0.6, refactoringScope: 0.8, crossCuttingConcerns: 0.7,
         },
       }),
+      selectProvider: (_complexity: any, role: string) => {
+        const map: Record<string, string> = { writer: IDS.trioWriter, reviewer: IDS.trioReviewer, challenger: IDS.trioChallenger };
+        return { model: map[role] ?? 'default' };
+      },
     };
 
     const engine = new DeliberationEngine({

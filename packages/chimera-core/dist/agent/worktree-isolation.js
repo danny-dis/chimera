@@ -43,6 +43,21 @@ class WorktreeIsolation {
         await git(['worktree', 'remove', '--force', worktree.worktreePath], worktree.gitRoot);
         await git(['branch', '-D', worktree.branch], worktree.gitRoot);
     }
+    async mergeBranch(worktree, commitMessage, targetBranch, stageAll) {
+        const addArgs = stageAll ? ['add', '.'] : ['add', '-u'];
+        await git(addArgs, worktree.worktreePath);
+        await git(['commit', '-m', commitMessage], worktree.worktreePath);
+        const branch = targetBranch ?? (await git(['branch', '--show-current'], worktree.gitRoot)).stdout;
+        try {
+            await git(['merge', worktree.branch], worktree.gitRoot);
+            return { success: true };
+        }
+        catch {
+            await git(['merge', '--abort'], worktree.gitRoot);
+            const { stdout } = await git(['status'], worktree.gitRoot);
+            return { success: false, conflict: stdout };
+        }
+    }
     async hasWorktreeChanges(worktreePath, sinceCommit) {
         const code = await gitExitCode(['diff', '--quiet', sinceCommit, 'HEAD'], worktreePath);
         return code !== 0;

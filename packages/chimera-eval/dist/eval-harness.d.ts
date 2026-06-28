@@ -53,6 +53,7 @@ export interface EvalScore {
     metrics: Record<string, number>;
     failureCategory?: string;
     notes?: string;
+    judge?: import('./judge-llm.js').JudgeVerdict;
 }
 export interface EvalReport {
     runId: string;
@@ -75,8 +76,8 @@ export declare class EvalHarness {
     private tasks;
     registerTask(spec: TaskSpec): void;
     recordTrajectory(trajectory: Trajectory): void;
-    scoreTask(taskId: string): EvalScore | null;
-    generateReport(runId: string): EvalReport;
+    scoreTask(taskId: string, judgeVerdict?: import('./judge-llm.js').JudgeVerdict): EvalScore | null;
+    generateReport(runId: string, verdicts?: Map<string, import('./judge-llm.js').JudgeVerdict>): EvalReport;
     replayTrajectory(taskId: string): TrajectoryStep[] | null;
     compareRuns(runA: EvalReport, runB: EvalReport): {
         passRateDelta: number;

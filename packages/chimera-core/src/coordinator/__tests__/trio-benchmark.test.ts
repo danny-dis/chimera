@@ -220,10 +220,10 @@ async function metricRoleSynthesis(): Promise<MetricResult> {
   // The synthesizer's `hasOppositeSentiment` requires shared tokens
   // (jaccard > 0.2) AND asymmetric negation — this pair triggers that.
   const writerFactory = () => makeMockProvider([
-    { match: 'You are the writer', content: 'use caching for performance optimization' },
+    { match: 'You are a code writer', content: 'use caching for performance optimization' },
   ]);
   const reviewerFactory = () => makeMockProvider([
-    { match: 'You are the reviewer', content: 'do not use caching for performance optimization' },
+    { match: 'You are a code reviewer', content: 'do not use caching for performance optimization' },
   ]);
   const challengerFactory = () => makeMockProvider([
     { match: 'You are the challenger', content: JSON.stringify({ challenges: ['consider invalidation cost'], alternatives: [] }) },

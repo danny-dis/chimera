@@ -182,13 +182,13 @@ describe('DuoExecutor — smoke', () => {
     const executor = new DuoExecutor({ eventStream, registry, costTracker });
 
     const factory = (id: string) => {
-      if (id === FRONTIER_MODEL_ID) return makeMockProvider([{ match: /./, content: 'content' }]);
+      if (id === FRONTIER_MODEL_ID || id === MOCK_IDS.modelA || id === MOCK_IDS.modelB) return makeMockProvider([{ match: /./, content: 'content' }]);
       throw new Error(`unknown: ${id}`);
     };
 
     const result = await executor.executeWithAnalysis(
       'task',
-      { modelA: FRONTIER_MODEL_ID, modelB: FRONTIER_MODEL_ID, budgetUsd: 0.005, temperature: 0 },
+      { modelA: FRONTIER_MODEL_ID, modelB: MOCK_IDS.modelB, budgetUsd: 0.005, temperature: 0 },
       factory
     );
 

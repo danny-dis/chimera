@@ -9,6 +9,10 @@ import {
   ModelProvider,
 } from '../types/provider.js';
 import {
+  ProviderCapabilities,
+  ANTHROPIC_CAPABILITIES,
+} from '../types/capabilities.js';
+import {
   ProviderError,
   RateLimitError,
   QuotaExceededError,
@@ -429,6 +433,10 @@ export class AnthropicProvider implements ModelProvider {
 
   getPricing(): PricingInfo {
     return { ...this.pricing };
+  }
+
+  getCapabilities(): ProviderCapabilities {
+    return { ...ANTHROPIC_CAPABILITIES };
   }
 
   supportsToolCalling(): boolean {

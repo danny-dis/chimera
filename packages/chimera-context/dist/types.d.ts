@@ -191,7 +191,7 @@ export type ChimeraEvent = {
     output?: string;
 } | {
     type: 'deliberation_result';
-    mode: 'solo' | 'duo' | 'trio' | 'fusion' | 'hive' | 'merge' | 'auto';
+    mode: 'solo' | 'duo' | 'trio' | 'fusion' | 'hive' | 'merge' | 'swarm' | 'auto';
     output: string;
     analysis: {
         thought: string;
@@ -304,7 +304,7 @@ export type ChimeraEvent = {
     type: 'auto_preset_selected';
     task: string;
     complexity: number;
-    selectedPreset: 'solo' | 'duo' | 'trio' | 'fusion' | 'merge' | 'hive' | 'auto';
+    selectedPreset: 'solo' | 'duo' | 'trio' | 'fusion' | 'merge' | 'hive' | 'swarm' | 'auto';
     taskType: string;
     timestamp: number;
 } | {
@@ -323,5 +323,39 @@ export type ChimeraEvent = {
 } | {
     type: 'error';
     message: string;
+} | {
+    type: 'fusion_started';
+    task: string;
+    models: string[];
+    judge: string;
+} | {
+    type: 'fusion_completed';
+    task: string;
+    durationMs: number;
+    totalCostUsd: number;
+} | {
+    type: 'fusion_provider_error';
+    modelId: string;
+    error: string;
+} | {
+    type: 'fusion_budget_exceeded';
+    currentCost: number;
+    budget: number;
+} | {
+    type: 'fusion_recursion_blocked';
+    depth: number;
+    maxDepth: number;
+} | {
+    type: 'fusion_fallback_judge';
+    failedModel: string;
+    error: string;
+} | {
+    type: 'fusion_judge_parse_error';
+    raw: string;
+} | {
+    type: 'provider_rate_limited';
+    providerId: string;
+    retryAfterMs: number;
+    remainingRpm: number;
 };
 //# sourceMappingURL=types.d.ts.map

@@ -11,5 +11,11 @@ export { ModelComparator, type ModelComparison, } from './model-comparator.js';
 export { ProviderError, RateLimitError, QuotaExceededError, ProviderUnavailableError, InvalidConfigError, StreamingError, } from './errors.js';
 export { MockProvider, createDefaultMockProvider } from './providers/mock.js';
 export type { MockProviderOptions } from './providers/mock.js';
+export { OpenAICompatibleProvider } from './providers/openai-compatible.js';
+export type { OpenAICompatibleConfig, OpenAICompatibleOptions } from './providers/openai-compatible.js';
+export { OpenRouterProvider } from './providers/openrouter.js';
+export type { OpenRouterConfig, OpenRouterOptions } from './providers/openrouter.js';
 export type { ToolCall, Message, ToolDefinition, ResponseFormat, CompletionOptions, TokenUsage, CompletionResult, StreamChunk, ModelInfo, PricingInfo, ModelProvider, } from './types/provider.js';
+export { ProviderCapabilitiesSchema, StructuredOutputLevel, DEFAULT_CAPABILITIES, ANTHROPIC_CAPABILITIES, OPENAI_CAPABILITIES, OPENROUTER_CAPABILITIES, OLLAMA_CAPABILITIES, GOOGLE_CAPABILITIES, } from './types/capabilities.js';
+export type { ProviderCapabilities, } from './types/capabilities.js';
 //# sourceMappingURL=index.d.ts.map

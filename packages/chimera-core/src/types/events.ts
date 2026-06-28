@@ -138,7 +138,7 @@ export const ChimeraEventSchema = z.discriminatedUnion('type', [
   }),
   z.object({
     type: z.literal('deliberation_result'),
-    mode: z.enum(['solo', 'duo', 'trio', 'fusion', 'hive', 'merge', 'auto']),
+    mode: z.enum(['solo', 'duo', 'trio', 'fusion', 'hive', 'merge', 'swarm', 'auto']),
     output: z.string(),
     analysis: z.object({
       thought: z.string(),
@@ -260,7 +260,7 @@ export const ChimeraEventSchema = z.discriminatedUnion('type', [
     type: z.literal('auto_preset_selected'),
     task: z.string(),
     complexity: z.number(),
-    selectedPreset: z.enum(['solo', 'duo', 'trio', 'fusion', 'merge', 'hive', 'auto']),
+    selectedPreset: z.enum(['solo', 'duo', 'trio', 'fusion', 'merge', 'hive', 'swarm', 'auto']),
     taskType: z.string(),
     timestamp: z.number(),
   }),
@@ -281,6 +281,50 @@ export const ChimeraEventSchema = z.discriminatedUnion('type', [
   z.object({
     type: z.literal('error'),
     message: z.string(),
+  }),
+  // --- Fusion mode telemetry ---
+  z.object({
+    type: z.literal('fusion_started'),
+    task: z.string(),
+    models: z.array(z.string()),
+    judge: z.string(),
+  }),
+  z.object({
+    type: z.literal('fusion_completed'),
+    task: z.string(),
+    durationMs: z.number(),
+    totalCostUsd: z.number(),
+  }),
+  z.object({
+    type: z.literal('fusion_provider_error'),
+    modelId: z.string(),
+    error: z.string(),
+  }),
+  z.object({
+    type: z.literal('fusion_budget_exceeded'),
+    currentCost: z.number(),
+    budget: z.number(),
+  }),
+  z.object({
+    type: z.literal('fusion_recursion_blocked'),
+    depth: z.number(),
+    maxDepth: z.number(),
+  }),
+  z.object({
+    type: z.literal('fusion_fallback_judge'),
+    failedModel: z.string(),
+    error: z.string(),
+  }),
+  z.object({
+    type: z.literal('fusion_judge_parse_error'),
+    raw: z.string(),
+  }),
+  // --- Dynamic concurrency telemetry ---
+  z.object({
+    type: z.literal('provider_rate_limited'),
+    providerId: z.string(),
+    retryAfterMs: z.number(),
+    remainingRpm: z.number(),
   }),
 ]);
 

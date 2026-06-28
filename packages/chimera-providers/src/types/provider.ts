@@ -89,6 +89,12 @@ export interface ModelProvider {
   getCost(tokens: { input: number; output: number }): number;
   getPricing(): PricingInfo;
 
+  /**
+   * Returns the full capabilities object for this provider.
+   * Prefer this over individual supports* methods for new code.
+   */
+  getCapabilities(): import('./capabilities.js').ProviderCapabilities;
+
   supportsToolCalling(): boolean;
   supportsStructuredOutput(): boolean;
   supportsVision(): boolean;

@@ -25,10 +25,10 @@ import type { EventStream } from '../../event-stream.js';
 import type { ModelRegistry } from '@chimera/providers';
 import type { CostTracker } from '../../cost-tracker.js';
 import type { SubTaskResult, ModelPool } from '../types.js';
-/** The 7 deliberation modes. Matches `OrchestrationPattern` + 'merge' + 'hive' + 'auto'. */
-export type DeliberationMode = 'solo' | 'duo' | 'trio' | 'fusion' | 'merge' | 'hive' | 'auto';
+/** The 8 deliberation modes. */
+export type DeliberationMode = 'solo' | 'duo' | 'trio' | 'fusion' | 'merge' | 'hive' | 'swarm' | 'auto';
 /** User-selectable presets. Excludes internal-only modes (merge). */
-export type UserPreset = 'auto' | 'solo' | 'duo' | 'trio' | 'hive' | 'fusion';
+export type UserPreset = 'auto' | 'solo' | 'duo' | 'trio' | 'hive' | 'fusion' | 'swarm';
 /** Provider factory — `(modelId) => LLMProvider`. */
 export type DeliberationProviderFactory = (modelId: string) => import('../../session-orchestrator.js').LLMProvider;
 /** Shared config knobs across all modes. */
@@ -51,6 +51,8 @@ export interface DeliberationConfigBase {
 export interface SoloDeliberationConfig extends DeliberationConfigBase {
     mode: 'solo';
     model: string;
+    /** If true, always run the thinker step before writing. */
+    eternalCoT?: boolean;
 }
 export interface DuoDeliberationConfig extends DeliberationConfigBase {
     mode: 'duo';
@@ -113,7 +115,18 @@ export interface AutoDeliberationConfig extends DeliberationConfigBase {
     /** Optional: constrain which presets are eligible for auto-selection. */
     eligiblePresets?: DeliberationMode[];
 }
-export type DeliberationConfig = SoloDeliberationConfig | DuoDeliberationConfig | TrioDeliberationConfig | FusionDeliberationConfig | MergeDeliberationConfig | HiveDeliberationConfig | AutoDeliberationConfig;
+export interface SwarmDeliberationConfig extends DeliberationConfigBase {
+    mode: 'swarm';
+    /** Max agents in the swarm. Default 50. */
+    maxAgents?: number;
+    /** Max concurrent agents. Default 10. */
+    maxConcurrency?: number;
+    /** Cluster size for hierarchical aggregation. Default 15. */
+    clusterSize?: number;
+    /** Delay between agent launches in ms. Default 50. */
+    staggerDelayMs?: number;
+}
+export type DeliberationConfig = SoloDeliberationConfig | DuoDeliberationConfig | TrioDeliberationConfig | FusionDeliberationConfig | MergeDeliberationConfig | HiveDeliberationConfig | SwarmDeliberationConfig | AutoDeliberationConfig;
 /** The 5-field analysis shape. Uniform across all modes. */
 export interface DeliberationAnalysis {
     thought: string;

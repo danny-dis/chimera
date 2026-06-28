@@ -34,12 +34,16 @@ export class CoordinatorEngine {
     this.config = { ...DEFAULT_CONFIG, ...params.config };
   }
 
+  private safeEmit(event: unknown): void {
+    try { this.eventStream.append(event as Parameters<EventStream['append']>[0]); } catch { /* ignore */ }
+  }
+
   /**
    * Execute a task using parallel sub-agents.
    */
   async execute(task: string, context?: string): Promise<AggregatedResult> {
     // Step 1: Decompose
-    this.eventStream.append({
+    this.safeEmit({
       type: 'task_classified',
       complexity: { score: 0.8, dimensions: { decomposability: 0.9 } },
       estimatedCost: 0,
@@ -47,7 +51,7 @@ export class CoordinatorEngine {
 
     const decomposition = await this.decomposer.decompose(task, context);
 
-    this.eventStream.append({
+    this.safeEmit({
       type: 'agent_spawned',
       agentId: 'coordinator',
       role: 'writer',
@@ -76,7 +80,7 @@ export class CoordinatorEngine {
 
     // Step 5: Handle unresolved conflicts
     if (!aggregated.resolved && this.config.conflictResolution === 'escalate') {
-      this.eventStream.append({
+      this.safeEmit({
         type: 'handoff_triggered',
         fromAgent: 'coordinator',
         toAgent: 'user',

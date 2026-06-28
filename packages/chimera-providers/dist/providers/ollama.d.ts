@@ -1,4 +1,5 @@
 import { Message, CompletionOptions, CompletionResult, StreamChunk, ModelInfo, PricingInfo, ModelProvider } from '../types/provider.js';
+import { ProviderCapabilities } from '../types/capabilities.js';
 export interface OllamaOptions {
     modelInfo?: Partial<ModelInfo>;
     timeoutMs?: number;
@@ -24,6 +25,7 @@ export declare class OllamaProvider implements ModelProvider {
         output: number;
     }): number;
     getPricing(): PricingInfo;
+    getCapabilities(): ProviderCapabilities;
     supportsToolCalling(): boolean;
     supportsStructuredOutput(): boolean;
     supportsVision(): boolean;

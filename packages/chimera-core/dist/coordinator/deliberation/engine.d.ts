@@ -4,11 +4,8 @@
  *
  * The engine is a **thin facade**. It owns no new logic — each mode
  * delegates to the existing executor (`SoloExecutor`, `DuoExecutor`,
- * `TrioExecutor`, `ResultAggregator`) and normalizes the result to the
- * unified `DeliberationResult` shape. The `fusion` mode throws
- * `Error('fusion mode pending')` because `fusion-executor.ts` does not
- * exist yet; the gap is documented in the section 19.5 report and is
- * the subject of its own future work item.
+ * `TrioExecutor`, `FusionExecutor`, `ResultAggregator`) and normalizes
+ * the result to the unified `DeliberationResult` shape.
  *
  * Determinism: the engine adds no new side effects. All events emitted
  * are produced by the underlying executors; the engine only routes and
@@ -31,18 +28,14 @@ export declare class DeliberationEngine {
     private runDuo;
     private runTrio;
     /**
-     * Fusion mode is intentionally not implemented here. `fusion-executor.ts`
-     * does not exist yet (only the type file `fusion-types.ts` does). The
-     * test in `__tests__/fusion-executor.test.ts` references a missing
-     * module and is itself a known gap tracked by another section.
-     *
-     * Routing is wired (this method exists, the dispatch is correct) so
-     * the moment `FusionExecutor` lands, only this one method needs to
-     * change.
+     * Fusion mode: parallel panel of analysis models → judge synthesizes
+     * structured analysis. Delegates to FusionExecutor which handles
+     * panel calls, adversarial round, budget enforcement, and judge failover.
      */
     private runFusion;
     private runMerge;
     private runHive;
+    private runSwarm;
     /**
      * Assign models to subtasks using capability-based routing.
      * Uses LlmRouter to classify each subtask and match it to the best model.

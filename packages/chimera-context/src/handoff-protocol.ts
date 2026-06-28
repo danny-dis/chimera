@@ -1,5 +1,6 @@
 import { existsSync } from 'fs';
 import type { ChimeraEvent, HandoffDocument, HandoffChecklist, HandoffDelta } from './types.js';
+import { resolveNodeOutputField, type NodeOutput, type FieldResolution } from './output-ref.js';
 
 export type HandoffProposal = {
   claimId: string;
@@ -536,5 +537,27 @@ export class HandoffProtocol {
 
   private checkCapabilities(_doc: HandoffDocument): boolean {
     return true;
+  }
+
+  // ── Output-ref wiring ──────────────────────────────────────────────
+
+  /**
+   * Resolve a `$nodeId.output.field` reference against a producer's output.
+   * Returns the field value, or null for declared-optional absent fields.
+   * Throws `OutputRefError` for strict failures (not-in-schema, producer-not-run, etc.).
+   */
+  readOutputField(nodeId: string, field: string, nodeOutput: NodeOutput): unknown | null {
+    const resolution = resolveNodeOutputField(nodeOutput, nodeId, field);
+    if (resolution.kind === 'empty') return null;
+    return resolution.value;
+  }
+
+  /**
+   * Like `readOutputField`, but returns a `FieldResolution` object that
+   * distinguishes "value present" from "explicitly empty" — useful for
+   * callers that need to log the empty case rather than swallow it.
+   */
+  readOutputFieldWithState(nodeId: string, field: string, nodeOutput: NodeOutput): FieldResolution {
+    return resolveNodeOutputField(nodeOutput, nodeId, field);
   }
 }

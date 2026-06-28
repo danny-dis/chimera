@@ -11,6 +11,7 @@ exports._resetLegacyWarnings = _resetLegacyWarnings;
 exports.resolveSkillPath = resolveSkillPath;
 exports.loadSkill = loadSkill;
 exports.loadSkillsForMode = loadSkillsForMode;
+exports.matchesPathPatterns = matchesPathPatterns;
 exports.listAllSkills = listAllSkills;
 /**
  * SkillLoader — synchronous loader for `.md` skill files with YAML frontmatter.
@@ -81,6 +82,8 @@ function parseSkillFile(raw) {
                     description: typeof parsed.description === 'string' ? parsed.description : undefined,
                     inputs: isStringRecord(parsed.inputs) ? parsed.inputs : undefined,
                     modes: Array.isArray(parsed.modes) ? parsed.modes.filter((m) => typeof m === 'string') : undefined,
+                    paths: Array.isArray(parsed.paths) ? parsed.paths.filter((p) => typeof p === 'string') : undefined,
+                    allowedTools: Array.isArray(parsed.allowedTools) ? parsed.allowedTools.filter((t) => typeof t === 'string') : undefined,
                 };
             }
         }
@@ -213,6 +216,8 @@ function loadSkill(skillName, workspaceRoot, options = {}) {
             path: `<bundled:${bundled.name}>`,
             inputsSchema: buildInputsSchema(undefined),
             modes: bundled.modes.includes('all') ? ['all'] : [...bundled.modes],
+            paths: [],
+            allowedTools: [],
         };
     }
     // 2-5. Disk paths.
@@ -235,6 +240,8 @@ function loadSkill(skillName, workspaceRoot, options = {}) {
         path: resolved.absPath,
         inputsSchema,
         modes: frontmatter.modes ?? ['all'],
+        paths: frontmatter.paths ?? [],
+        allowedTools: frontmatter.allowedTools ?? [],
     };
 }
 // ---------------------------------------------------------------------------
@@ -338,6 +345,60 @@ function emitSkillLoaded(eventStream, skillName, source, bytes) {
     }
 }
 // ---------------------------------------------------------------------------
+// Path pattern matching
+// ---------------------------------------------------------------------------
+/**
+ * Check if a file path matches any of the given glob-like patterns.
+ * Supports: *, **, ? wildcards. Simple implementation without external deps.
+ *
+ * - `*` matches any characters except `/`
+ * - `**` matches any characters including `/`
+ * - `?` matches exactly one character except `/`
+ */
+function matchesPathPatterns(filePath, patterns) {
+    if (patterns.length === 0)
+        return true;
+    const normalized = filePath.replace(/\\/g, '/');
+    return patterns.some((pattern) => matchesSinglePattern(normalized, pattern.replace(/\\/g, '/')));
+}
+function matchesSinglePattern(filePath, pattern) {
+    const regex = globToRegex(pattern);
+    return regex.test(filePath);
+}
+function globToRegex(glob) {
+    let regexStr = '^';
+    let i = 0;
+    while (i < glob.length) {
+        const c = glob[i];
+        if (c === '*') {
+            if (glob[i + 1] === '*') {
+                regexStr += '.*';
+                i += 2;
+                if (glob[i] === '/')
+                    i++;
+            }
+            else {
+                regexStr += '[^/]*';
+                i++;
+            }
+        }
+        else if (c === '?') {
+            regexStr += '[^/]';
+            i++;
+        }
+        else if (c === '.') {
+            regexStr += '\\.';
+            i++;
+        }
+        else {
+            regexStr += c;
+            i++;
+        }
+    }
+    regexStr += '$';
+    return new RegExp(regexStr);
+}
+// ---------------------------------------------------------------------------
 // listAllSkills — enumerate every installed skill across modes + packs
 // ---------------------------------------------------------------------------
 /**
@@ -397,6 +458,8 @@ function listAllSkills(workspaceRoot) {
                 path: abs,
                 inputsSchema: buildInputsSchema(frontmatter.inputs),
                 modes: frontmatter.modes ?? ['all'],
+                paths: frontmatter.paths ?? [],
+                allowedTools: frontmatter.allowedTools ?? [],
             });
         }
     }

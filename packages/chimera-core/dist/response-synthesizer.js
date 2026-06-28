@@ -30,6 +30,15 @@ function hasOppositeSentiment(a, b) {
 function roleAuthority(roleId) {
     return ROLE_AUTHORITY[roleId.split('-')[0]] ?? 0;
 }
+/**
+ * ResponseSynthesizer — merges outputs from multiple agents into a unified response.
+ *
+ * Follows the "moderator-not-debater" pattern from Omnigent:
+ * - The synthesizer is a moderator, not a third debater
+ * - Its role is to surface agreements, disagreements, and converge
+ * - It does NOT inject its own position as a third competing view
+ * - The synthesis is a combined answer, NOT a new third position
+ */
 class ResponseSynthesizer {
     eventStream;
     constructor(eventStream) {
@@ -188,12 +197,18 @@ class ResponseSynthesizer {
         const resolved = conflicts.filter((c) => c.resolvedBy !== 'user_escalation').length;
         return Math.max(0.3, Math.min(1, maxConfidence - unresolved * 0.10 - resolved * 0.05));
     }
+    safeEmit(event) {
+        try {
+            this.eventStream?.append(event);
+        }
+        catch { /* ignore */ }
+    }
     emitEvents(conflicts, inputs) {
         if (!this.eventStream)
             return;
         for (const conflict of conflicts) {
             if (conflict.resolvedBy === 'user_escalation') {
-                this.eventStream.append({
+                this.safeEmit({
                     type: 'disagreement_detected',
                     agents: conflict.involvedAgents,
                     issue: conflict.description,
@@ -201,7 +216,7 @@ class ResponseSynthesizer {
                 });
             }
         }
-        this.eventStream.append({
+        this.safeEmit({
             type: 'final_response',
             status: conflicts.some((c) => c.resolvedBy === 'user_escalation') ? 'needs_user' : 'done',
             cost: 0,

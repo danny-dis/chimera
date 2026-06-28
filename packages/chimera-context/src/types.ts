@@ -74,7 +74,7 @@ export type ChimeraEvent =
   | { type: 'context_threshold_reached'; agentId: string; fillPercent: number; tier: number }
   | { type: 'session_compacted'; summaryRef: string }
   | { type: 'final_response'; status: 'done' | 'blocked' | 'needs_user'; cost: number; agentCount: number; output?: string }
-  | { type: 'deliberation_result'; mode: 'solo' | 'duo' | 'trio' | 'fusion' | 'hive' | 'merge' | 'auto'; output: string; analysis: { thought: string; consensus: string[]; conflicts: string[]; uniqueInsights: string[]; blindSpots: string[]; confidence: number } }
+  | { type: 'deliberation_result'; mode: 'solo' | 'duo' | 'trio' | 'fusion' | 'hive' | 'merge' | 'swarm' | 'auto'; output: string; analysis: { thought: string; consensus: string[]; conflicts: string[]; uniqueInsights: string[]; blindSpots: string[]; confidence: number } }
   | { type: 'provenance_claim'; claimId: string; source: string; agentId: string; confidence: number }
   | { type: 'quality_gate_parallel_started'; reviewerId: string; challengerId: string; draftPreview: string }
   | { type: 'quality_gate_parallel_completed'; reviewerId: string; challengerId: string; reviewerStatus: 'fulfilled' | 'rejected'; challengerStatus: 'fulfilled' | 'rejected'; durationMs: number }
@@ -93,7 +93,15 @@ export type ChimeraEvent =
   | { type: 'learning_completed'; skillsCreated: number; skillsUpdated: number; workflowsCreated: number; workflowsUpdated: number; packsCreated: number; durationMs: number }
   | { type: 'skill_synthesized'; name: string; confidence: number; action: 'created' | 'updated' }
   | { type: 'workflow_synthesized'; name: string; confidence: number; action: 'created' | 'updated' }
-  | { type: 'auto_preset_selected'; task: string; complexity: number; selectedPreset: 'solo' | 'duo' | 'trio' | 'fusion' | 'merge' | 'hive' | 'auto'; taskType: string; timestamp: number }
+  | { type: 'auto_preset_selected'; task: string; complexity: number; selectedPreset: 'solo' | 'duo' | 'trio' | 'fusion' | 'merge' | 'hive' | 'swarm' | 'auto'; taskType: string; timestamp: number }
   | { type: 'mode_preset_warning'; mode: string; preset: string; resolvedPreset: string; reason: string }
   | { type: 'mode_preset_resolved'; mode: string; preset: string; complexity?: number; task?: string; timestamp?: number }
-  | { type: 'error'; message: string };
+  | { type: 'error'; message: string }
+  | { type: 'fusion_started'; task: string; models: string[]; judge: string }
+  | { type: 'fusion_completed'; task: string; durationMs: number; totalCostUsd: number }
+  | { type: 'fusion_provider_error'; modelId: string; error: string }
+  | { type: 'fusion_budget_exceeded'; currentCost: number; budget: number }
+  | { type: 'fusion_recursion_blocked'; depth: number; maxDepth: number }
+  | { type: 'fusion_fallback_judge'; failedModel: string; error: string }
+  | { type: 'fusion_judge_parse_error'; raw: string }
+  | { type: 'provider_rate_limited'; providerId: string; retryAfterMs: number; remainingRpm: number };

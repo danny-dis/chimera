@@ -18,11 +18,11 @@ const biome_linter_js_1 = require("./coordinator/biome-linter.js");
 const VALID_MODE_PRESET_COMBOS = {
     ask: ['solo'],
     plan: ['solo', 'duo'],
-    code: ['auto', 'solo', 'duo', 'trio', 'fusion', 'hive'],
-    debug: ['auto', 'solo', 'duo', 'trio', 'fusion'],
-    review: ['auto', 'duo', 'trio', 'fusion'],
+    code: ['auto', 'solo', 'duo', 'trio', 'fusion', 'hive', 'swarm'],
+    debug: ['auto', 'solo', 'duo', 'trio', 'fusion', 'swarm'],
+    review: ['auto', 'duo', 'trio', 'fusion', 'swarm'],
     oal: ['solo'],
-    auto: ['auto', 'solo', 'duo', 'trio', 'fusion', 'hive'],
+    auto: ['auto', 'solo', 'duo', 'trio', 'fusion', 'hive', 'swarm'],
 };
 const context_1 = require("@chimera/context");
 const context_2 = require("@chimera/context");
@@ -122,6 +122,8 @@ class SessionOrchestrator {
     recallService = null;
     autoDream = null;
     _extractionCursor = 0;
+    toolCallHistory = [];
+    _lastComplexity = null;
     constructor(eventStream, tools, workspaceRoot, memory, options) {
         this.eventStream = eventStream ?? new event_stream_js_1.EventStream();
         this.costTracker = new cost_tracker_js_1.CostTracker(this.eventStream);
@@ -182,19 +184,34 @@ class SessionOrchestrator {
             timestamp: new Date().toISOString(),
             task,
             mode,
-            messages: [],
-            toolCallHistory: [],
+            messages: [...this._writerMessages],
+            toolCallHistory: this.toolCallHistory.slice(-100),
             events,
-            costSpend: {},
+            costSpend: Object.fromEntries([...this.costTracker.spend.entries()]),
             metadata: {
                 agentCount: events.filter((e) => e.type === 'agent_spawned').length,
                 turnCount: events.filter((e) => e.type === 'draft_proposed').length,
                 status: this.state.status === 'error' ? 'failed' : this.state.status === 'complete' ? 'completed' : 'active',
                 auditLogSize: this.auditLog.size(),
+                lastComplexity: this._lastComplexity,
             },
         };
     }
     async restoreState(checkpoint) {
+        if (checkpoint.messages && Array.isArray(checkpoint.messages)) {
+            this._writerMessages = [...checkpoint.messages];
+        }
+        if (checkpoint.toolCallHistory && Array.isArray(checkpoint.toolCallHistory)) {
+            this.toolCallHistory = [...checkpoint.toolCallHistory];
+        }
+        if (checkpoint.metadata?.lastComplexity) {
+            this._lastComplexity = checkpoint.metadata.lastComplexity;
+        }
+        if (checkpoint.events && Array.isArray(checkpoint.events)) {
+            for (const event of checkpoint.events) {
+                this.eventStream.append(event);
+            }
+        }
         if (checkpoint.metadata?.status === 'completed') {
             this.transition({ status: 'complete', result: checkpoint.task ?? '', cost: 0 });
         }
@@ -260,7 +277,7 @@ class SessionOrchestrator {
             }
             const injectionCheck = (0, prompt_guard_js_1.checkUserInput)(task);
             if (!injectionCheck.safe && injectionCheck.confidence > 0.85) {
-                this.logSecurityEvent('prompt_injection_detected', injectionCheck.confidence, injectionCheck.flags);
+                this.logSecurityEvent('prompt_injection_detected', injectionCheck.confidence, injectionCheck.flags, { type: 'injection', decision: 'block', payload: task });
                 this.eventStream.append({
                     type: 'final_response',
                     status: 'blocked',
@@ -351,6 +368,7 @@ class SessionOrchestrator {
             }
             this.transition({ status: 'classifying', task });
             const complexity = await this.taskRouter.classifyTask(task);
+            this._lastComplexity = complexity;
             let resolvedMode = mode;
             if (mode === 'auto') {
                 resolvedMode = this.taskRouter.suggestMode(task, complexity);
@@ -416,19 +434,19 @@ class SessionOrchestrator {
             let draftCost = this.estimateCost(draftResult.usage, providers.writer);
             totalCost += draftCost;
             this.costTracker.recordSpend('writer', draftCost);
-            this.logLLMCall('writer', draftResult.usage.inputTokens, draftResult.usage.outputTokens, draftCost);
-            const toolCallHistory = [];
+            this.logLLMCall('writer', draftResult.usage?.inputTokens ?? 0, draftResult.usage?.outputTokens ?? 0, draftCost, { role: 'writer' });
+            this.toolCallHistory = [];
             let iterations = 0;
             this._writerMessages = [...writerMessages];
             while (draftResult.toolCalls && draftResult.toolCalls.length > 0 && iterations < MAX_TOOL_ITERATIONS) {
                 iterations++;
                 const toolResults = await this.executeToolCalls(draftResult.toolCalls, { sessionId: writerId }, executeSignal);
-                toolCallHistory.push(...toolResults);
+                this.toolCallHistory.push(...toolResults.map(tr => ({ toolName: tr.toolName, args: tr.args, result: tr.result.result })));
                 for (const tr of toolResults) {
-                    this.logToolCall(tr.toolName, JSON.stringify(tr.args).slice(0, 100), tr.result.result.duration * 0.000001);
+                    this.logToolCall(tr.toolName, JSON.stringify(tr.args).slice(0, 100), tr.result.result.duration * 0.000001, { duration: tr.result.result.duration });
                 }
                 const toolMessages = this.buildToolResultMessages(writerMessages, draftResult, toolResults);
-                const inputTokens = draftResult.usage.inputTokens + draftResult.usage.outputTokens;
+                const inputTokens = (draftResult.usage?.inputTokens ?? 0) + (draftResult.usage?.outputTokens ?? 0);
                 const threshold = this.relayRacing.trackTokens('default', inputTokens);
                 let maskedMessages = this.relayRacing.maskObservations(toolMessages);
                 if (maskedMessages !== toolMessages) {
@@ -480,11 +498,12 @@ class SessionOrchestrator {
                 draftCost += iterCost;
                 totalCost += iterCost;
                 this.costTracker.recordSpend('writer', iterCost);
-                this.logLLMCall('writer', draftResult.usage.inputTokens, draftResult.usage.outputTokens, iterCost);
+                this.logLLMCall('writer', draftResult.usage.inputTokens, draftResult.usage.outputTokens, iterCost, { role: 'writer' });
             }
             const draftParsed = this.parseJSON(draftResult.content);
             const draftContent = draftParsed.response ?? draftResult.content;
             const draftConfidence = draftParsed.confidence ?? 0.5;
+            this._writerMessages.push({ role: 'assistant', content: draftContent });
             outputs.push({
                 agentId: writerId,
                 role: 'writer',
@@ -492,7 +511,7 @@ class SessionOrchestrator {
                 confidence: draftConfidence,
                 provider: 'llm',
                 model: 'default',
-                tokensUsed: draftResult.usage.inputTokens + draftResult.usage.outputTokens,
+                tokensUsed: (draftResult.usage?.inputTokens ?? 0) + (draftResult.usage?.outputTokens ?? 0),
             });
             this.eventStream.append({
                 type: 'draft_proposed',
@@ -522,7 +541,7 @@ class SessionOrchestrator {
             const reviewCost = this.estimateCost(reviewResult.usage, providers.reviewer);
             totalCost += reviewCost;
             this.costTracker.recordSpend('reviewer', reviewCost);
-            this.logLLMCall('reviewer', reviewResult.usage.inputTokens, reviewResult.usage.outputTokens, reviewCost);
+            this.logLLMCall('reviewer', reviewResult.usage?.inputTokens ?? 0, reviewResult.usage?.outputTokens ?? 0, reviewCost, { role: 'reviewer' });
             const reviewParsed = this.parseJSON(reviewResult.content);
             const verdict = reviewParsed.verdict ?? 'PASS';
             const findings = reviewParsed.findings ?? [];
@@ -533,7 +552,7 @@ class SessionOrchestrator {
                 confidence: reviewParsed.confidence ?? 0.5,
                 provider: 'llm',
                 model: 'default',
-                tokensUsed: reviewResult.usage.inputTokens + reviewResult.usage.outputTokens,
+                tokensUsed: (reviewResult.usage?.inputTokens ?? 0) + (reviewResult.usage?.outputTokens ?? 0),
                 issues: findings,
             });
             this.eventStream.append({
@@ -572,7 +591,7 @@ class SessionOrchestrator {
                 const challengeCost = this.estimateCost(challengeResult.usage, providers.challenger);
                 totalCost += challengeCost;
                 this.costTracker.recordSpend('challenger', challengeCost);
-                this.logLLMCall('challenger', challengeResult.usage.inputTokens, challengeResult.usage.outputTokens, challengeCost);
+                this.logLLMCall('challenger', challengeResult.usage?.inputTokens ?? 0, challengeResult.usage?.outputTokens ?? 0, challengeCost, { role: 'challenger' });
                 const challengeParsed = this.parseJSON(challengeResult.content);
                 outputs.push({
                     agentId: challengerId,
@@ -581,7 +600,7 @@ class SessionOrchestrator {
                     confidence: challengeParsed.confidence ?? 0.5,
                     provider: 'llm',
                     model: 'default',
-                    tokensUsed: challengeResult.usage.inputTokens + challengeResult.usage.outputTokens,
+                    tokensUsed: (challengeResult.usage?.inputTokens ?? 0) + (challengeResult.usage?.outputTokens ?? 0),
                 });
                 this.eventStream.append({
                     type: 'challenged',
@@ -642,13 +661,15 @@ class SessionOrchestrator {
         switch (mode) {
             case 'code':
             case 'debug': {
-                // Complexity-gated selection: trivial → solo, medium → duo, complex → trio
+                // Complexity-gated selection: trivial → solo, medium → duo, complex → trio, very complex → fusion
                 if (!complexity)
                     return 'trio'; // fallback when no complexity available
                 if (complexity.overall < 0.3)
                     return 'solo'; // trivial: single model
                 if (complexity.overall < 0.6)
                     return 'duo'; // medium: two models
+                if (complexity.overall >= 0.8)
+                    return 'fusion'; // high-stakes: multi-model deliberation
                 return 'trio'; // complex: full pipeline
             }
             case 'review':
@@ -662,6 +683,14 @@ class SessionOrchestrator {
     buildDeliberationConfig(task, mode, providers, costCap, preset, complexity) {
         const delibMode = preset ?? this.mapModeToDeliberationMode(mode, complexity);
         const base = { task, budgetUsd: costCap, temperature: 0.7, maxCompletionTokens: 4096 };
+        // Override to fusion when task explicitly requests multi-model deliberation
+        if (delibMode !== 'fusion' && !preset) {
+            const lower = task.toLowerCase();
+            const fusionKeywords = ['compare', 'debate', 'perspectives', 'alternatives', 'tradeoffs', 'consensus'];
+            if (fusionKeywords.some((k) => lower.includes(k))) {
+                return { ...base, mode: 'fusion', analysisModels: ['default'], judgeModel: 'default' };
+            }
+        }
         switch (delibMode) {
             case 'solo':
                 return { ...base, mode: 'solo', model: 'default' };
@@ -675,8 +704,16 @@ class SessionOrchestrator {
                     reviewer: 'default',
                     ...(providers.challenger ? { challenger: 'default' } : {}),
                 };
-            case 'fusion':
-                return { ...base, mode: 'fusion', analysisModels: ['default'], judgeModel: 'default' };
+            case 'fusion': {
+                const modelIds = this._registry
+                    ? this._registry.getAll()
+                        .filter((m) => !m.deprecated)
+                        .map((m) => m.id)
+                    : ['default'];
+                const panel = modelIds.slice(0, 3);
+                const judge = modelIds[modelIds.length - 1] ?? 'default';
+                return { ...base, mode: 'fusion', analysisModels: panel, judgeModel: judge };
+            }
             case 'hive': {
                 // Build model pool from registry for capability-based routing
                 const modelIds = this._registry
@@ -836,7 +873,7 @@ class SessionOrchestrator {
             findings,
             reviewSummary,
             reviewContent: reviewResult.content,
-            reviewTokens: reviewResult.usage.inputTokens + reviewResult.usage.outputTokens,
+            reviewTokens: (reviewResult.usage?.inputTokens ?? 0) + (reviewResult.usage?.outputTokens ?? 0),
         };
     }
     /**
@@ -1002,7 +1039,7 @@ class SessionOrchestrator {
                 confidence: parsed.confidence ?? 0.5,
                 provider: 'llm',
                 model: 'default',
-                tokensUsed: result.usage.inputTokens + result.usage.outputTokens,
+                tokensUsed: (result.usage?.inputTokens ?? 0) + (result.usage?.outputTokens ?? 0),
             });
             this.eventStream.append({
                 type: 'verified',
@@ -1041,7 +1078,7 @@ class SessionOrchestrator {
                     confidence: parsed.confidence ?? 0.5,
                     provider: 'llm',
                     model: 'default',
-                    tokensUsed: result.usage.inputTokens + result.usage.outputTokens,
+                    tokensUsed: (result.usage?.inputTokens ?? 0) + (result.usage?.outputTokens ?? 0),
                 });
                 this.eventStream.append({
                     type: 'challenged',
@@ -1107,30 +1144,42 @@ class SessionOrchestrator {
             await this.rateLimiter.acquire(estimatedTokens);
         }
     }
-    logLLMCall(model, inputTokens, outputTokens, cost) {
+    logLLMCall(model, inputTokens, outputTokens, cost, details) {
         this.auditLog.logLLMCall({
             sessionId: this._sessionId,
             model,
             inputTokens,
             outputTokens,
             tokenCost: cost,
+            details: {
+                ...details,
+                tokens: inputTokens + outputTokens,
+            },
         });
     }
-    logToolCall(tool, paramsHash, cost) {
+    logToolCall(tool, paramsHash, cost, details) {
         this.auditLog.logToolCall({
             sessionId: this._sessionId,
             tool,
             paramsHash,
             userApproved: true,
             tokenCost: cost,
+            details: {
+                toolName: tool,
+                decision: 'allow',
+                ...details,
+            },
         });
     }
-    logSecurityEvent(event, confidence, flags) {
+    logSecurityEvent(event, confidence, flags, details) {
         this.auditLog.logSecurityEvent({
             sessionId: this._sessionId,
             event,
             confidence,
             flags,
+            details: {
+                ...details,
+            },
         });
     }
     shouldVerify(mode, complexity) {
@@ -1266,7 +1315,7 @@ class SessionOrchestrator {
             if (result.success && result.data) {
                 const outputCheck = (0, prompt_guard_js_1.checkToolOutput)(JSON.stringify(result.data), tc.name);
                 if (!outputCheck.safe && outputCheck.confidence > 0.8) {
-                    this.logSecurityEvent('tool_output_injection', outputCheck.confidence, outputCheck.flags);
+                    this.logSecurityEvent('tool_output_injection', outputCheck.confidence, outputCheck.flags, { type: 'injection', decision: 'sanitize', payload: JSON.stringify(result.data) });
                     result.success = false;
                     result.error = `Tool output sanitized: potential injection detected (${outputCheck.flags.join(', ')})`;
                     result.data = undefined;

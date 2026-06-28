@@ -9,6 +9,10 @@ import {
   ModelProvider,
 } from '../types/provider.js';
 import {
+  ProviderCapabilities,
+  GOOGLE_CAPABILITIES,
+} from '../types/capabilities.js';
+import {
   ProviderError,
   RateLimitError,
   QuotaExceededError,
@@ -374,6 +378,10 @@ export class GoogleProvider implements ModelProvider {
 
   getPricing(): PricingInfo {
     return { ...this.pricing };
+  }
+
+  getCapabilities(): ProviderCapabilities {
+    return { ...GOOGLE_CAPABILITIES };
   }
 
   supportsToolCalling(): boolean {
