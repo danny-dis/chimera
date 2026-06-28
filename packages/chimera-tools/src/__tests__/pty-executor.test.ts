@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import os from 'os';
 import path from 'path';
+import fs from 'fs';
 import { PTYExecutor } from '../sandbox/pty-executor.js';
 
 const isWin = process.platform === 'win32';
@@ -33,7 +34,9 @@ describe('PTYExecutor', () => {
       });
 
       const result = await executor.execute({
-        command: isWin ? 'node -e "process.stderr.write(\'error\')"' : 'echo error >&2',
+        command: isWin
+          ? 'node -e process.stderr.write("error")'
+          : 'echo error >&2',
         cwd: tmpDir,
         timeout: 5000,
         env: {},
@@ -68,7 +71,7 @@ describe('PTYExecutor', () => {
       });
 
       const result = await executor.execute({
-        command: isWin ? 'node -e "setTimeout(()=>{},10000)"' : 'sleep 10',
+        command: isWin ? 'node -e setTimeout(()=>{},10000)' : 'sleep 10',
         cwd: tmpDir,
         timeout: 100,
         env: {},
@@ -86,13 +89,16 @@ describe('PTYExecutor', () => {
       });
 
       const result = await executor.execute({
-        command: `node -e "process.stdout.write('a'.repeat(5000))"`,
+        command: isWin
+          ? 'node -e process.stdout.write("a".repeat(5000))'
+          : 'node -e "process.stdout.write(\'a\'.repeat(5000))"',
         cwd: tmpDir,
         timeout: 5000,
         env: {},
         maxOutputBytes: 1000,
       });
 
+      expect(result.stdout.length).toBeLessThanOrEqual(1100);
       expect(result.stdout).toContain('truncated');
     });
   });
@@ -124,16 +130,21 @@ describe('PTYExecutor', () => {
         defaultTimeout: 5000,
       });
 
-      const result = await executor.execute({
-        command: isWin
-          ? 'node -e "process.stdout.write(process.env.MY_TEST_VAR || \'\')"'
-          : 'echo $MY_TEST_VAR',
-        cwd: tmpDir,
-        timeout: 5000,
-        env: { MY_TEST_VAR: 'test_value' },
-      });
+      const scriptPath = path.join(tmpDir, '_env_test.js');
+      fs.writeFileSync(scriptPath, 'process.stdout.write(process.env.MY_TEST_VAR || "")');
 
-      expect(result.stdout.trim()).toBe('test_value');
+      try {
+        const result = await executor.execute({
+          command: `node ${scriptPath}`,
+          cwd: tmpDir,
+          timeout: 5000,
+          env: { MY_TEST_VAR: 'test_value' },
+        });
+
+        expect(result.stdout.trim()).toBe('test_value');
+      } finally {
+        fs.unlinkSync(scriptPath);
+      }
     });
   });
 
@@ -145,7 +156,7 @@ describe('PTYExecutor', () => {
       });
 
       const promise = executor.execute({
-        command: isWin ? 'node -e "setTimeout(()=>{},10000)"' : 'sleep 10',
+        command: isWin ? 'node -e setTimeout(()=>{},10000)' : 'sleep 10',
         cwd: tmpDir,
         timeout: 10000,
         env: {},

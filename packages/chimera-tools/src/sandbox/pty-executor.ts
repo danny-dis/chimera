@@ -58,6 +58,7 @@ export class PTYExecutor {
       reject: false,
       killSignal: 'SIGTERM',
       maxBuffer: maxOutputBytes + 1024,
+      windowsHide: true,
     });
 
     try {
