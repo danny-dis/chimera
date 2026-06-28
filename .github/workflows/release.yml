@@ -1,0 +1,78 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to release (e.g., 0.1.5)'
+        required: true
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'pnpm'
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build all packages
+        run: pnpm build
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Run tests
+        run: pnpm test
+
+      - name: Sync version
+        run: |
+          VERSION="${{ github.event.inputs.version || github.ref_name }}"
+          VERSION="${VERSION#v}"
+          node -e "
+            const fs = require('fs');
+            const glob = require('path');
+            const root = JSON.parse(fs.readFileSync('package.json', 'utf8'));
+            root.version = '$VERSION';
+            fs.writeFileSync('package.json', JSON.stringify(root, null, 2) + '\n');
+            const pkgs = require('child_process').execSync('ls packages/chimera-*/package.json', { encoding: 'utf8' }).trim().split('\n');
+            for (const p of pkgs) {
+              const pkg = JSON.parse(fs.readFileSync(p, 'utf8'));
+              pkg.version = '$VERSION';
+              fs.writeFileSync(p, JSON.stringify(pkg, null, 2) + '\n');
+            }
+            console.log('All packages set to $VERSION');
+          "
+
+      - name: Publish @chimera/cli to npm
+        run: pnpm --filter @chimera/cli publish --no-git-checks --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          name: "v${{ github.event.inputs.version || github.ref_name }}"

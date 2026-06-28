@@ -1,6 +1,6 @@
 {
   "name": "@chimera/eval",
-  "version": "0.0.1",
+  "version": "0.1.5",
   "description": "Evaluation harness: trajectory replay, SWE-bench adapters, cost/quality metrics",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",

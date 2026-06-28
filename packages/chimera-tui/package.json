@@ -1,6 +1,6 @@
 {
   "name": "@chimera/tui",
-  "version": "0.0.1",
+  "version": "0.1.5",
   "type": "module",
   "description": "Terminal UI: setup wizard, chat, agent dashboard, cost tracker, session browser, diff viewer",
   "main": "dist/index.js",

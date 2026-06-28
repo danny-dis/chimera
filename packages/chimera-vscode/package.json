@@ -2,7 +2,7 @@
   "name": "chimera-vscode",
   "displayName": "Chimera AI",
   "description": "Parallel multi-agent coding assistant — frontier quality at cheap-model pricing",
-  "version": "0.0.1",
+  "version": "0.1.5",
   "private": true,
   "publisher": "chimera-ai",
   "license": "MIT",

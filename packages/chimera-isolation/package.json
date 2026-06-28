@@ -1,6 +1,6 @@
 {
   "name": "@chimera/isolation",
-  "version": "0.0.1",
+  "version": "0.1.5",
   "description": "Worktree-based isolation for parallel agent runs (git worktree, lifecycle, cleanup, error classification)",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",

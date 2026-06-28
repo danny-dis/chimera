@@ -10,7 +10,7 @@ interface PresetSelectorProps {
   compact?: boolean;
 }
 
-const presets: DeliberationMode[] = ['auto', 'solo', 'duo', 'trio', 'hive', 'fusion'];
+const presets: DeliberationMode[] = ['auto', 'solo', 'duo', 'trio', 'hive', 'fusion', 'swarm'];
 
 const presetIcons: Record<DeliberationMode, string> = {
   solo: '●',
@@ -19,6 +19,7 @@ const presetIcons: Record<DeliberationMode, string> = {
   merge: '⬡',
   hive: '⬡',
   fusion: '◆',
+  swarm: '🐝',
   auto: '⚡',
 };
 
@@ -29,6 +30,7 @@ const presetDescriptions: Record<DeliberationMode, string> = {
   merge: 'Merge multiple agent outputs',
   hive: 'Decompose & parallel subtasks',
   fusion: 'Multi-model fusion',
+  swarm: 'Autonomous swarm orchestration',
   auto: 'Automatic selection',
 };
 

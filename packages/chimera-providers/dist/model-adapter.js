@@ -19,5 +19,9 @@ exports.ProviderConfigSchema = zod_1.z.object({
         maxParallelInstances: zod_1.z.number().positive(),
         rateLimitRpm: zod_1.z.number().positive(),
     }),
+    rateLimits: zod_1.z.object({
+        rpm: zod_1.z.number().positive().optional(),
+        tpm: zod_1.z.number().positive().optional(),
+    }).optional(),
 });
 //# sourceMappingURL=model-adapter.js.map

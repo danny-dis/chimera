@@ -1,6 +1,6 @@
 {
   "name": "@chimera/context",
-  "version": "0.0.1",
+  "version": "0.1.5",
   "description": "Context engine: repo indexing, retrieval, instruction hierarchy, relay racing, handoff protocol",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",

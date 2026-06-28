@@ -1,6 +1,6 @@
 {
   "name": "@chimera/workflows",
-  "version": "0.0.1",
+  "version": "0.1.5",
   "description": "DAG-based workflow engine: node schemas, executor, discovery, loop/approval gates",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",

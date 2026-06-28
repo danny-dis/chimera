@@ -1,6 +1,6 @@
 {
   "name": "@chimera/lsp",
-  "version": "0.0.1",
+  "version": "0.1.5",
   "description": "Language Server Protocol service for Chimera",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",

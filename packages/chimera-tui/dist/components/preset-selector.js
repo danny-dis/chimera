@@ -1,7 +1,7 @@
 import React, { useState, useCallback } from 'react';
 import { Box, Text, useInput } from 'ink';
 import { zen } from '../theme.js';
-const presets = ['auto', 'solo', 'duo', 'trio', 'hive', 'fusion'];
+const presets = ['auto', 'solo', 'duo', 'trio', 'hive', 'fusion', 'swarm'];
 const presetIcons = {
     solo: '●',
     duo: '◉',
@@ -9,6 +9,7 @@ const presetIcons = {
     merge: '⬡',
     hive: '⬡',
     fusion: '◆',
+    swarm: '🐝',
     auto: '⚡',
 };
 const presetDescriptions = {
@@ -18,6 +19,7 @@ const presetDescriptions = {
     merge: 'Merge multiple agent outputs',
     hive: 'Decompose & parallel subtasks',
     fusion: 'Multi-model fusion',
+    swarm: 'Autonomous swarm orchestration',
     auto: 'Automatic selection',
 };
 export const PresetSelector = ({ currentPreset, onPresetChange, focused = false, compact = false, }) => {

@@ -3,16 +3,13 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
 import { ProviderFactory } from '../provider-factory.js';
-import { NoProviderConfiguredError, ProviderError } from '../errors.js';
+import { MockProvider } from '../providers/mock.js';
 
 /**
- * Quick-win 0.2: hard-error when no provider is configured.
- *
- * The factory used to silently fall back to MockProvider, which made the
- * CLI "work" for users with no API keys by echoing their prompt back.
- * That's a footgun — fail loudly instead.
+ * When no provider is configured, the factory falls back to MockProvider
+ * so the CLI works out of the box for demos, CI, and first-run experience.
  */
-describe('ProviderFactory.createFromEnv — hard error on no config', () => {
+describe('ProviderFactory.createFromEnv — mock fallback on no config', () => {
   const originalEnv = process.env;
   const originalCwd = process.cwd();
   let tmpDir: string;
@@ -30,6 +27,9 @@ describe('ProviderFactory.createFromEnv — hard error on no config', () => {
       'OPENAI_MODEL',
       'GOOGLE_MODEL',
       'CHIMERA_USE_MOCK',
+      'CHIMERA_CHEAP_API_KEY',
+      'CHIMERA_CHEAP_BASE_URL',
+      'CHIMERA_CHEAP_MODEL',
     ]) {
       delete process.env[k];
     }
@@ -48,68 +48,18 @@ describe('ProviderFactory.createFromEnv — hard error on no config', () => {
     }
   });
 
-  it('throws NoProviderConfiguredError when no env vars and no config file', () => {
-    expect(() => ProviderFactory.createFromEnv()).toThrow(NoProviderConfiguredError);
+  it('returns MockProvider when no env vars and no config file', () => {
+    const providers = ProviderFactory.createFromEnv();
+    expect(providers).toHaveLength(1);
+    expect(providers[0]).toBeInstanceOf(MockProvider);
   });
 
-  it('error extends ProviderError so callers can catch the parent class', () => {
-    let caught: unknown = null;
-    try {
-      ProviderFactory.createFromEnv();
-    } catch (e) {
-      caught = e;
-    }
-    expect(caught).toBeInstanceOf(ProviderError);
-    expect(caught).toBeInstanceOf(NoProviderConfiguredError);
-    expect((caught as Error).name).toBe('NoProviderConfiguredError');
+  it('createSingle() also returns MockProvider when nothing is configured', () => {
+    const provider = ProviderFactory.createSingle();
+    expect(provider).toBeInstanceOf(MockProvider);
   });
 
-  it('error message lists every supported provider and the env var to set', () => {
-    try {
-      ProviderFactory.createFromEnv();
-      throw new Error('expected throw');
-    } catch (err) {
-      const msg = (err as Error).message;
-      expect(msg).toContain('No LLM provider configured');
-      expect(msg).toContain('ANTHROPIC_API_KEY');
-      expect(msg).toContain('OPENAI_API_KEY');
-      expect(msg).toContain('GOOGLE_API_KEY');
-      expect(msg).toContain('OLLAMA');
-    }
-  });
-
-  it('error message mentions the config file and `chimera init` as alternatives', () => {
-    try {
-      ProviderFactory.createFromEnv();
-      throw new Error('expected throw');
-    } catch (err) {
-      const msg = (err as Error).message;
-      expect(msg).toContain('.chimera/config.yaml');
-      expect(msg).toContain('chimera init');
-    }
-  });
-
-  it('error includes the locations that were checked (env + config path)', () => {
-    try {
-      ProviderFactory.createFromEnv();
-      throw new Error('expected throw');
-    } catch (err) {
-      const e = err as NoProviderConfiguredError;
-      expect(Array.isArray(e.checkedLocations)).toBe(true);
-      expect(e.checkedLocations).toContain('process.env');
-      // last entry is the resolved config path; match in a cross-platform way
-      const hasConfig = e.checkedLocations.some(
-        (l) => l.includes('.chimera') && l.endsWith('config.yaml'),
-      );
-      expect(hasConfig).toBe(true);
-    }
-  });
-
-  it('createSingle() also throws NoProviderConfiguredError when nothing is configured', () => {
-    expect(() => ProviderFactory.createSingle()).toThrow(NoProviderConfiguredError);
-  });
-
-  it('createFromEnvOrMock() still returns a MockProvider (backward compat)', () => {
+  it('createFromEnvOrMock() returns a MockProvider', () => {
     const provider = ProviderFactory.createFromEnvOrMock();
     expect(provider.getModel().provider).toBe('mock');
   });

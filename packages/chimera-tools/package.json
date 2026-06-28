@@ -1,6 +1,6 @@
 {
   "name": "@chimera/tools",
-  "version": "0.0.1",
+  "version": "0.1.5",
   "description": "Tool registry: filesystem, search, shell, git, patch engine, test runner, LSP, MCP",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",

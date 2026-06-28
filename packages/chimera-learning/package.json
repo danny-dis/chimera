@@ -1,6 +1,6 @@
 {
   "name": "@chimera/learning",
-  "version": "0.0.1",
+  "version": "0.1.5",
   "description": "Self-improvement engine: session analysis → skill/workflow synthesis",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",

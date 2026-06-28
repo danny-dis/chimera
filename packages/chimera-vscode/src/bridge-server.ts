@@ -104,7 +104,7 @@ export class BridgeServer {
       if (path === '/health' && method === 'GET') {
         this.json(res, 200, { status: 'ok', sessions: this.sessions.size });
       } else if (path === '/session' && method === 'POST') {
-        const body = await this.readBody(req);
+        const body = await this.readBody(req) as { mode?: string; workspaceRoot?: string };
         const session = this.createSession(body.mode ?? 'ask', body.workspaceRoot ?? process.cwd());
         this.json(res, 201, { sessionId: session.id, status: session.status });
       } else if (path.startsWith('/session/') && path.endsWith('/send') && method === 'POST') {
@@ -114,7 +114,7 @@ export class BridgeServer {
           this.json(res, 404, { error: 'Session not found' });
           return;
         }
-        const body = await this.readBody(req);
+        const body = await this.readBody(req) as { task: string };
         session.messages.push({ role: 'user', content: body.task, timestamp: Date.now() });
         const result = await this.taskHandler({
           task: body.task,
@@ -134,7 +134,7 @@ export class BridgeServer {
         }
         this.json(res, 200, { id: session.id, mode: session.mode, status: session.status, messageCount: session.messages.length });
       } else if (path === '/file-changed' && method === 'POST') {
-        const body = await this.readBody(req);
+        const body = await this.readBody(req) as { path: string; type: string };
         this.fileChangeNotifications.push({ path: body.path, type: body.type, timestamp: Date.now() });
         if (this.fileChangeNotifications.length > this.maxNotifications) {
           this.fileChangeNotifications = this.fileChangeNotifications.slice(-this.maxNotifications);

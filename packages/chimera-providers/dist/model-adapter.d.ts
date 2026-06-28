@@ -28,6 +28,16 @@ export declare const ProviderConfigSchema: z.ZodObject<{
         maxParallelInstances: number;
         rateLimitRpm: number;
     }>;
+    rateLimits: z.ZodOptional<z.ZodObject<{
+        rpm: z.ZodOptional<z.ZodNumber>;
+        tpm: z.ZodOptional<z.ZodNumber>;
+    }, "strip", z.ZodTypeAny, {
+        rpm?: number | undefined;
+        tpm?: number | undefined;
+    }, {
+        rpm?: number | undefined;
+        tpm?: number | undefined;
+    }>>;
 }, "strip", z.ZodTypeAny, {
     name: string;
     provider: string;
@@ -43,6 +53,10 @@ export declare const ProviderConfigSchema: z.ZodObject<{
     };
     baseUrl?: string | undefined;
     apiKey?: string | undefined;
+    rateLimits?: {
+        rpm?: number | undefined;
+        tpm?: number | undefined;
+    } | undefined;
 }, {
     name: string;
     provider: string;
@@ -58,6 +72,10 @@ export declare const ProviderConfigSchema: z.ZodObject<{
     };
     baseUrl?: string | undefined;
     apiKey?: string | undefined;
+    rateLimits?: {
+        rpm?: number | undefined;
+        tpm?: number | undefined;
+    } | undefined;
 }>;
 export type ProviderConfig = z.infer<typeof ProviderConfigSchema>;
 export interface ModelAdapter {
