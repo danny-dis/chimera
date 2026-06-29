@@ -91,6 +91,105 @@ describe('SessionOrchestrator', () => {
       expect(result.agentCount).toBe(1);
       expect(result.cost).toBeGreaterThanOrEqual(0);
     });
+
+    it('passes conversation history to the writer provider', async () => {
+      const capturedMessages: Array<{ role: string; content: string }> = [];
+      const provider: LLMProvider = {
+        async complete(messages) {
+          capturedMessages.push(...messages);
+          return {
+            content: JSON.stringify({ response: 'Based on our discussion...', confidence: 0.9, rationale: 'Context aware.' }),
+            usage: { inputTokens: 100, outputTokens: 200 },
+          };
+        },
+      };
+
+      const history = [
+        { role: 'user', content: 'What is TypeScript?' },
+        { role: 'assistant', content: 'TypeScript is a typed superset of JavaScript.' },
+      ];
+
+      await orchestrator.execute({
+        task: 'Which should I learn first?',
+        mode: 'ask',
+        providers: { writer: provider, reviewer: provider },
+        costCap: 10,
+        conversationHistory: history,
+      });
+
+      // The messages should contain the conversation history
+      const allContent = capturedMessages.map(m => m.content).join('\n');
+      expect(allContent).toContain('PREVIOUS CONVERSATION CONTEXT');
+      expect(allContent).toContain('What is TypeScript?');
+      expect(allContent).toContain('TypeScript is a typed superset');
+      expect(allContent).toContain('Which should I learn first?');
+    });
+
+    it('simulates multi-turn conversation about a project', async () => {
+      const conversationHistory: Array<{ role: string; content: string }> = [];
+      const allCaptured: Array<{ role: string; content: string }[]> = [];
+
+      const provider: LLMProvider = {
+        async complete(messages) {
+          allCaptured.push([...messages]);
+          const taskMsg = messages.find(m => m.content.includes('[!] TASK'));
+          const task = taskMsg?.content ?? '';
+
+          // Extract what the LLM would "know" from context
+          const hasHistory = messages.some(m => m.content.includes('PREVIOUS CONVERSATION CONTEXT'));
+
+          if (task.includes('Explain the contents')) {
+            conversationHistory.push(
+              { role: 'user', content: 'Explain the contents of this project' },
+              { role: 'assistant', content: 'A.R.G.U.S. is an Automated Reconnaissance & Geographic Understanding System - a distributed intelligence platform for multi-source data fusion and 4D spatial-temporal analytics.' },
+            );
+            return {
+              content: JSON.stringify({ response: 'A.R.G.U.S. is a distributed intelligence platform...', confidence: 0.9, rationale: 'Read the README.' }),
+              usage: { inputTokens: 500, outputTokens: 200 },
+            };
+          }
+
+          // Second call: should have history
+          if (task.includes('What sources')) {
+            expect(hasHistory).toBe(true);
+            return {
+              content: JSON.stringify({ response: 'It supports 141+ sources including AIS, ADS-B, Shodan, and social media.', confidence: 0.85, rationale: 'From the README.' }),
+              usage: { inputTokens: 800, outputTokens: 250 },
+            };
+          }
+
+          return {
+            content: JSON.stringify({ response: 'OK', confidence: 0.5, rationale: '' }),
+            usage: { inputTokens: 100, outputTokens: 50 },
+          };
+        },
+      };
+
+      // Turn 1: Ask about the project
+      await orchestrator.execute({
+        task: 'Explain the contents of this project',
+        mode: 'ask',
+        providers: { writer: provider, reviewer: provider },
+        costCap: 10,
+      });
+
+      // Turn 2: Follow-up that requires context
+      await orchestrator.execute({
+        task: 'What data sources does it support?',
+        mode: 'ask',
+        providers: { writer: provider, reviewer: provider },
+        costCap: 10,
+        conversationHistory,
+      });
+
+      // Verify second call had conversation context
+      expect(allCaptured.length).toBe(2);
+      const secondCallContent = allCaptured[1].map(m => m.content).join('\n');
+      expect(secondCallContent).toContain('PREVIOUS CONVERSATION CONTEXT');
+      expect(secondCallContent).toContain('Explain the contents of this project');
+      expect(secondCallContent).toContain('A.R.G.U.S.');
+      expect(secondCallContent).toContain('What data sources does it support?');
+    });
   });
 
   describe('execute - code mode with verification', () => {
@@ -316,6 +415,41 @@ describe('SessionOrchestrator', () => {
       expect(system).toContain('Hard Limits');
       expect(system).toContain('OUTPUT:');
       expect(system).toContain('AS YOU WISH');
+    });
+
+    it('includes conversation history when provided', () => {
+      const history = [
+        { role: 'user', content: 'What is TypeScript?' },
+        { role: 'assistant', content: 'TypeScript is a typed superset of JavaScript.' },
+        { role: 'user', content: 'How is it different from JavaScript?' },
+        { role: 'assistant', content: 'TypeScript adds static type checking.' },
+      ];
+      const messages = orchestrator.buildWriterPrompt('Which should I learn first?', 'ask', history);
+
+      // Should have 4 messages: system (identity), system (output instructions), user (history), user (task)
+      expect(messages).toHaveLength(4);
+      expect(messages[2].role).toBe('user');
+      expect(messages[2].content).toContain('PREVIOUS CONVERSATION CONTEXT');
+      expect(messages[2].content).toContain('What is TypeScript?');
+      expect(messages[2].content).toContain('TypeScript is a typed superset');
+      expect(messages[3].content).toContain('Which should I learn first?');
+    });
+
+    it('truncates old messages when history exceeds turn limit', () => {
+      const history = Array.from({ length: 30 }, (_, i) => ({
+        role: i % 2 === 0 ? 'user' : 'assistant',
+        content: `Message ${i}: ${'x'.repeat(100)}`,
+      }));
+      const messages = orchestrator.buildWriterPrompt('test', 'ask', history);
+
+      const historyMsg = messages[2].content;
+      expect(historyMsg).toContain('PREVIOUS CONVERSATION CONTEXT');
+      // Turn limit is 10 (20 messages), so first 10 messages should be trimmed
+      expect(historyMsg).not.toContain('Message 0:');
+      expect(historyMsg).not.toContain('Message 9:');
+      // Recent messages should still be there
+      expect(historyMsg).toContain('Message 28:');
+      expect(historyMsg).toContain('Message 29:');
     });
   });
 

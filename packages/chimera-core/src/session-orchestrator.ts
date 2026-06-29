@@ -7,7 +7,7 @@ import { checkUserInput, checkToolOutput } from './security/prompt-guard.js';
 import { buildMessages, buildWorkflowGeneratorPrompt } from './prompts.js';
 import { AuditLog } from './security/audit-log.js';
 import { BiomeLinter } from './coordinator/biome-linter.js';
-import { sanitizeWriterOutput } from './coordinator/output-sanitizer.js';
+import { sanitizeWriterOutput, sanitizeReviewerOutput } from './coordinator/output-sanitizer.js';
 import type { LongTermMemory } from './memory/long-term-memory.js';
 import { Mode, type ToolCall, type ToolCallResult } from './types/agent.js';
 
@@ -472,8 +472,9 @@ export class SessionOrchestrator {
     preset?: DeliberationMode;
     maxRetries?: number;
     costCap?: number;
+    conversationHistory?: Array<{ role: string; content: string }>;
   }): Promise<OrchestratorResult> {
-    const { task, mode, providers, preset, costCap = 10 } = params;
+    const { task, mode, providers, preset, costCap = 10, conversationHistory } = params;
     const outputs: AgentOutput[] = [];
     let totalCost = 0;
 
@@ -656,14 +657,14 @@ export class SessionOrchestrator {
 
       // --- Inline fallback (backward-compatible) ---
       this.transition({ status: 'planning', task, complexity });
-      const needsVerification = this.shouldVerify(resolvedMode, complexity);
+      const needsVerification = this.shouldVerify(resolvedMode, complexity, task);
 
       const writerId = nextAgentId();
       this.transition({ status: 'drafting', task, agentId: writerId });
       this.agentMesh.registerAgent(this.buildAgentConfig(writerId, 'writer', costCap));
 
       const toolDefs = this.buildToolDefinitions();
-      const writerMessages = this.buildWriterPrompt(task, resolvedMode);
+      const writerMessages = this.buildWriterPrompt(task, resolvedMode, conversationHistory);
 
       const budgetCheck = this.checkBudget(8192);
       if (budgetCheck && budgetCheck.action === 'stop') {
@@ -830,7 +831,7 @@ export class SessionOrchestrator {
       outputs.push({
         agentId: reviewerId,
         role: 'reviewer',
-        content: reviewResult.content,
+        content: sanitizeReviewerOutput(reviewResult.content),
         confidence: reviewParsed.confidence ?? 0.5,
         provider: 'llm',
         model: 'default',
@@ -1380,10 +1381,10 @@ export class SessionOrchestrator {
     findings: Array<{ description: string; severity: 'high' | 'med' | 'low'; evidence: string }>,
     _thought?: string,
   ): string {
-    const verdictLine = `Reviewer verdict: ${verdict}`;
-    if (findings.length === 0) return `${verdictLine}. No issues found.`;
+    if (verdict === 'PASS') return '';
+    if (findings.length === 0) return '';
     const lines = findings.map((f) => `- [${f.severity.toUpperCase()}] ${f.description}`);
-    return `${verdictLine}.\nFindings:\n${lines.join('\n')}`;
+    return `Review findings:\n${lines.join('\n')}`;
   }
 
   /**
@@ -1478,7 +1479,7 @@ export class SessionOrchestrator {
       outputs.push({
         agentId: reviewerId,
         role: 'reviewer',
-        content: result.content,
+        content: sanitizeReviewerOutput(result.content),
         confidence: parsed.confidence ?? 0.5,
         provider: 'llm',
         model: 'default',
@@ -1645,25 +1646,57 @@ export class SessionOrchestrator {
     });
   }
 
-  private shouldVerify(mode: Mode, complexity: ComplexityScore): boolean {
+  private shouldVerify(mode: Mode, complexity: ComplexityScore, task?: string): boolean {
+    if (task && TaskRouter.isConversationalTask(task)) return false;
     if (mode === 'ask' && complexity.overall < 0.4) return false;
     return true;
   }
 
-  buildWriterPrompt(task: string, mode: Mode): Array<{ role: string; content: string }> {
+  buildWriterPrompt(task: string, mode: Mode, conversationHistory?: Array<{ role: string; content: string }>): Array<{ role: string; content: string }> {
     const messages = buildMessages({ role: 'writer', mode, task, cacheControl: DEFAULT_CACHE_CONTROL });
 
     const outputInstructions = [
       'Respond with valid JSON matching this schema:',
       '{"thought": string, "response": string, "confidence": number 0-1, "filesChanged": string[], "issues": string[], "rationale": string}',
       'The "thought" field must contain your comprehensive Chain-of-Thought reasoning.',
-      'The "response" field contains your main output.',
+      'The "response" field contains your main output — this is what the user sees.',
       'The "confidence" field is how confident you are (0 = guessing, 1 = certain).',
       'The "filesChanged" field lists any files referenced or modified.',
       'The "rationale" field explains why you chose this approach.',
+      '',
+      'CRITICAL: For conversational questions (e.g., "what can you do?", "who are you?", "how do I use X?"),',
+      'answer directly in the "response" field. Do NOT put analysis, meta-reasoning, or internal',
+      'assessment of other agents in the response field. The response field is the user-facing answer.',
+      'Analysis like "The original writer draft was empty..." or "The reviewer identified..." belongs',
+      'in "thought" only, NEVER in "response".',
     ].join('\n');
 
     messages.splice(1, 0, { role: 'system', content: outputInstructions });
+
+    // Insert conversation history between output instructions and current task
+    if (conversationHistory && conversationHistory.length > 0) {
+      const MAX_HISTORY_TURNS = 10;
+      const MAX_HISTORY_CHARS = 32000;
+      let historyMessages = conversationHistory.slice(-MAX_HISTORY_TURNS * 2);
+      let totalChars = historyMessages.reduce((sum, m) => sum + m.content.length, 0);
+      while (totalChars > MAX_HISTORY_CHARS && historyMessages.length > 2) {
+        const removed = historyMessages.shift()!;
+        totalChars -= removed.content.length;
+      }
+
+      const historyBlock = [
+        '--- PREVIOUS CONVERSATION CONTEXT ---',
+        'Use this context to understand what the user has been discussing.',
+        'Do NOT repeat information already provided. Build on previous answers.',
+        ...historyMessages.map(m => `[${m.role === 'user' ? 'User' : 'Assistant'}]: ${m.content.slice(0, 500)}`),
+        '--- END PREVIOUS CONVERSATION ---',
+        '',
+      ].join('\n');
+
+      // Insert before the last message (which is the current task)
+      messages.splice(messages.length - 1, 0, { role: 'user', content: historyBlock });
+    }
+
     return messages;
   }
 
@@ -1688,9 +1721,18 @@ export class SessionOrchestrator {
       'Respond with valid JSON matching this schema:',
       '{"thought": string, "verdict": "PASS" | "FAIL" | "NEEDS_REVISION", "confidence": number 0-1, "findings": Array<{description: string, severity: "high"|"med"|"low", evidence: string}>}',
       'The "thought" field must contain your detailed reasoning and adversarial critique.',
-    ].join('\n');
+    ];
 
-    messages.splice(1, 0, { role: 'system', content: outputInstructions });
+    if (TaskRouter.isConversationalTask(task)) {
+      outputInstructions.push(
+        '',
+        'IMPORTANT: This is a conversational/general question, not a code task.',
+        'Do NOT apply code-review criteria. Evaluate only: accuracy, completeness, clarity.',
+        'Default to PASS unless the answer is factually incorrect.',
+      );
+    }
+
+    messages.splice(1, 0, { role: 'system', content: outputInstructions.join('\n') });
     return messages;
   }
 
