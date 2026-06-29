@@ -1,6 +1,7 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.DuoExecutor = void 0;
+const output_sanitizer_js_1 = require("./output-sanitizer.js");
 /**
  * Two-model sequential deliberation with **deterministic** synthesis.
  *
@@ -72,7 +73,7 @@ class DuoExecutor {
             const sourceA = {
                 modelId: config.modelA,
                 role: 'writer',
-                content: resA.content,
+                content: (0, output_sanitizer_js_1.sanitizeWriterOutput)(resA.content),
                 tokens: resA.inputTokens + resA.outputTokens,
                 durationMs: resA.durationMs,
             };

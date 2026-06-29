@@ -33,47 +33,31 @@ const ToolCallBadge: React.FC<{ indicator: ToolCallIndicator }> = ({ indicator }
 const AnalysisSection: React.FC<{ analysis: Message['analysis'] }> = ({ analysis }) => {
   if (!analysis) return null;
 
+  const summaryParts: string[] = [];
+  if (analysis.consensus.length > 0) {
+    summaryParts.push(`Consensus: ${analysis.consensus.length}`);
+  }
+  if (analysis.conflicts.length > 0) {
+    summaryParts.push(`Conflicts: ${analysis.conflicts.length}`);
+  }
+  if (analysis.uniqueInsights.length > 0) {
+    summaryParts.push(`Insights: ${analysis.uniqueInsights.length}`);
+  }
+
   return (
-    <Box flexDirection="column" marginTop={1} borderStyle="single" borderColor={zen.muted} paddingX={1}>
-      <Box justifyContent="space-between">
-        <Text bold color={zen.warning}>Deliberation Analysis</Text>
+    <Box marginTop={1} flexDirection="column">
+      <Box>
+        <Text bold color={zen.warning}>📊 Analysis</Text>
+        <Text> </Text>
         <Text color={analysis.confidence > 0.7 ? zen.success : zen.warning}>
-          Confidence: {(analysis.confidence * 100).toFixed(0)}%
+          {(analysis.confidence * 100).toFixed(0)}%
         </Text>
+        {summaryParts.length > 0 && (
+          <Text dimColor> — {summaryParts.join(', ')}</Text>
+        )}
       </Box>
-
       {analysis.thought && (
-        <Box marginTop={1} flexDirection="column">
-          <Text dimColor italic>Judge's Thought:</Text>
-          <Text dimColor>{analysis.thought.slice(0, 300)}{analysis.thought.length > 300 ? '...' : ''}</Text>
-        </Box>
-      )}
-
-      {analysis.consensus.length > 0 && (
-        <Box marginTop={1} flexDirection="column">
-          <Text color={zen.success}>Consensus:</Text>
-          {analysis.consensus.map((c, i) => (
-            <Text key={i}>• {c}</Text>
-          ))}
-        </Box>
-      )}
-
-      {analysis.conflicts.length > 0 && (
-        <Box marginTop={1} flexDirection="column">
-          <Text color={zen.error}>Conflicts:</Text>
-          {analysis.conflicts.map((c, i) => (
-            <Text key={i}>• {c}</Text>
-          ))}
-        </Box>
-      )}
-
-      {analysis.uniqueInsights.length > 0 && (
-        <Box marginTop={1} flexDirection="column">
-          <Text color={zen.info}>Unique Insights:</Text>
-          {analysis.uniqueInsights.map((ins, i) => (
-            <Text key={i}>• {ins}</Text>
-          ))}
-        </Box>
+        <Text dimColor italic>  {analysis.thought.slice(0, 120)}{analysis.thought.length > 120 ? '…' : ''}</Text>
       )}
     </Box>
   );
@@ -101,7 +85,7 @@ const MessageBubble: React.FC<{ message: Message; isSelected: boolean }> = ({ me
         </Text>
         <Text dimColor> {new Date(message.timestamp).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false })}</Text>
       </Box>
-      <Box marginLeft={2} flexDirection="column">
+      <Box marginLeft={2} flexDirection="column" width="100%">
         {/* Render assistant/user messages through the markdown renderer.
             System messages are plain text (command output). */}
         {isSystem ? (
@@ -113,7 +97,7 @@ const MessageBubble: React.FC<{ message: Message; isSelected: boolean }> = ({ me
         {message.toolCalls?.map((tc, i) => (
           <ToolCallBadge key={i} indicator={tc} />
         ))}
-        {message.analysis && isSelected && <AnalysisSection analysis={message.analysis} />}
+        {message.analysis && <AnalysisSection analysis={message.analysis} />}
       </Box>
     </Box>
   );

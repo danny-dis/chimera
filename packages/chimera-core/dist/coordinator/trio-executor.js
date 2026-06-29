@@ -3,6 +3,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.TrioExecutor = void 0;
 const response_synthesizer_js_1 = require("../response-synthesizer.js");
 const prompts_js_1 = require("../prompts.js");
+const output_sanitizer_js_1 = require("./output-sanitizer.js");
 /**
  * Multi-stage quality gate: writer → reviewer → [challenger] → synthesize.
  *
@@ -89,7 +90,7 @@ class TrioExecutor {
             draftStage = {
                 modelId: config.writer,
                 role: 'writer',
-                content: draftResult.content,
+                content: (0, output_sanitizer_js_1.sanitizeWriterOutput)(draftResult.content),
                 inputTokens,
                 outputTokens,
                 durationMs: Date.now() - draftStart,

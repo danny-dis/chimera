@@ -3,6 +3,7 @@ import type { LLMProvider } from '../session-orchestrator.js';
 import type { ModelRegistry, ModelEntry } from '@chimera/providers';
 import type { CostTracker } from '../cost-tracker.js';
 import { ResponseSynthesizer, type SynthesisInput } from '../response-synthesizer.js';
+import { sanitizeWriterOutput } from './output-sanitizer.js';
 import type {
   DuoConfig,
   DuoContext,
@@ -126,7 +127,7 @@ export class DuoExecutor {
       const sourceA: DuoSource = {
         modelId: config.modelA,
         role: 'writer',
-        content: resA.content,
+        content: sanitizeWriterOutput(resA.content),
         tokens: resA.inputTokens + resA.outputTokens,
         durationMs: resA.durationMs,
       };

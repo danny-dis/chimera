@@ -2,6 +2,7 @@ import { EventStream } from '../event-stream.js';
 import type { ModelRegistry, ModelEntry } from '@chimera/providers';
 import type { CostTracker } from '../cost-tracker.js';
 import { ResponseSynthesizer, type SynthesisInput } from '../response-synthesizer.js';
+import { sanitizeWriterOutput } from './output-sanitizer.js';
 import type {
   SoloConfig,
   SoloContext,
@@ -120,7 +121,7 @@ export class SoloExecutor {
 
     try {
       const res = await this.callPeer('writer', config.model, task, config, providerFactory, undefined, thought);
-      draftContent = res.content;
+      draftContent = sanitizeWriterOutput(res.content);
       totalTokens += res.inputTokens + res.outputTokens;
       const cost = this.computeCost(config.model, res.inputTokens, res.outputTokens);
       totalCostUsd += cost;

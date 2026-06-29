@@ -7,7 +7,7 @@ const DEFAULT_PRICING = {
     inputPerMillion: 0,
     outputPerMillion: 0,
 };
-const DEFAULT_TIMEOUT_MS = 60_000;
+const DEFAULT_TIMEOUT_MS = 120_000;
 function estimateTokens(text) {
     return Math.ceil(text.length / 4);
 }
@@ -125,9 +125,21 @@ function parseStreamChunk(data) {
     return { content, toolCalls, finishReason, usage: tokenUsage };
 }
 function mapError(status, body, provider) {
-    const message = typeof body === 'object' && body !== null
-        ? body.error?.message
-        : undefined;
+    let message;
+    if (typeof body === 'object' && body !== null) {
+        const obj = body;
+        // Standard format: { error: { message: "..." } }
+        if (obj.error && typeof obj.error === 'object') {
+            message = obj.error.message;
+        }
+        // Array format: [{ error: { message: "..." } }]
+        if (!message && Array.isArray(body) && body.length > 0) {
+            const first = body[0];
+            if (first?.error && typeof first.error === 'object') {
+                message = first.error.message;
+            }
+        }
+    }
     const errorText = message ?? `HTTP ${status}`;
     if (status === 429) {
         throw new errors_js_1.RateLimitError(`Rate limit exceeded: ${errorText}`, undefined, provider);

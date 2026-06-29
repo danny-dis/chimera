@@ -28,9 +28,13 @@ type Token =
  *   - reference-style links
  * Those can be added later if needed.
  */
+function stripThoughtBlocks(src: string): string {
+  return src.replace(/<thought>[\s\S]*?<\/thought>/gi, '').replace(/<thought>[\s\S]*$/gi, '');
+}
+
 function tokenize(src: string): Token[] {
   const tokens: Token[] = [];
-  const lines = src.split('\n');
+  const lines = stripThoughtBlocks(src).split('\n');
   let i = 0;
 
   while (i < lines.length) {
@@ -248,7 +252,7 @@ const BlockTokenRenderer: React.FC<{ token: Token }> = ({ token }) => {
 
     case 'paragraph':
       return (
-        <Box flexDirection="column" marginBottom={0}>
+        <Box flexDirection="column" marginBottom={0} width="100%">
           {renderInlineTokens(token.children)}
         </Box>
       );
@@ -278,7 +282,7 @@ const BlockTokenRenderer: React.FC<{ token: Token }> = ({ token }) => {
     case 'list_item': {
       const bullet = token.ordered ? `${token.index ?? 1}.` : '•';
       return (
-        <Box marginLeft={2}>
+        <Box marginLeft={2} width="100%">
           <Text bold>{bullet}</Text>
           <Text> </Text>
           {renderInlineTokens(token.children)}

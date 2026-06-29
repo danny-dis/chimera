@@ -11,6 +11,7 @@ interface EventLogProps {
   onFilterChange?: (type: string | null) => void;
   focused?: boolean;
   height?: number;
+  contentWidth?: number;
 }
 
 const eventTypeColors: Record<string, string> = {
@@ -83,6 +84,7 @@ export const EventLog: React.FC<EventLogProps> = ({
   onFilterChange,
   focused = false,
   height = 10,
+  contentWidth,
 }) => {
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
 
@@ -128,19 +130,24 @@ export const EventLog: React.FC<EventLogProps> = ({
     >
       <Box marginBottom={0}>
         <Text bold color={focused ? 'cyan' : 'white'}>
-          Event Log
+          {contentWidth && contentWidth < 25 ? 'Events' : 'Event Log'}
         </Text>
         <Text dimColor>
           {' '}
           ({filteredEvents.length}
-          {filter ? ` filtered by ${filter}` : ''})
+          {filter && contentWidth && contentWidth >= 25 ? ` filtered by ${filter}` : ''})
         </Text>
       </Box>
 
       {eventTypes.length > 1 && !filter && (
         <Box marginBottom={0}>
           <Text dimColor>Types: </Text>
-          <Text dimColor>{eventTypes.slice(0, 5).join(', ')}{eventTypes.length > 5 ? '...' : ''}</Text>
+          <Text dimColor>
+            {contentWidth && contentWidth < 35
+              ? eventTypes.slice(0, 2).join(', ') + (eventTypes.length > 2 ? '…' : '')
+              : eventTypes.slice(0, 5).join(', ') + (eventTypes.length > 5 ? '...' : '')
+            }
+          </Text>
         </Box>
       )}
 
@@ -159,16 +166,17 @@ export const EventLog: React.FC<EventLogProps> = ({
           const color = eventTypeColors[event.type] ?? 'white';
           const isCollapsed = collapsed.has(event.type);
           const summary = renderEventSummary(event);
+          const isNarrow = contentWidth !== undefined && contentWidth < 30;
 
           return (
             <Box flexDirection="column">
               <Box>
                 <Text inverse={isSelected}>{isSelected ? '▸' : ' '}</Text>
-                <Text dimColor> {formatTime(event.timestamp)} </Text>
+                {!isNarrow && <Text dimColor> {formatTime(event.timestamp)} </Text>}
                 <Text color={color} bold={isSelected}>
-                  [{event.type}]
+                  [{isNarrow ? event.type.slice(0, 8) : event.type}]
                 </Text>
-                <Text> {summary}</Text>
+                {!isNarrow && <Text> {summary}</Text>}
               </Box>
               {isSelected && !isCollapsed && event.data && (
                 <Box marginLeft={6} flexDirection="column">

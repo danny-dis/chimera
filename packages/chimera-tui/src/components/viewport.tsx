@@ -19,13 +19,17 @@ export function Viewport<T>({
   const [scrollOffset, setScrollOffset] = useState(0);
   const [selectedIndex, setSelectedIndex] = useState(0);
 
-  // Auto-scroll to bottom when items change
+  // Auto-scroll to bottom when items change.
+  // Items are multi-line (header + wrapped content), so estimate ~3 lines
+  // per item to determine how many items fit in the viewport.
   useEffect(() => {
     if (autoScroll && items.length > 0) {
       const lastIndex = items.length - 1;
       setSelectedIndex(lastIndex);
-      if (lastIndex >= scrollOffset + height) {
-        setScrollOffset(Math.max(0, lastIndex - height + 1));
+      const linesPerItem = 3;
+      const visibleSlots = Math.max(1, Math.floor(height / linesPerItem));
+      if (lastIndex >= scrollOffset + visibleSlots) {
+        setScrollOffset(Math.max(0, lastIndex - visibleSlots + 1));
       }
     }
   }, [items.length, autoScroll, height]);

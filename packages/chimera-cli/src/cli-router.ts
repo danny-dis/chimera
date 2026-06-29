@@ -1,7 +1,7 @@
 import { Command } from 'commander';
 import * as readline from 'readline';
 import { resolve } from 'path';
-import { SessionOrchestrator, EventStream, LongTermMemory, CoordinatorEngine, WorkflowAutoLoader, WorkflowRegistry, registerBuiltInWorkflows, defaultWorkflowFor, runWorkflow } from '@chimera/core';
+import { SessionOrchestrator, EventStream, LongTermMemory, CoordinatorEngine, runWorkflow } from '@chimera/core';
 import type { LLMProvider, OrchestratorResult, ToolExecutorInterface, ToolRegistryInterface, WorkflowDefinition } from '@chimera/core';
 import type { Mode, DeliberationMode } from '@chimera/core';
 import { ProviderFactory } from '@chimera/providers';
@@ -10,10 +10,12 @@ import { CheckpointStore } from '@chimera/session';
 import { LearningEngine } from '@chimera/learning';
 import { ToolRegistry, ToolExecutor, allTools } from '@chimera/tools';
 import { runEval, formatEvalMarkdown } from './eval-runner.js';
+import { runSlashCommand } from './commands/registry.js';
+import type { ReplContext } from './commands/registry.js';
 import { registerSkillCommand } from './commands/skill.js';
 import { registerWorkflowCommand } from './commands/workflow.js';
 import { registerLearnCommand } from './commands/learn.js';
-import { autoGenerateConfig, configExists } from './config-loader.js';
+import { autoGenerateConfig, configExists, loadConfig, getProvidersByRole } from './config-loader.js';
 import { cleanupStaleWorktrees, removeWorktree } from '@chimera/isolation';
 // @chimera/tui depends on Ink, which is ESM with top-level await.
 // Loading it synchronously fails under Node ≥ 22 when this CJS module requires it.
@@ -25,19 +27,50 @@ import type { AgentRole } from '@chimera/core';
 function adaptProvider(provider: ModelProvider): LLMProvider {
   return {
     async complete(messages, options) {
-      const result = await provider.complete(
-        messages.map((m) => ({
+      const mappedMessages = messages.map((m) => {
+        const extra = m as unknown as Record<string, unknown>;
+        const msg: import('@chimera/providers').Message = {
           role: m.role as 'system' | 'user' | 'assistant' | 'tool',
           content: m.content,
-        })),
-        {
-          temperature: options?.temperature,
-          maxTokens: options?.maxTokens,
-          responseFormat: options?.responseFormat,
-        },
-      );
+        };
+        if (m.role === 'tool') {
+          if (typeof extra.tool_call_id === 'string') {
+            msg.toolResultId = extra.tool_call_id;
+          } else {
+            try {
+              const parsed = JSON.parse(m.content);
+              if (parsed.toolCallId) {
+                msg.toolResultId = parsed.toolCallId;
+              }
+            } catch { /* content is not JSON — leave toolResultId undefined */ }
+          }
+        }
+        if (m.role === 'assistant' && Array.isArray(extra.tool_calls)) {
+          msg.toolCalls = (extra.tool_calls as Array<{ id: string; type: string; function: { name: string; arguments: string } }>).map((tc) => ({
+            id: tc.id,
+            name: tc.function.name,
+            arguments: tc.function.arguments,
+          }));
+        }
+        return msg;
+      });
+
+      const result = await provider.complete(mappedMessages, {
+        temperature: options?.temperature,
+        maxTokens: options?.maxTokens,
+        responseFormat: options?.responseFormat,
+        tools: options?.tools,
+        cacheControl: options?.cacheControl,
+      });
       return {
         content: result.content,
+        toolCalls: result.toolCalls?.map((tc) => ({
+          id: tc.id,
+          name: tc.name,
+          arguments: typeof tc.arguments === 'string'
+            ? JSON.parse(tc.arguments)
+            : tc.arguments,
+        })),
         usage: {
           inputTokens: result.usage.inputTokens,
           outputTokens: result.usage.outputTokens,
@@ -97,6 +130,54 @@ export class CliRouter {
 
   private async getProviders(): Promise<ModelProvider[]> {
     try {
+      // Prefer .chimera/config.yaml when present
+      const config = loadConfig();
+      if (config) {
+        const byRole = getProvidersByRole(config);
+        const roleOrder: Array<[string, typeof byRole[keyof typeof byRole]]> = [
+          ['writer', byRole.writer],
+          ['reviewer', byRole.reviewer],
+          ['challenger', byRole.challenger],
+        ];
+
+        const providers: ModelProvider[] = [];
+        for (const [role, entry] of roleOrder) {
+          if (!entry) continue;
+          try {
+            providers.push(
+              ProviderFactory.create({
+                name: entry.name,
+                provider: entry.provider,
+                model: entry.model,
+                apiKey: entry.apiKey,
+                baseUrl: entry.baseUrl,
+                role: entry.role,
+                timeoutMs: entry.timeoutMs,
+                constraints: {
+                  maxTokensPerTurn: 4096,
+                  costCapPerTask: 10,
+                  costCapPerSession: 20,
+                  costCapPerDay: 50,
+                  maxParallelInstances: 1,
+                  rateLimitRpm: 60,
+                },
+              }),
+            );
+          } catch (e) {
+            console.error(
+              `  ⚠ Provider "${entry.name}" (${role}, ${entry.provider}/${entry.model}) skipped: ${e instanceof Error ? e.message : String(e)}`,
+            );
+          }
+        }
+        if (providers.length > 0) {
+          return providers;
+        }
+        console.error(
+          '\n  ⚠ All providers from .chimera/config.yaml failed. Check your config and API keys.\n',
+        );
+      }
+
+      // Fallback to env-var discovery
       const providers = ProviderFactory.createFromEnv();
       const hasRealKeys = providers.some((p) => p.getModel().provider !== 'mock');
       if (!hasRealKeys) {
@@ -111,31 +192,6 @@ export class CliRouter {
       );
       process.exit(1);
     }
-  }
-
-  /**
-   * Load the workflow registry (workspace + global + builtins) and resolve
-   * the default workflow for the given mode.
-   */
-  private async resolveWorkflow(mode: Mode, workspaceRoot: string): Promise<WorkflowDefinition | null> {
-    const auto = new WorkflowAutoLoader();
-    const { registry } = await auto.loadIntoRegistry(workspaceRoot);
-
-    // Register built-in workflows (standard-draft, quality-gate, etc.)
-    const builtinRegistry = new WorkflowRegistry();
-    registerBuiltInWorkflows(builtinRegistry);
-
-    // Merge: built-in first, then workspace/global (last-writer-wins)
-    const merged = new WorkflowRegistry();
-    for (const wf of builtinRegistry.list()) {
-      merged.register(wf);
-    }
-    for (const wf of registry.list()) {
-      merged.register(wf);
-    }
-
-    const workflowName = defaultWorkflowFor(mode);
-    return merged.get(workflowName) ?? null;
   }
 
   private async run(mode: Mode, task: string): Promise<void> {
@@ -605,33 +661,17 @@ export class CliRouter {
         tui.update({ messages: currentMessages, agents: currentAgents, activeTool: undefined });
 
         try {
-          // Resolve the workflow for the current mode
-          const workflow = await this.resolveWorkflow(currentMode, process.cwd());
+          // TODO: Phase 2 — wire up WorkflowDispatcher for background execution
+          await orchestrator.execute({
+            task: text,
+            mode: currentMode,
+            providers: { writer, reviewer },
+            preset: currentPreset,
+          });
 
-          if (workflow) {
-            // Dispatch to background — returns immediately, main agent stays free
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            const { workflowRunId } = (orchestrator as any).dispatchWorkflow(workflow, {
-              inputs: { task: text },
-              providers: { writer, reviewer },
-            });
-
-            currentMessages = [...currentMessages, {
-              id: Math.random().toString(36).slice(2),
-              role: 'system',
-              content: `Workflow "${workflow.name}" dispatched (run: ${workflowRunId}). Main agent is free for new tasks.`,
-              timestamp: Date.now()
-            }];
-            tui.update({ messages: currentMessages });
-          } else {
-            // Fallback: no workflow found for mode, use synchronous execute
-            await orchestrator.execute({
-              task: text,
-              mode: currentMode,
-              providers: { writer, reviewer },
-              preset: currentPreset,
-            });
-          }
+          // Assistant message already added by event-stream handlers
+          // (deliberation_result / final_response). Just sync state.
+          tui.update({ messages: currentMessages });
 
           // Refresh cost and sessions after task completes
           currentCostData = buildLiveCostData();
@@ -904,18 +944,24 @@ export class CliRouter {
       prompt: 'chimera> ',
     });
 
-    const printHelp = () => {
-      console.log(`
-  Commands:
-    /mode <ask|plan|code|debug|review|oal|auto>  — switch mode (task intent)
-    /preset <auto|solo|duo|trio|hive|fusion>   — switch preset (agent topology)
-    /cost                                  — show session cost
-    /history                               — show command history
-    /sessions                              — list saved sessions
-    /clear                                 — clear screen
-    /exit                                  — exit interactive mode
-    /help                                  — show this help
-      `);
+    // Build a ReplContext that bridges local state to the registry handlers
+    const replCtx: ReplContext = {
+      getMode: () => currentMode,
+      setMode: (m) => { currentMode = m; },
+      sessionId,
+      history,
+      latestReplResult: null,
+      setLatestReplResult: () => {},
+      currentOrchestrator: null,
+      setCurrentOrchestrator: () => {},
+      getLoopState: () => loopState,
+      setLoopState: (s) => { loopState = s; },
+      memory: this.memory,
+      adaptProvider,
+      getProviders: () => this.getProviders(),
+      getSessionStore: () => this.sessionStore,
+      printResult: (r) => this.printResult(r),
+      initOrchestrator: () => this.initOrchestrator(),
     };
 
     rl.prompt();
@@ -927,155 +973,14 @@ export class CliRouter {
         return;
       }
 
-      // Handle slash commands
+      // Delegate slash commands to the registry
       if (input.startsWith('/')) {
         const [cmd, ...args] = input.slice(1).split(/\s+/);
-
-        switch (cmd) {
-          case 'mode':
-            if (args[0] && ['ask', 'plan', 'code', 'debug', 'review', 'oal', 'auto'].includes(args[0])) {
-              currentMode = args[0] as Mode;
-              console.log(`  Mode: ${currentMode}`);
-            } else {
-              console.log(`  Current mode: ${currentMode}. Use /mode <ask|plan|code|debug|review|oal|auto>`);
-            }
-            break;
-
-          case 'preset':
-            if (args[0] && ['auto', 'solo', 'duo', 'trio', 'hive', 'fusion'].includes(args[0])) {
-              currentPreset = args[0] as DeliberationMode;
-              console.log(`  Preset: ${currentPreset}`);
-            } else {
-              console.log(`  Current preset: ${currentPreset}. Use /preset <auto|solo|duo|trio|hive|fusion>`);
-            }
-            break;
-
-          case 'cost':
-            console.log(`  Session: ${sessionId}`);
-            console.log(`  Mode: ${currentMode}`);
-            break;
-
-          case 'status':
-            console.log(`  Session: ${sessionId}`);
-            console.log(`  Mode: ${currentMode}`);
-            console.log(`  Preset: ${currentPreset}`);
-            console.log(`  History: ${history.length} turn${history.length === 1 ? '' : 's'}`);
-            if (loopState) {
-              const elapsed = Math.round((Date.now() - loopState.startedAt) / 1000);
-              const icon = loopState.status === 'running' ? '⟳' : loopState.status === 'completed' ? '✓' : '✗';
-              const label = loopState.kind === 'loop' ? 'Loop' : 'Goal';
-              console.log(`  ${icon} ${label}: "${loopState.task.slice(0, 50)}"`);
-              console.log(`    Iteration: ${loopState.currentIteration}/${loopState.maxIterations}`);
-              console.log(`    Status: ${loopState.status}`);
-              console.log(`    Elapsed: ${elapsed}s`);
-            }
-            break;
-
-          case 'loop': {
-            const turns = parseInt(args[0], 10);
-            const task = args.slice(1).join(' ');
-            if (isNaN(turns) || turns < 1 || !task) {
-              console.log('  Usage: /loop <turns> <task>');
-              console.log('  Example: /loop 5 refactor this module');
-              break;
-            }
-            console.log(`\n⟳ Loop: running "${task}" ${turns} time(s)...\n`);
-            loopState = { kind: 'loop', task, maxIterations: turns, currentIteration: 0, status: 'running', startedAt: Date.now() };
-            try {
-              const providers = await this.getProviders();
-              const writer = adaptProvider(providers[0]);
-              const reviewer = adaptProvider(providers[1] ?? providers[0]);
-              const loopWf: WorkflowDefinition = {
-                name: 'user-loop',
-                steps: [{ id: 'loop', kind: 'loop', config: { prompt: task, until: 'COMPLETE', max_iterations: turns, fresh_context: true, role: 'writer' } }],
-              };
-              const result = await runWorkflow(loopWf, { handlers: { providers: { writer, reviewer } } });
-              if (result.status === 'success') {
-                const out = result.outputs.loop as { content: string; iterations: number };
-                loopState = { ...loopState, currentIteration: out.iterations, status: 'completed' };
-                console.log(`  ✓ Completed after ${out.iterations} iteration(s)\n${out.content}\n`);
-              } else {
-                loopState = { ...loopState, status: 'failed' };
-                console.log(`  ✗ Loop failed: ${result.error}\n`);
-              }
-            } catch (err) {
-              loopState = { ...loopState, status: 'failed' };
-              console.error(`\n✗ Error: ${err instanceof Error ? err.message : String(err)}\n`);
-            }
-            break;
-          }
-
-          case 'goal': {
-            const goal = args.join(' ');
-            if (!goal) {
-              console.log('  Usage: /goal <description>');
-              console.log('  Example: /goal all tests pass');
-              break;
-            }
-            console.log(`\n◎ Goal: "${goal}" — running until achieved...\n`);
-            loopState = { kind: 'goal', task: goal, maxIterations: 20, currentIteration: 0, status: 'running', startedAt: Date.now() };
-            try {
-              const providers = await this.getProviders();
-              const writer = adaptProvider(providers[0]);
-              const reviewer = adaptProvider(providers[1] ?? providers[0]);
-              const goalWf: WorkflowDefinition = {
-                name: 'user-goal',
-                steps: [{ id: 'goal', kind: 'loop', config: { prompt: `Work on this goal: ${goal}\n\nWhen the goal is fully achieved, end your response with the word COMPLETE.`, until: 'COMPLETE', max_iterations: 20, fresh_context: true, role: 'writer' } }],
-              };
-              const result = await runWorkflow(goalWf, { handlers: { providers: { writer, reviewer } } });
-              if (result.status === 'success') {
-                const out = result.outputs.goal as { content: string; iterations: number };
-                loopState = { ...loopState, currentIteration: out.iterations, status: 'completed' };
-                console.log(`  ✓ Goal achieved after ${out.iterations} iteration(s)\n${out.content}\n`);
-              } else {
-                loopState = { ...loopState, status: 'failed' };
-                console.log(`  ✗ Goal not achieved: ${result.error}\n`);
-              }
-            } catch (err) {
-              loopState = { ...loopState, status: 'failed' };
-              console.error(`\n✗ Error: ${err instanceof Error ? err.message : String(err)}\n`);
-            }
-            break;
-          }
-
-          case 'history':
-            if (history.length === 0) {
-              console.log('  No history yet.');
-            } else {
-              history.forEach((h, i) => console.log(`  ${i + 1}. ${h.slice(0, 80)}`));
-            }
-            break;
-
-          case 'sessions':
-            const sessions = await this.sessionStore.list();
-            if (sessions.length === 0) {
-              console.log('  No saved sessions.');
-            } else {
-              for (const s of sessions) {
-                console.log(`  ${s.id}  ${s.mode}  ${s.status}  ${s.task.slice(0, 50)}`);
-              }
-            }
-            break;
-
-          case 'clear':
-            console.clear();
-            break;
-
-          case 'exit':
-          case 'quit':
-            console.log('\n  Goodbye.\n');
-            rl.close();
-            process.exit(0);
-            break;
-
-          case 'help':
-            printHelp();
-            break;
-
-          default:
-            console.log(`  Unknown command: /${cmd}. Type /help for commands.`);
+        const signal = await runSlashCommand(cmd!, args, replCtx);
+        if (signal === 'exit') {
+          rl.close();
+          process.exit(0);
         }
-
         rl.prompt();
         return;
       }

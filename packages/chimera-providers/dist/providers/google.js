@@ -29,6 +29,20 @@ function mapMessages(messages) {
             });
             continue;
         }
+        if (msg.role === 'tool') {
+            if (msg.toolResultId) {
+                result.push({
+                    role: 'user',
+                    parts: [{
+                            functionResponse: {
+                                name: msg.toolResultId,
+                                response: { content: msg.content },
+                            },
+                        }],
+                });
+            }
+            continue;
+        }
         const role = msg.role === 'assistant' ? 'model' : msg.role;
         result.push({ role, parts: [{ text: msg.content }] });
         if (msg.toolCalls?.length) {
@@ -37,17 +51,6 @@ function mapMessages(messages) {
                 parts: msg.toolCalls.map((tc) => ({
                     functionCall: { name: tc.name, args: JSON.parse(tc.arguments) },
                 })),
-            });
-        }
-        if (msg.role === 'tool' && msg.toolResultId) {
-            result.push({
-                role: 'user',
-                parts: [{
-                        functionResponse: {
-                            name: msg.toolResultId,
-                            response: { content: msg.content },
-                        },
-                    }],
             });
         }
     }
@@ -165,7 +168,8 @@ class GoogleProvider {
     timeoutMs;
     constructor(config) {
         this.apiKey = config.apiKey;
-        this.model = config.model;
+        // Strip provider prefix (e.g., "google/gemma-4-31b-it" → "gemma-4-31b-it")
+        this.model = config.model.replace(/^(google|gemini)\//, '');
         this.timeoutMs = config.options?.timeoutMs ?? DEFAULT_TIMEOUT_MS;
         const knownPricing = GOOGLE_PRICING[config.model];
         this.pricing = config.options?.pricing ?? knownPricing ?? { inputPerMillion: 0, outputPerMillion: 0 };

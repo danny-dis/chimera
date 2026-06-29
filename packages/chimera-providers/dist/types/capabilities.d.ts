@@ -31,9 +31,9 @@ export declare const ProviderCapabilitiesSchema: z.ZodObject<{
     reasoning: z.ZodBoolean;
     functionCalling: z.ZodBoolean;
 }, "strip", z.ZodTypeAny, {
+    reasoning: boolean;
     structuredOutput: "enforced" | "best-effort" | "false";
     vision: boolean;
-    reasoning: boolean;
     sessionResume: boolean;
     mcp: boolean;
     hooks: boolean;
@@ -50,9 +50,9 @@ export declare const ProviderCapabilitiesSchema: z.ZodObject<{
     streaming: boolean;
     functionCalling: boolean;
 }, {
+    reasoning: boolean;
     structuredOutput: "enforced" | "best-effort" | "false";
     vision: boolean;
-    reasoning: boolean;
     sessionResume: boolean;
     mcp: boolean;
     hooks: boolean;

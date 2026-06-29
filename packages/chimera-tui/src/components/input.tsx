@@ -1,5 +1,5 @@
-import React, { useState, useCallback } from 'react';
-import { Box, Text, useInput } from 'ink';
+import React, { useState, useEffect, useRef } from 'react';
+import { Box, Text } from 'ink';
 
 interface InputProps {
   onSubmit: (text: string) => void;
@@ -7,6 +7,8 @@ interface InputProps {
   placeholder?: string;
   disabled?: boolean;
 }
+
+const BACKSPACE_CHARS = new Set(['\x7f', '\x08', '\b']);
 
 export const Input: React.FC<InputProps> = ({
   onSubmit,
@@ -16,74 +18,82 @@ export const Input: React.FC<InputProps> = ({
 }) => {
   const [value, setValue] = useState('');
   const [history, setHistory] = useState<string[]>([]);
-  const [historyIndex, setHistoryIndex] = useState(-1);
-  void historyIndex;
+  const valueRef = useRef(value);
+  valueRef.current = value;
+  const historyRef = useRef(history);
+  historyRef.current = history;
+  const historyIndexRef = useRef(-1);
 
-  const handleSubmit = useCallback(() => {
-    const trimmed = value.trim();
-    if (!trimmed || disabled) return;
-
-    onSubmit(trimmed);
-    setHistory((prev) => [...prev, trimmed]);
-    setHistoryIndex(-1);
-    setValue('');
-  }, [value, disabled, onSubmit]);
-
-  const handleAutocomplete = useCallback(() => {
-    if (!autocomplete || !value.startsWith('/')) return;
-    const matches = autocomplete(value);
-    if (matches.length === 1) {
-      setValue(matches[0] + ' ');
-    }
-  }, [value, autocomplete]);
-
-  useInput((input, key) => {
+  useEffect(() => {
     if (disabled) return;
 
-    if (key.return) {
-      handleSubmit();
-      return;
+    const wasRaw = process.stdin.isRaw;
+    if (typeof process.stdin.setRawMode === 'function') {
+      process.stdin.setRawMode(true);
     }
 
-    if (key.tab) {
-      handleAutocomplete();
-      return;
-    }
+    const onData = (data: Buffer) => {
+      const str = data.toString('utf-8');
 
-    if (key.upArrow) {
-      setHistoryIndex((prev) => {
-        const next = prev + 1;
-        if (next < history.length) {
-          setValue(history[history.length - 1 - next]);
-          return next;
-        }
-        return prev;
-      });
-      return;
-    }
+      if (BACKSPACE_CHARS.has(str)) {
+        setValue((prev) => prev.slice(0, -1));
+        return;
+      }
 
-    if (key.downArrow) {
-      setHistoryIndex((prev) => {
-        const next = prev - 1;
-        if (next >= 0) {
-          setValue(history[history.length - 1 - next]);
-          return next;
-        }
+      if (str === '\r' || str === '\n') {
+        const trimmed = valueRef.current.trim();
+        if (!trimmed) return;
+        onSubmit(trimmed);
+        setHistory((prev) => [...prev, trimmed]);
+        historyIndexRef.current = -1;
         setValue('');
-        return -1;
-      });
-      return;
-    }
+        return;
+      }
 
-    if (key.backspace) {
-      setValue((prev) => prev.slice(0, -1));
-      return;
-    }
+      if (str === '\t') {
+        if (!autocomplete || !valueRef.current.startsWith('/')) return;
+        const matches = autocomplete(valueRef.current);
+        if (matches.length === 1) {
+          setValue(matches[0] + ' ');
+        }
+        return;
+      }
 
-    if (input && !key.ctrl && !key.meta) {
-      setValue((prev) => prev + input);
-    }
-  });
+      if (str === '\x1b[A') {
+        const next = historyIndexRef.current + 1;
+        if (next < historyRef.current.length) {
+          historyIndexRef.current = next;
+          setValue(historyRef.current[historyRef.current.length - 1 - next]);
+        }
+        return;
+      }
+
+      if (str === '\x1b[B') {
+        const next = historyIndexRef.current - 1;
+        if (next >= 0) {
+          historyIndexRef.current = next;
+          setValue(historyRef.current[historyRef.current.length - 1 - next]);
+        } else {
+          historyIndexRef.current = -1;
+          setValue('');
+        }
+        return;
+      }
+
+      if (str.length === 1 && str >= ' ') {
+        setValue((prev) => prev + str);
+      }
+    };
+
+    process.stdin.on('data', onData);
+
+    return () => {
+      process.stdin.removeListener('data', onData);
+      if (typeof process.stdin.setRawMode === 'function') {
+        process.stdin.setRawMode(wasRaw ?? false);
+      }
+    };
+  }, [disabled, onSubmit, autocomplete]);
 
   const isCommand = value.startsWith('/');
 

@@ -5,6 +5,7 @@ interface ModeSelectorProps {
     onModeChange?: (mode: Mode) => void;
     focused?: boolean;
     compact?: boolean;
+    contentWidth?: number;
 }
 export declare const ModeSelector: React.FC<ModeSelectorProps>;
 export {};

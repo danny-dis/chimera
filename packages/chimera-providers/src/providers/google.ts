@@ -65,6 +65,21 @@ function mapMessages(messages: Message[]): { role: string; parts: { text: string
       continue;
     }
 
+    if (msg.role === 'tool') {
+      if (msg.toolResultId) {
+        result.push({
+          role: 'user',
+          parts: [{
+            functionResponse: {
+              name: msg.toolResultId,
+              response: { content: msg.content },
+            },
+          }] as unknown as { text: string }[],
+        });
+      }
+      continue;
+    }
+
     const role = msg.role === 'assistant' ? 'model' : msg.role;
     result.push({ role, parts: [{ text: msg.content }] });
 
@@ -74,18 +89,6 @@ function mapMessages(messages: Message[]): { role: string; parts: { text: string
         parts: msg.toolCalls.map((tc) => ({
           functionCall: { name: tc.name, args: JSON.parse(tc.arguments) },
         })) as unknown as { text: string }[],
-      });
-    }
-
-    if (msg.role === 'tool' && msg.toolResultId) {
-      result.push({
-        role: 'user',
-        parts: [{
-          functionResponse: {
-            name: msg.toolResultId,
-            response: { content: msg.content },
-          },
-        }] as unknown as { text: string }[],
       });
     }
   }
@@ -222,7 +225,8 @@ export class GoogleProvider implements ModelProvider {
 
   constructor(config: GoogleConfig) {
     this.apiKey = config.apiKey;
-    this.model = config.model;
+    // Strip provider prefix (e.g., "google/gemma-4-31b-it" → "gemma-4-31b-it")
+    this.model = config.model.replace(/^(google|gemini)\//, '');
     this.timeoutMs = config.options?.timeoutMs ?? DEFAULT_TIMEOUT_MS;
 
     const knownPricing = GOOGLE_PRICING[config.model];

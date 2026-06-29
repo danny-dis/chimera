@@ -185,6 +185,26 @@ export type ConfigProviderRole = 'writer' | 'reviewer' | 'challenger';
 export declare function configExists(cwd: string): boolean;
 export declare function loadConfig(cwd: string): ChimeraConfig | null;
 export declare function saveConfig(config: unknown, cwd: string): void;
+export interface ResolvedProvider {
+    name: string;
+    provider: string;
+    model: string;
+    apiKey?: string;
+    baseUrl?: string;
+    role: ConfigProviderRole;
+}
+/**
+ * Resolve all provider api_key references from environment variables.
+ */
+export declare function resolveProviders(config: ChimeraConfig): ResolvedProvider[];
+/**
+ * Get providers grouped by role.
+ */
+export declare function getProvidersByRole(config: ChimeraConfig): {
+    writer?: ResolvedProvider;
+    reviewer?: ResolvedProvider;
+    challenger?: ResolvedProvider;
+};
 /**
  * Auto-generate .chimera/config.yaml from environment variables.
  * Role assignment: first → writer, second → reviewer, third → challenger.

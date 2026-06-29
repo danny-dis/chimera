@@ -6,6 +6,7 @@ interface EventLogProps {
     onFilterChange?: (type: string | null) => void;
     focused?: boolean;
     height?: number;
+    contentWidth?: number;
 }
 export declare const EventLog: React.FC<EventLogProps>;
 export {};

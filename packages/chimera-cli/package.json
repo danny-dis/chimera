@@ -40,6 +40,7 @@
     "@chimera/learning": "workspace:*",
     "@chimera/tui": "workspace:*",
     "commander": "^12.0.0",
+    "dotenv": "^16.4.0",
     "pino": "^9.0.0",
     "yaml": "^2.5.0",
     "zod": "^3.23.0"

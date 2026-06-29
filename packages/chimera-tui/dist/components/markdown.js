@@ -13,9 +13,12 @@ import { zen } from '../theme.js';
  *   - reference-style links
  * Those can be added later if needed.
  */
+function stripThoughtBlocks(src) {
+    return src.replace(/<thought>[\s\S]*?<\/thought>/gi, '').replace(/<thought>[\s\S]*$/gi, '');
+}
 function tokenize(src) {
     const tokens = [];
-    const lines = src.split('\n');
+    const lines = stripThoughtBlocks(src).split('\n');
     let i = 0;
     while (i < lines.length) {
         const line = lines[i];
@@ -195,7 +198,7 @@ const BlockTokenRenderer = ({ token }) => {
                     renderInlineTokens(token.children))));
         }
         case 'paragraph':
-            return (React.createElement(Box, { flexDirection: "column", marginBottom: 0 }, renderInlineTokens(token.children)));
+            return (React.createElement(Box, { flexDirection: "column", marginBottom: 0, width: "100%" }, renderInlineTokens(token.children)));
         case 'code_block': {
             const highlighted = token.lang
                 ? token.lines.map((line) => tokenizeCode(line, token.lang))
@@ -207,7 +210,7 @@ const BlockTokenRenderer = ({ token }) => {
         }
         case 'list_item': {
             const bullet = token.ordered ? `${token.index ?? 1}.` : '•';
-            return (React.createElement(Box, { marginLeft: 2 },
+            return (React.createElement(Box, { marginLeft: 2, width: "100%" },
                 React.createElement(Text, { bold: true }, bullet),
                 React.createElement(Text, null, " "),
                 renderInlineTokens(token.children)));

@@ -8,6 +8,7 @@ interface PresetSelectorProps {
   onPresetChange?: (preset: DeliberationMode) => void;
   focused?: boolean;
   compact?: boolean;
+  contentWidth?: number;
 }
 
 const presets: DeliberationMode[] = ['auto', 'solo', 'duo', 'trio', 'hive', 'fusion', 'swarm'];
@@ -39,6 +40,7 @@ export const PresetSelector: React.FC<PresetSelectorProps> = ({
   onPresetChange,
   focused = false,
   compact = false,
+  contentWidth,
 }) => {
   const [navIndex, setNavIndex] = useState(() => presets.indexOf(currentPreset));
 
@@ -113,7 +115,7 @@ export const PresetSelector: React.FC<PresetSelectorProps> = ({
             >
               {presetIcons[preset]} {preset}
             </Text>
-            <Text dimColor> — {presetDescriptions[preset]}</Text>
+            <Text dimColor>{(!contentWidth || contentWidth >= 35) ? ` — ${presetDescriptions[preset].slice(0, Math.max(0, contentWidth ? contentWidth - 12 : 30))}` : ''}</Text>
           </Box>
         );
       })}

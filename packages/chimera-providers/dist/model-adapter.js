@@ -11,6 +11,8 @@ exports.ProviderConfigSchema = zod_1.z.object({
     // Length is checked at provider-construction time via resolveApiKey().
     apiKey: zod_1.z.string().optional(),
     role: zod_1.z.enum(['writer', 'reviewer', 'challenger']),
+    /** Per-provider request timeout in milliseconds. Overrides the default (60s). */
+    timeoutMs: zod_1.z.number().positive().optional(),
     constraints: zod_1.z.object({
         maxTokensPerTurn: zod_1.z.number().positive(),
         costCapPerTask: zod_1.z.number().nonnegative(),

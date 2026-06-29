@@ -6,6 +6,8 @@ declare const ProviderEntrySchema: z.ZodObject<{
     api_key: z.ZodOptional<z.ZodString>;
     base_url: z.ZodOptional<z.ZodString>;
     role: z.ZodEnum<["writer", "reviewer", "challenger"]>;
+    /** Per-provider request timeout in milliseconds. Overrides the default (60s). */
+    timeout_ms: z.ZodOptional<z.ZodNumber>;
     constraints: z.ZodOptional<z.ZodObject<{
         max_tokens_per_turn: z.ZodOptional<z.ZodNumber>;
         cost_cap_per_task: z.ZodOptional<z.ZodNumber>;
@@ -35,6 +37,7 @@ declare const ProviderEntrySchema: z.ZodObject<{
     name: string;
     api_key?: string | undefined;
     base_url?: string | undefined;
+    timeout_ms?: number | undefined;
     constraints?: {
         max_tokens_per_turn?: number | undefined;
         cost_cap_per_task?: number | undefined;
@@ -50,6 +53,7 @@ declare const ProviderEntrySchema: z.ZodObject<{
     name: string;
     api_key?: string | undefined;
     base_url?: string | undefined;
+    timeout_ms?: number | undefined;
     constraints?: {
         max_tokens_per_turn?: number | undefined;
         cost_cap_per_task?: number | undefined;
@@ -67,6 +71,8 @@ declare const ChimeraConfigSchema: z.ZodEffects<z.ZodEffects<z.ZodObject<{
         api_key: z.ZodOptional<z.ZodString>;
         base_url: z.ZodOptional<z.ZodString>;
         role: z.ZodEnum<["writer", "reviewer", "challenger"]>;
+        /** Per-provider request timeout in milliseconds. Overrides the default (60s). */
+        timeout_ms: z.ZodOptional<z.ZodNumber>;
         constraints: z.ZodOptional<z.ZodObject<{
             max_tokens_per_turn: z.ZodOptional<z.ZodNumber>;
             cost_cap_per_task: z.ZodOptional<z.ZodNumber>;
@@ -96,6 +102,7 @@ declare const ChimeraConfigSchema: z.ZodEffects<z.ZodEffects<z.ZodObject<{
         name: string;
         api_key?: string | undefined;
         base_url?: string | undefined;
+        timeout_ms?: number | undefined;
         constraints?: {
             max_tokens_per_turn?: number | undefined;
             cost_cap_per_task?: number | undefined;
@@ -111,6 +118,7 @@ declare const ChimeraConfigSchema: z.ZodEffects<z.ZodEffects<z.ZodObject<{
         name: string;
         api_key?: string | undefined;
         base_url?: string | undefined;
+        timeout_ms?: number | undefined;
         constraints?: {
             max_tokens_per_turn?: number | undefined;
             cost_cap_per_task?: number | undefined;
@@ -140,6 +148,7 @@ declare const ChimeraConfigSchema: z.ZodEffects<z.ZodEffects<z.ZodObject<{
         name: string;
         api_key?: string | undefined;
         base_url?: string | undefined;
+        timeout_ms?: number | undefined;
         constraints?: {
             max_tokens_per_turn?: number | undefined;
             cost_cap_per_task?: number | undefined;
@@ -163,6 +172,7 @@ declare const ChimeraConfigSchema: z.ZodEffects<z.ZodEffects<z.ZodObject<{
         name: string;
         api_key?: string | undefined;
         base_url?: string | undefined;
+        timeout_ms?: number | undefined;
         constraints?: {
             max_tokens_per_turn?: number | undefined;
             cost_cap_per_task?: number | undefined;
@@ -186,6 +196,7 @@ declare const ChimeraConfigSchema: z.ZodEffects<z.ZodEffects<z.ZodObject<{
         name: string;
         api_key?: string | undefined;
         base_url?: string | undefined;
+        timeout_ms?: number | undefined;
         constraints?: {
             max_tokens_per_turn?: number | undefined;
             cost_cap_per_task?: number | undefined;
@@ -209,6 +220,7 @@ declare const ChimeraConfigSchema: z.ZodEffects<z.ZodEffects<z.ZodObject<{
         name: string;
         api_key?: string | undefined;
         base_url?: string | undefined;
+        timeout_ms?: number | undefined;
         constraints?: {
             max_tokens_per_turn?: number | undefined;
             cost_cap_per_task?: number | undefined;
@@ -232,6 +244,7 @@ declare const ChimeraConfigSchema: z.ZodEffects<z.ZodEffects<z.ZodObject<{
         name: string;
         api_key?: string | undefined;
         base_url?: string | undefined;
+        timeout_ms?: number | undefined;
         constraints?: {
             max_tokens_per_turn?: number | undefined;
             cost_cap_per_task?: number | undefined;
@@ -255,6 +268,7 @@ declare const ChimeraConfigSchema: z.ZodEffects<z.ZodEffects<z.ZodObject<{
         name: string;
         api_key?: string | undefined;
         base_url?: string | undefined;
+        timeout_ms?: number | undefined;
         constraints?: {
             max_tokens_per_turn?: number | undefined;
             cost_cap_per_task?: number | undefined;
@@ -281,6 +295,7 @@ export interface ResolvedProvider {
     apiKey?: string;
     baseUrl?: string;
     role: ConfigProviderRole;
+    timeoutMs?: number;
 }
 export declare function configExists(cwd?: string): boolean;
 export declare function loadConfig(cwd?: string): ChimeraConfig | null;

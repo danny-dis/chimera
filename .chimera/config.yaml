@@ -1,18 +1,24 @@
 providers:
+  # Writer: NVIDIA NIM (MiniMax M3 free - most tokens)
   - name: writer
     provider: openai-compatible
-    model: gemini-2.5-flash
-    api_key: ${GOOGLE_API_KEY}
+    model: meta/llama-3.1-8b-instruct
+    api_key: ${CHIMERA_CHEAP_API_KEY}
+    base_url: https://integrate.api.nvidia.com
     role: writer
+    timeout_ms: 120000  # NVIDIA NIM free-tier is slow; 120s prevents premature timeouts
+
+  # Reviewer: Google (Gemma 4 31B)
   - name: reviewer
+    provider: google
+    model: google/gemma-4-31b-it
+    api_key: ${GOOGLE_API_KEY}
+    role: reviewer
+
+  # Challenger: Mistral (free model)
+  - name: challenger
     provider: openai-compatible
     model: mistral-small-latest
     api_key: ${MISTRAL_API_KEY}
     base_url: https://api.mistral.ai
-    role: reviewer
-  - name: challenger
-    provider: openai-compatible
-    model: mistral-small-latest
-    api_key: ${NVIDIA_NIM_API_KEY}
-    base_url: https://integrate.api.nvidia.com
     role: challenger

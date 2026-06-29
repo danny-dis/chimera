@@ -97,6 +97,13 @@ export interface TUIProps {
     diffFiles?: DiffFile[];
     events?: EventLogEntry[];
     activeTool?: ToolActivity;
+    workingDir?: string;
+    instructions?: string[];
+    tokenUsage?: {
+        input: number;
+        output: number;
+        total: number;
+    };
     onSendMessage?: (text: string) => void;
     onModeChange?: (mode: Mode) => void;
     onPresetChange?: (preset: import('@chimera/core').DeliberationMode) => void;

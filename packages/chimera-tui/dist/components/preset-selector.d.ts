@@ -5,6 +5,7 @@ interface PresetSelectorProps {
     onPresetChange?: (preset: DeliberationMode) => void;
     focused?: boolean;
     compact?: boolean;
+    contentWidth?: number;
 }
 export declare const PresetSelector: React.FC<PresetSelectorProps>;
 export {};

@@ -6,11 +6,13 @@ import { zen } from '../theme.js';
 
 interface AgentDashboardProps {
   agents: Agent[];
+  contentWidth?: number;
 }
 
-const AgentRow: React.FC<{ agent: Agent }> = ({ agent }) => {
+const AgentRow: React.FC<{ agent: Agent; contentWidth?: number }> = ({ agent, contentWidth }) => {
   const roleColor = zen.role[agent.role] ?? 'white';
   const status = statusSymbols[agent.status];
+  const showDetails = !contentWidth || contentWidth >= 30;
 
   const totalTokens = agent.tokenUsage.input + agent.tokenUsage.output;
   const tokenStr = totalTokens > 0 ? `${totalTokens} tok` : '';
@@ -19,10 +21,10 @@ const AgentRow: React.FC<{ agent: Agent }> = ({ agent }) => {
     <Box>
       <Text color={status.color}>{status.symbol} </Text>
       <Text bold color={roleColor}>
-        {agent.role.padEnd(14)}
+        {showDetails ? agent.role.padEnd(14) : agent.role}
       </Text>
-      <Text dimColor>{agent.model}</Text>
-      {tokenStr && <Text dimColor> {tokenStr}</Text>}
+      {showDetails && <Text dimColor>{agent.model}</Text>}
+      {showDetails && tokenStr && <Text dimColor> {tokenStr}</Text>}
       {agent.progress !== undefined && (
         <Text color="cyan"> [{Math.round(agent.progress * 100)}%]</Text>
       )}
@@ -31,7 +33,7 @@ const AgentRow: React.FC<{ agent: Agent }> = ({ agent }) => {
 };
 
 /** Full panel version (used as overlay). */
-export const AgentDashboard: React.FC<AgentDashboardProps> = ({ agents }) => {
+export const AgentDashboard: React.FC<AgentDashboardProps> = ({ agents, contentWidth }) => {
   const running = agents.filter((a) => a.status === 'running').length;
   const completed = agents.filter((a) => a.status === 'completed').length;
   const errored = agents.filter((a) => a.status === 'error').length;
@@ -40,19 +42,19 @@ export const AgentDashboard: React.FC<AgentDashboardProps> = ({ agents }) => {
     <Box flexDirection="column" borderStyle="double" borderColor="cyan" paddingX={1}>
       <Box marginBottom={1}>
         <Text bold color="cyan">
-          Agent Dashboard
+          {contentWidth && contentWidth < 25 ? 'Agents' : 'Agent Dashboard'}
         </Text>
         <Text dimColor>
           {' '}
-          ({agents.length} total, {running} running, {completed} done
-          {errored > 0 ? `, ${errored} errors` : ''})
+          ({agents.length}{running > 0 ? `, ${running} run` : ''}{completed > 0 ? `, ${completed} done` : ''}
+          {errored > 0 ? `, ${errored} err` : ''})
         </Text>
       </Box>
 
       {agents.length === 0 && <Text dimColor>No active agents</Text>}
 
       {agents.map((agent) => (
-        <AgentRow key={agent.id} agent={agent} />
+        <AgentRow key={agent.id} agent={agent} contentWidth={contentWidth} />
       ))}
     </Box>
   );

@@ -20,7 +20,7 @@ const modeDescriptions = {
     oal: 'OAL mode',
     auto: 'Auto-select mode',
 };
-export const ModeSelector = ({ currentMode, onModeChange, focused = false, compact = false, }) => {
+export const ModeSelector = ({ currentMode, onModeChange, focused = false, compact = false, contentWidth, }) => {
     const [navIndex, setNavIndex] = useState(() => modes.indexOf(currentMode));
     const selectMode = useCallback((index) => {
         const mode = modes[index];
@@ -73,9 +73,7 @@ export const ModeSelector = ({ currentMode, onModeChange, focused = false, compa
                     modeIcons[mode],
                     " ",
                     mode),
-                React.createElement(Text, { dimColor: true },
-                    " \u2014 ",
-                    modeDescriptions[mode])));
+                React.createElement(Text, { dimColor: true }, (!contentWidth || contentWidth >= 35) ? ` — ${modeDescriptions[mode].slice(0, Math.max(0, contentWidth ? contentWidth - 12 : 30))}` : '')));
         })));
 };
 //# sourceMappingURL=mode-selector.js.map

@@ -3,6 +3,7 @@ import type { CostData } from '../types.js';
 interface CostTrackerProps {
     data: CostData;
     showBreakdown?: boolean;
+    contentWidth?: number;
 }
 /** Full panel version (used as overlay). */
 export declare const CostTracker: React.FC<CostTrackerProps>;

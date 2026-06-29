@@ -97,6 +97,55 @@ function getEnv(key: string): string | undefined {
   return v && v.length > 0 ? v : undefined;
 }
 
+function resolveEnvRef(value: string | undefined): string | undefined {
+  if (!value) return undefined;
+  // Support ${ENV_VAR} syntax
+  const match = value.match(/^\$\{(\w+)\}$/);
+  if (match) {
+    return process.env[match[1]] || undefined;
+  }
+  return value;
+}
+
+export interface ResolvedProvider {
+  name: string;
+  provider: string;
+  model: string;
+  apiKey?: string;
+  baseUrl?: string;
+  role: ConfigProviderRole;
+}
+
+/**
+ * Resolve all provider api_key references from environment variables.
+ */
+export function resolveProviders(config: ChimeraConfig): ResolvedProvider[] {
+  return config.providers.map((p: ProviderEntry) => ({
+    name: p.name,
+    provider: p.provider,
+    model: p.model,
+    apiKey: resolveEnvRef(p.api_key),
+    baseUrl: p.base_url,
+    role: p.role,
+  }));
+}
+
+/**
+ * Get providers grouped by role.
+ */
+export function getProvidersByRole(
+  config: ChimeraConfig,
+): { writer?: ResolvedProvider; reviewer?: ResolvedProvider; challenger?: ResolvedProvider } {
+  const resolved = resolveProviders(config);
+  const byRole: { writer?: ResolvedProvider; reviewer?: ResolvedProvider; challenger?: ResolvedProvider } = {};
+  for (const p of resolved) {
+    if (p.role === 'writer') byRole.writer = p;
+    else if (p.role === 'reviewer') byRole.reviewer = p;
+    else if (p.role === 'challenger') byRole.challenger = p;
+  }
+  return byRole;
+}
+
 interface DetectedProvider {
   name: string;
   provider: string;

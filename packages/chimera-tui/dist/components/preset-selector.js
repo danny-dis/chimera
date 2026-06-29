@@ -22,7 +22,7 @@ const presetDescriptions = {
     swarm: 'Autonomous swarm orchestration',
     auto: 'Automatic selection',
 };
-export const PresetSelector = ({ currentPreset, onPresetChange, focused = false, compact = false, }) => {
+export const PresetSelector = ({ currentPreset, onPresetChange, focused = false, compact = false, contentWidth, }) => {
     const [navIndex, setNavIndex] = useState(() => presets.indexOf(currentPreset));
     const selectPreset = useCallback((index) => {
         const preset = presets[index];
@@ -75,9 +75,7 @@ export const PresetSelector = ({ currentPreset, onPresetChange, focused = false,
                     presetIcons[preset],
                     " ",
                     preset),
-                React.createElement(Text, { dimColor: true },
-                    " \u2014 ",
-                    presetDescriptions[preset])));
+                React.createElement(Text, { dimColor: true }, (!contentWidth || contentWidth >= 35) ? ` — ${presetDescriptions[preset].slice(0, Math.max(0, contentWidth ? contentWidth - 12 : 30))}` : '')));
         })));
 };
 //# sourceMappingURL=preset-selector.js.map

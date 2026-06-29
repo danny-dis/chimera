@@ -60,6 +60,8 @@ const ProviderEntrySchema = zod_1.z.object({
     api_key: zod_1.z.string().optional(),
     base_url: zod_1.z.string().optional(),
     role: ProviderRoleSchema,
+    /** Per-provider request timeout in milliseconds. Overrides the default (60s). */
+    timeout_ms: zod_1.z.number().positive().optional(),
     constraints: zod_1.z
         .object({
         max_tokens_per_turn: zod_1.z.number().positive().optional(),
@@ -169,6 +171,7 @@ function resolveProviders(config) {
         apiKey: resolveEnvRef(p.api_key),
         baseUrl: p.base_url,
         role: p.role,
+        timeoutMs: p.timeout_ms,
     }));
 }
 /**

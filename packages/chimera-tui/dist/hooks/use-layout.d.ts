@@ -3,6 +3,7 @@ export interface LayoutState {
     height: number;
     chatWidth: number;
     sidebarWidth: number;
+    sidebarContentWidth: number;
     sidebarVisible: boolean;
     isMinSize: boolean;
 }

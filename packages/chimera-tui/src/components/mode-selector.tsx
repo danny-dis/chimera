@@ -8,6 +8,7 @@ interface ModeSelectorProps {
   onModeChange?: (mode: Mode) => void;
   focused?: boolean;
   compact?: boolean;
+  contentWidth?: number;
 }
 
 const modes: Mode[] = ['auto', 'ask', 'plan', 'code', 'debug', 'review', 'oal'];
@@ -37,6 +38,7 @@ export const ModeSelector: React.FC<ModeSelectorProps> = ({
   onModeChange,
   focused = false,
   compact = false,
+  contentWidth,
 }) => {
   const [navIndex, setNavIndex] = useState(() => modes.indexOf(currentMode));
 
@@ -111,7 +113,7 @@ export const ModeSelector: React.FC<ModeSelectorProps> = ({
             >
               {modeIcons[mode]} {mode}
             </Text>
-            <Text dimColor> — {modeDescriptions[mode]}</Text>
+            <Text dimColor>{(!contentWidth || contentWidth >= 35) ? ` — ${modeDescriptions[mode].slice(0, Math.max(0, contentWidth ? contentWidth - 12 : 30))}` : ''}</Text>
           </Box>
         );
       })}

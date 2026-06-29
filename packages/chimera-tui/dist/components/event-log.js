@@ -64,7 +64,7 @@ const renderEventSummary = (event) => {
             return event.message;
     }
 };
-export const EventLog = ({ events, filter = null, onFilterChange, focused = false, height = 10, }) => {
+export const EventLog = ({ events, filter = null, onFilterChange, focused = false, height = 10, contentWidth, }) => {
     const [collapsed, setCollapsed] = useState(new Set());
     const filteredEvents = filter
         ? events.filter((e) => e.type === filter)
@@ -98,18 +98,18 @@ export const EventLog = ({ events, filter = null, onFilterChange, focused = fals
     const eventTypes = [...new Set(events.map((e) => e.type))];
     return (React.createElement(Box, { flexDirection: "column", borderStyle: "round", borderColor: focused ? 'cyan' : 'gray', paddingX: 1, height: height + 4 },
         React.createElement(Box, { marginBottom: 0 },
-            React.createElement(Text, { bold: true, color: focused ? 'cyan' : 'white' }, "Event Log"),
+            React.createElement(Text, { bold: true, color: focused ? 'cyan' : 'white' }, contentWidth && contentWidth < 25 ? 'Events' : 'Event Log'),
             React.createElement(Text, { dimColor: true },
                 ' ',
                 "(",
                 filteredEvents.length,
-                filter ? ` filtered by ${filter}` : '',
+                filter && contentWidth && contentWidth >= 25 ? ` filtered by ${filter}` : '',
                 ")")),
         eventTypes.length > 1 && !filter && (React.createElement(Box, { marginBottom: 0 },
             React.createElement(Text, { dimColor: true }, "Types: "),
-            React.createElement(Text, { dimColor: true },
-                eventTypes.slice(0, 5).join(', '),
-                eventTypes.length > 5 ? '...' : ''))),
+            React.createElement(Text, { dimColor: true }, contentWidth && contentWidth < 35
+                ? eventTypes.slice(0, 2).join(', ') + (eventTypes.length > 2 ? '…' : '')
+                : eventTypes.slice(0, 5).join(', ') + (eventTypes.length > 5 ? '...' : '')))),
         React.createElement(Viewport, { items: filteredEvents, height: height, focused: focused, renderItem: (event, _index, isSelected) => {
                 if (filteredEvents.length === 0) {
                     return (React.createElement(Box, null,
@@ -118,18 +118,19 @@ export const EventLog = ({ events, filter = null, onFilterChange, focused = fals
                 const color = eventTypeColors[event.type] ?? 'white';
                 const isCollapsed = collapsed.has(event.type);
                 const summary = renderEventSummary(event);
+                const isNarrow = contentWidth !== undefined && contentWidth < 30;
                 return (React.createElement(Box, { flexDirection: "column" },
                     React.createElement(Box, null,
                         React.createElement(Text, { inverse: isSelected }, isSelected ? '▸' : ' '),
-                        React.createElement(Text, { dimColor: true },
+                        !isNarrow && React.createElement(Text, { dimColor: true },
                             " ",
                             formatTime(event.timestamp),
                             " "),
                         React.createElement(Text, { color: color, bold: isSelected },
                             "[",
-                            event.type,
+                            isNarrow ? event.type.slice(0, 8) : event.type,
                             "]"),
-                        React.createElement(Text, null,
+                        !isNarrow && React.createElement(Text, null,
                             " ",
                             summary)),
                     isSelected && !isCollapsed && event.data && (React.createElement(Box, { marginLeft: 6, flexDirection: "column" },

@@ -17,6 +17,8 @@ const ProviderEntrySchema = z.object({
   api_key: z.string().optional(),
   base_url: z.string().optional(),
   role: ProviderRoleSchema,
+  /** Per-provider request timeout in milliseconds. Overrides the default (60s). */
+  timeout_ms: z.number().positive().optional(),
   constraints: z
     .object({
       max_tokens_per_turn: z.number().positive().optional(),
@@ -84,6 +86,7 @@ export interface ResolvedProvider {
   apiKey?: string;
   baseUrl?: string;
   role: ConfigProviderRole;
+  timeoutMs?: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -162,6 +165,7 @@ export function resolveProviders(config: ChimeraConfig): ResolvedProvider[] {
     apiKey: resolveEnvRef(p.api_key),
     baseUrl: p.base_url,
     role: p.role,
+    timeoutMs: p.timeout_ms,
   }));
 }
 

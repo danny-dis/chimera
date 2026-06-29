@@ -7,6 +7,7 @@ import { checkUserInput, checkToolOutput } from './security/prompt-guard.js';
 import { buildMessages, buildWorkflowGeneratorPrompt } from './prompts.js';
 import { AuditLog } from './security/audit-log.js';
 import { BiomeLinter } from './coordinator/biome-linter.js';
+import { sanitizeWriterOutput } from './coordinator/output-sanitizer.js';
 import type { LongTermMemory } from './memory/long-term-memory.js';
 import { Mode, type ToolCall, type ToolCallResult } from './types/agent.js';
 
@@ -771,7 +772,7 @@ export class SessionOrchestrator {
       }
 
       const draftParsed = this.parseJSON<StructuredOutput>(draftResult.content);
-      const draftContent = draftParsed.response ?? draftResult.content;
+      const draftContent = sanitizeWriterOutput(draftParsed.response ?? draftResult.content);
       const draftConfidence = draftParsed.confidence ?? 0.5;
 
       this._writerMessages.push({ role: 'assistant', content: draftContent });
@@ -913,8 +914,9 @@ export class SessionOrchestrator {
         status: 'blocked',
         cost: totalCost,
         agentCount: outputs.length,
+        output: `Error: ${message}`,
       });
-      return { status: 'error', output: '', cost: totalCost, agentCount: outputs.length, events: [...this.eventStream.getAll()] };
+      return { status: 'error', output: `Error: ${message}`, cost: totalCost, agentCount: outputs.length, events: [...this.eventStream.getAll()] };
     } finally {
       // Ensure we never leak a pending timeout signal. The AbortController
       // is single-use and any future readers of executeSignal would see
@@ -1728,6 +1730,11 @@ export class SessionOrchestrator {
       if (jsonStart === -1 || jsonEnd === -1) return {} as Partial<T>;
       return JSON.parse(trimmed.slice(jsonStart, jsonEnd + 1)) as Partial<T>;
     } catch {
+      // Fallback: try to extract "response" field via regex
+      const responseMatch = raw.match(/"response"\s*:\s*"((?:[^"\\]|\\.)*)"/);
+      if (responseMatch) {
+        return { response: responseMatch[1].replace(/\\"/g, '"').replace(/\\n/g, '\n') } as unknown as Partial<T>;
+      }
       return {} as Partial<T>;
     }
   }
@@ -1866,13 +1873,21 @@ export class SessionOrchestrator {
     originalMessages: Array<{ role: string; content: string }>,
     llmResponse: { content: string; toolCalls?: ToolCall[] },
     toolResults: Array<{ toolName: string; args: Record<string, unknown>; result: ToolCallResult }>,
-  ): Array<{ role: string; content: string }> {
-    const messages = [...originalMessages];
+  ): Array<{ role: string; content: string; tool_call_id?: string; tool_calls?: unknown[] }> {
+    const messages: Array<{ role: string; content: string; tool_call_id?: string; tool_calls?: unknown[] }> = [...originalMessages];
 
-    messages.push({
+    const assistantMsg: { role: string; content: string; tool_calls?: unknown[] } = {
       role: 'assistant',
       content: llmResponse.content,
-    });
+    };
+    if (llmResponse.toolCalls?.length) {
+      assistantMsg.tool_calls = llmResponse.toolCalls.map((tc) => ({
+        id: tc.id,
+        type: 'function',
+        function: { name: tc.name, arguments: typeof tc.arguments === 'string' ? tc.arguments : JSON.stringify(tc.arguments) },
+      }));
+    }
+    messages.push(assistantMsg);
 
     const TOOL_OUTPUT_MAX_CHARS = 8000;
 
@@ -1884,6 +1899,7 @@ export class SessionOrchestrator {
 
       messages.push({
         role: 'tool',
+        tool_call_id: tr.result.toolCallId,
         content: JSON.stringify({
           toolCallId: tr.result.toolCallId,
           toolName: tr.toolName,
@@ -1893,6 +1909,19 @@ export class SessionOrchestrator {
         }),
       });
     }
+
+    messages.push({
+      role: 'user',
+      content:
+        '[!] #TOOL RESULTS RECEIVED# [!]\n' +
+        'The tools above have returned their results. Now you MUST synthesize a final response.\n\n' +
+        'RULES:\n' +
+        '1. DO NOT echo or repeat the raw tool output.\n' +
+        '2. Summarize the key findings in natural language.\n' +
+        '3. Return your answer as JSON: {"thought": "...", "response": "...", "confidence": 0.0-1.0}\n' +
+        '4. The "response" field is what the user will see — make it clear, concise, and helpful.\n' +
+        '5. If the tool failed, explain what went wrong and suggest alternatives.',
+    });
 
     return messages;
   }

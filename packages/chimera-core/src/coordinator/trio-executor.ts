@@ -5,6 +5,7 @@ import type { CostTracker } from '../cost-tracker.js';
 import type { WorktreeIsolation, WorktreeInfo } from '../agent/worktree-isolation.js';
 import { ResponseSynthesizer, type SynthesisInput } from '../response-synthesizer.js';
 import { buildMessages } from '../prompts.js';
+import { sanitizeWriterOutput } from './output-sanitizer.js';
 import type { Mode } from '../types/agent.js';
 import type {
   TrioConfig,
@@ -143,7 +144,7 @@ export class TrioExecutor {
       draftStage = {
         modelId: config.writer,
         role: 'writer',
-        content: draftResult.content,
+        content: sanitizeWriterOutput(draftResult.content),
         inputTokens,
         outputTokens,
         durationMs: Date.now() - draftStart,

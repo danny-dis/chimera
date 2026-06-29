@@ -8,11 +8,6 @@ export declare class CliRouter {
     constructor();
     private initOrchestrator;
     private getProviders;
-    /**
-     * Load the workflow registry (workspace + global + builtins) and resolve
-     * the default workflow for the given mode.
-     */
-    private resolveWorkflow;
     private run;
     private printResult;
     /**

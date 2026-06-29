@@ -6,6 +6,8 @@ export declare const ProviderConfigSchema: z.ZodObject<{
     model: z.ZodString;
     apiKey: z.ZodOptional<z.ZodString>;
     role: z.ZodEnum<["writer", "reviewer", "challenger"]>;
+    /** Per-provider request timeout in milliseconds. Overrides the default (60s). */
+    timeoutMs: z.ZodOptional<z.ZodNumber>;
     constraints: z.ZodObject<{
         maxTokensPerTurn: z.ZodNumber;
         costCapPerTask: z.ZodNumber;
@@ -51,6 +53,7 @@ export declare const ProviderConfigSchema: z.ZodObject<{
         maxParallelInstances: number;
         rateLimitRpm: number;
     };
+    timeoutMs?: number | undefined;
     baseUrl?: string | undefined;
     apiKey?: string | undefined;
     rateLimits?: {
@@ -70,6 +73,7 @@ export declare const ProviderConfigSchema: z.ZodObject<{
         maxParallelInstances: number;
         rateLimitRpm: number;
     };
+    timeoutMs?: number | undefined;
     baseUrl?: string | undefined;
     apiKey?: string | undefined;
     rateLimits?: {

@@ -23,33 +23,30 @@ const ToolCallBadge = ({ indicator }) => {
 const AnalysisSection = ({ analysis }) => {
     if (!analysis)
         return null;
-    return (React.createElement(Box, { flexDirection: "column", marginTop: 1, borderStyle: "single", borderColor: zen.muted, paddingX: 1 },
-        React.createElement(Box, { justifyContent: "space-between" },
-            React.createElement(Text, { bold: true, color: zen.warning }, "Deliberation Analysis"),
+    const summaryParts = [];
+    if (analysis.consensus.length > 0) {
+        summaryParts.push(`Consensus: ${analysis.consensus.length}`);
+    }
+    if (analysis.conflicts.length > 0) {
+        summaryParts.push(`Conflicts: ${analysis.conflicts.length}`);
+    }
+    if (analysis.uniqueInsights.length > 0) {
+        summaryParts.push(`Insights: ${analysis.uniqueInsights.length}`);
+    }
+    return (React.createElement(Box, { marginTop: 1, flexDirection: "column" },
+        React.createElement(Box, null,
+            React.createElement(Text, { bold: true, color: zen.warning }, "\uD83D\uDCCA Analysis"),
+            React.createElement(Text, null, " "),
             React.createElement(Text, { color: analysis.confidence > 0.7 ? zen.success : zen.warning },
-                "Confidence: ",
                 (analysis.confidence * 100).toFixed(0),
-                "%")),
-        analysis.thought && (React.createElement(Box, { marginTop: 1, flexDirection: "column" },
-            React.createElement(Text, { dimColor: true, italic: true }, "Judge's Thought:"),
-            React.createElement(Text, { dimColor: true },
-                analysis.thought.slice(0, 300),
-                analysis.thought.length > 300 ? '...' : ''))),
-        analysis.consensus.length > 0 && (React.createElement(Box, { marginTop: 1, flexDirection: "column" },
-            React.createElement(Text, { color: zen.success }, "Consensus:"),
-            analysis.consensus.map((c, i) => (React.createElement(Text, { key: i },
-                "\u2022 ",
-                c))))),
-        analysis.conflicts.length > 0 && (React.createElement(Box, { marginTop: 1, flexDirection: "column" },
-            React.createElement(Text, { color: zen.error }, "Conflicts:"),
-            analysis.conflicts.map((c, i) => (React.createElement(Text, { key: i },
-                "\u2022 ",
-                c))))),
-        analysis.uniqueInsights.length > 0 && (React.createElement(Box, { marginTop: 1, flexDirection: "column" },
-            React.createElement(Text, { color: zen.info }, "Unique Insights:"),
-            analysis.uniqueInsights.map((ins, i) => (React.createElement(Text, { key: i },
-                "\u2022 ",
-                ins)))))));
+                "%"),
+            summaryParts.length > 0 && (React.createElement(Text, { dimColor: true },
+                " \u2014 ",
+                summaryParts.join(', ')))),
+        analysis.thought && (React.createElement(Text, { dimColor: true, italic: true },
+            "  ",
+            analysis.thought.slice(0, 120),
+            analysis.thought.length > 120 ? '…' : ''))));
 };
 const MessageBubble = ({ message, isSelected }) => {
     const prefix = message.role === 'user' ? 'You' :
@@ -69,11 +66,11 @@ const MessageBubble = ({ message, isSelected }) => {
             React.createElement(Text, { dimColor: true },
                 " ",
                 new Date(message.timestamp).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }))),
-        React.createElement(Box, { marginLeft: 2, flexDirection: "column" },
+        React.createElement(Box, { marginLeft: 2, flexDirection: "column", width: "100%" },
             isSystem ? (React.createElement(Text, { dimColor: true }, message.content)) : (React.createElement(Markdown, { content: message.content })),
             message.streaming && React.createElement(Text, { dimColor: true }, "\u258A"),
             message.toolCalls?.map((tc, i) => (React.createElement(ToolCallBadge, { key: i, indicator: tc }))),
-            message.analysis && isSelected && React.createElement(AnalysisSection, { analysis: message.analysis }))));
+            message.analysis && React.createElement(AnalysisSection, { analysis: message.analysis }))));
 };
 export const Chat = ({ messages, focused = false, height = 20 }) => {
     return (React.createElement(Box, { flexDirection: "column", height: height, overflow: "hidden" },

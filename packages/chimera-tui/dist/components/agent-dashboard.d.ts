@@ -2,6 +2,7 @@ import React from 'react';
 import type { Agent } from '../types.js';
 interface AgentDashboardProps {
     agents: Agent[];
+    contentWidth?: number;
 }
 /** Full panel version (used as overlay). */
 export declare const AgentDashboard: React.FC<AgentDashboardProps>;

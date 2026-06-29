@@ -303,7 +303,7 @@ describe('SessionOrchestrator', () => {
       const messages = orchestrator.buildWriterPrompt('task', 'code');
       // The system prompt opens with the Chimera core identity, then the
       // role-specific mandates. Assert the role identity string is present.
-      expect(messages[0].content).toContain('CHIMERA SOVEREIGN OPERATING PACT');
+      expect(messages[0].content).toContain('CHIMERA CORE PACT');
       expect(messages[0].content).toContain('Lead Implementation Engineer');
     });
 
@@ -312,9 +312,9 @@ describe('SessionOrchestrator', () => {
       const system = messages[0].content;
       // Three-layer policy hierarchy: identity -> role -> mode
       expect(system).toContain('CORE PACT');
-      expect(system).toContain('MANDATES');
-      expect(system).toContain('HARD CONSTRAINT');
-      expect(system).toContain('OUTPUT FORMAT');
+      expect(system).toContain('What This Role Requires');
+      expect(system).toContain('Hard Limits');
+      expect(system).toContain('OUTPUT:');
       expect(system).toContain('AS YOU WISH');
     });
   });

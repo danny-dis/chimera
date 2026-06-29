@@ -48,3 +48,9 @@ export const zen: Theme = {
 
 export const MIN_COLUMNS = 80;
 export const MIN_ROWS = 24;
+
+export const SIDEBAR_MIN_WIDTH = 28;
+export const SIDEBAR_MAX_WIDTH = 50;
+export const SIDEBAR_BORDER_OVERHEAD = 5;
+export const INNER_BORDER_OVERHEAD = 4;
+export const SIDEBAR_CONTENT_OVERHEAD = SIDEBAR_BORDER_OVERHEAD + INNER_BORDER_OVERHEAD;

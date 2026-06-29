@@ -43,6 +43,8 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.configExists = configExists;
 exports.loadConfig = loadConfig;
 exports.saveConfig = saveConfig;
+exports.resolveProviders = resolveProviders;
+exports.getProvidersByRole = getProvidersByRole;
 exports.autoGenerateConfig = autoGenerateConfig;
 const fs = __importStar(require("fs"));
 const path = __importStar(require("path"));
@@ -124,6 +126,45 @@ function getConfigPath(cwd) {
 function getEnv(key) {
     const v = process.env[key];
     return v && v.length > 0 ? v : undefined;
+}
+function resolveEnvRef(value) {
+    if (!value)
+        return undefined;
+    // Support ${ENV_VAR} syntax
+    const match = value.match(/^\$\{(\w+)\}$/);
+    if (match) {
+        return process.env[match[1]] || undefined;
+    }
+    return value;
+}
+/**
+ * Resolve all provider api_key references from environment variables.
+ */
+function resolveProviders(config) {
+    return config.providers.map((p) => ({
+        name: p.name,
+        provider: p.provider,
+        model: p.model,
+        apiKey: resolveEnvRef(p.api_key),
+        baseUrl: p.base_url,
+        role: p.role,
+    }));
+}
+/**
+ * Get providers grouped by role.
+ */
+function getProvidersByRole(config) {
+    const resolved = resolveProviders(config);
+    const byRole = {};
+    for (const p of resolved) {
+        if (p.role === 'writer')
+            byRole.writer = p;
+        else if (p.role === 'reviewer')
+            byRole.reviewer = p;
+        else if (p.role === 'challenger')
+            byRole.challenger = p;
+    }
+    return byRole;
 }
 const DEFAULT_MODELS = {
     anthropic: 'claude-sonnet-4-20250514',

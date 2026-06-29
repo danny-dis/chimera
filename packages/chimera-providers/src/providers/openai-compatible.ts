@@ -39,7 +39,7 @@ const DEFAULT_PRICING: PricingInfo = {
   outputPerMillion: 0,
 };
 
-const DEFAULT_TIMEOUT_MS = 60_000;
+const DEFAULT_TIMEOUT_MS = 120_000;
 
 function estimateTokens(text: string): number {
   return Math.ceil(text.length / 4);
@@ -187,11 +187,23 @@ function parseStreamChunk(
 }
 
 function mapError(status: number, body: unknown, provider: string): never {
-  const message = typeof body === 'object' && body !== null
-    ? ((body as Record<string, unknown>).error as Record<string, unknown>)?.message
-    : undefined;
+  let message: string | undefined;
+  if (typeof body === 'object' && body !== null) {
+    const obj = body as Record<string, unknown>;
+    // Standard format: { error: { message: "..." } }
+    if (obj.error && typeof obj.error === 'object') {
+      message = (obj.error as Record<string, unknown>).message as string | undefined;
+    }
+    // Array format: [{ error: { message: "..." } }]
+    if (!message && Array.isArray(body) && body.length > 0) {
+      const first = body[0] as Record<string, unknown>;
+      if (first?.error && typeof first.error === 'object') {
+        message = (first.error as Record<string, unknown>).message as string | undefined;
+      }
+    }
+  }
 
-  const errorText = (message as string) ?? `HTTP ${status}`;
+  const errorText = message ?? `HTTP ${status}`;
 
   if (status === 429) {
     throw new RateLimitError(`Rate limit exceeded: ${errorText}`, undefined, provider);

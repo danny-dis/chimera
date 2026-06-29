@@ -131,7 +131,9 @@ class ChimeraDaemon {
             // Get final state
             const state = orchestrator.getState();
             const costTracker = orchestrator.getCostTracker();
-            const totalCost = Array.from(cfg.providers).reduce((acc, p) => acc + costTracker.getSpend(p.name), 0);
+            const byRole = configLoader.getProvidersByRole(cfg);
+            const resolvedProviders = configLoader.resolveProviders(cfg);
+            const totalCost = resolvedProviders.reduce((acc, p) => acc + costTracker.getSpend(p.name), 0);
             return {
                 status: state.status === 'complete' ? 'done' : state.status === 'error' ? 'error' : 'blocked',
                 output: state.status === 'complete' ? state.result : state.error || '',

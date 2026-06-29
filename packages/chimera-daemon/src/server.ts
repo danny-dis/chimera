@@ -153,7 +153,9 @@ export class ChimeraDaemon {
       // Get final state
       const state = orchestrator.getState();
       const costTracker = orchestrator.getCostTracker();
-      const totalCost = Array.from(cfg.providers).reduce(
+      const byRole = configLoader.getProvidersByRole(cfg);
+      const resolvedProviders = configLoader.resolveProviders(cfg);
+      const totalCost = resolvedProviders.reduce(
         (acc, p) => acc + costTracker.getSpend(p.name),
         0,
       );

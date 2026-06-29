@@ -16,8 +16,17 @@ const BudgetBar = ({ used, total, width = 20, }) => {
             "%")));
 };
 /** Full panel version (used as overlay). */
-export const CostTracker = ({ data, showBreakdown = true }) => {
+export const CostTracker = ({ data, showBreakdown = true, contentWidth }) => {
     const remaining = Math.max(0, data.budget - data.currentCost);
+    const isNarrow = contentWidth !== undefined && contentWidth < 30;
+    if (isNarrow) {
+        return (React.createElement(Box, { borderStyle: "round", borderColor: zen.success, paddingX: 1 },
+            React.createElement(Text, { bold: true, color: zen.success }, "Cost "),
+            React.createElement(Text, { bold: true }, formatCost(data.currentCost)),
+            React.createElement(Text, { dimColor: true },
+                " / ",
+                formatCost(data.budget))));
+    }
     if (data.currentCost === 0 && data.breakdown.length === 0) {
         return (React.createElement(Box, { flexDirection: "column", borderStyle: "round", borderColor: zen.success, paddingX: 1 },
             React.createElement(Box, { marginBottom: 1 },
@@ -39,19 +48,22 @@ export const CostTracker = ({ data, showBreakdown = true }) => {
             React.createElement(BudgetBar, { used: data.currentCost, total: data.budget })),
         showBreakdown && data.breakdown.length > 0 && (React.createElement(Box, { flexDirection: "column", marginTop: 1 },
             React.createElement(Text, { bold: true, dimColor: true }, "Breakdown:"),
-            data.breakdown.map((item, i) => (React.createElement(Box, { key: i, marginLeft: 2 },
-                React.createElement(Text, null,
-                    item.provider,
-                    "/",
-                    item.model,
-                    ":",
-                    ' '),
-                React.createElement(Text, { color: zen.success }, formatCost(item.cost)),
-                React.createElement(Text, { dimColor: true },
-                    ' ',
-                    "(",
-                    item.inputTokens + item.outputTokens,
-                    " tok)"))))))));
+            data.breakdown.map((item, i) => {
+                const label = `${item.provider}/${item.model}`;
+                const cost = formatCost(item.cost);
+                const tokens = item.inputTokens + item.outputTokens;
+                const maxLabelLen = contentWidth ? Math.max(8, contentWidth - 16) : 30;
+                const truncatedLabel = label.length > maxLabelLen ? label.slice(0, maxLabelLen - 1) + '…' : label;
+                return (React.createElement(Box, { key: i, marginLeft: 2 },
+                    React.createElement(Text, null,
+                        truncatedLabel,
+                        ": "),
+                    React.createElement(Text, { color: zen.success }, cost),
+                    React.createElement(Text, { dimColor: true },
+                        " (",
+                        tokens,
+                        " tok)")));
+            })))));
 };
 /** Compact single-line version (used in status bar). */
 export const CostStatusLine = ({ data }) => {

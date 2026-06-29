@@ -2,10 +2,8 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { Box, Text, useInput } from 'ink';
 import { Chat } from './components/chat.js';
 import { Input } from './components/input.js';
+import { Sidebar } from './components/sidebar.js';
 import { AgentDashboard } from './components/agent-dashboard.js';
-import { CostTracker } from './components/cost-tracker.js';
-import { ModeSelector } from './components/mode-selector.js';
-import { PresetSelector } from './components/preset-selector.js';
 import { EventLog } from './components/event-log.js';
 import { StatusBar } from './components/status-bar.js';
 import { SessionBrowser } from './components/session-browser.js';
@@ -13,7 +11,7 @@ import { DiffViewer } from './components/diff-viewer.js';
 import { useLayout } from './hooks/use-layout.js';
 import { useFocus } from './hooks/use-focus.js';
 import { runCommand, autocompleteCommand } from './commands/commands.js';
-export const TUI = ({ mode: initialMode = 'code', preset: initialPreset = 'solo', sessionId = 'active', messages: initialMessages = [], agents: initialAgents = [], costData: initialCostData = { currentCost: 0, budget: 10, breakdown: [] }, sessions = [], diffFiles = [], events: initialEvents = [], activeTool, onSendMessage, onModeChange, onPresetChange, onSessionSelect, onSessionDelete, onExit, }) => {
+export const TUI = ({ mode: initialMode = 'code', preset: initialPreset = 'solo', sessionId = 'active', messages: initialMessages = [], agents: initialAgents = [], costData: initialCostData = { currentCost: 0, budget: 10, breakdown: [] }, sessions = [], diffFiles = [], events: initialEvents = [], activeTool, workingDir, instructions, tokenUsage, onSendMessage, onModeChange, onPresetChange, onSessionSelect, onSessionDelete, onExit, }) => {
     const [messages, setMessages] = useState(initialMessages);
     const [agents, setAgents] = useState(initialAgents);
     const [costData, setCostData] = useState(initialCostData);
@@ -142,16 +140,8 @@ export const TUI = ({ mode: initialMode = 'code', preset: initialPreset = 'solo'
                     React.createElement(Chat, { messages: messages, focused: focus.isFocused(1), height: chatHeight }))),
                 React.createElement(Box, { marginTop: 1, height: inputHeight },
                     React.createElement(Input, { onSubmit: handleSendMessage, autocomplete: autocompleteCommand, disabled: activeOverlay !== null }))),
-            sidebarVisible && (React.createElement(Box, { flexDirection: "column", width: layout.sidebarWidth, marginLeft: 1, borderStyle: "single", borderColor: "gray", paddingX: 1 },
-                React.createElement(ModeSelector, { currentMode: mode, onModeChange: handleModeChange }),
-                React.createElement(Box, { marginTop: 1 },
-                    React.createElement(PresetSelector, { currentPreset: preset, onPresetChange: handlePresetChange })),
-                React.createElement(Box, { marginTop: 1 },
-                    React.createElement(AgentDashboard, { agents: agents })),
-                React.createElement(Box, { marginTop: 1 },
-                    React.createElement(CostTracker, { data: costData })),
-                React.createElement(Box, { marginTop: 1, flexGrow: 1 },
-                    React.createElement(EventLog, { events: events, height: 6 }))))),
+            sidebarVisible && (React.createElement(Box, { flexDirection: "column", width: layout.sidebarWidth, marginLeft: 1, borderStyle: "single", borderColor: "gray" },
+                React.createElement(Sidebar, { sessionId: sessionId, mode: mode, preset: preset, agents: agents, costData: costData, tokenUsage: tokenUsage, workingDir: workingDir, instructions: instructions, contentWidth: layout.sidebarContentWidth, onModeChange: handleModeChange, onPresetChange: handlePresetChange })))),
         React.createElement(Box, { height: footerHeight, justifyContent: "space-between", borderStyle: "single", borderColor: "gray", paddingX: 1 },
             React.createElement(Text, { dimColor: true }, "Ctrl+B Sidebar | Ctrl+C Exit"),
             React.createElement(Text, { dimColor: true },

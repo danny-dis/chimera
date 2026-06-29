@@ -9,6 +9,8 @@ export const ProviderConfigSchema = z.object({
   // Length is checked at provider-construction time via resolveApiKey().
   apiKey: z.string().optional(),
   role: z.enum(['writer', 'reviewer', 'challenger']),
+  /** Per-provider request timeout in milliseconds. Overrides the default (60s). */
+  timeoutMs: z.number().positive().optional(),
   constraints: z.object({
     maxTokensPerTurn: z.number().positive(),
     costCapPerTask: z.number().nonnegative(),

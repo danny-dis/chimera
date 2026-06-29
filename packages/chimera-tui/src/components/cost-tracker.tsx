@@ -7,6 +7,7 @@ import { zen } from '../theme.js';
 interface CostTrackerProps {
   data: CostData;
   showBreakdown?: boolean;
+  contentWidth?: number;
 }
 
 const BudgetBar: React.FC<{ used: number; total: number; width?: number }> = ({
@@ -31,8 +32,19 @@ const BudgetBar: React.FC<{ used: number; total: number; width?: number }> = ({
 };
 
 /** Full panel version (used as overlay). */
-export const CostTracker: React.FC<CostTrackerProps> = ({ data, showBreakdown = true }) => {
+export const CostTracker: React.FC<CostTrackerProps> = ({ data, showBreakdown = true, contentWidth }) => {
   const remaining = Math.max(0, data.budget - data.currentCost);
+  const isNarrow = contentWidth !== undefined && contentWidth < 30;
+
+  if (isNarrow) {
+    return (
+      <Box borderStyle="round" borderColor={zen.success} paddingX={1}>
+        <Text bold color={zen.success}>Cost </Text>
+        <Text bold>{formatCost(data.currentCost)}</Text>
+        <Text dimColor> / {formatCost(data.budget)}</Text>
+      </Box>
+    );
+  }
 
   if (data.currentCost === 0 && data.breakdown.length === 0) {
     return (
@@ -76,18 +88,20 @@ export const CostTracker: React.FC<CostTrackerProps> = ({ data, showBreakdown = 
           <Text bold dimColor>
             Breakdown:
           </Text>
-          {data.breakdown.map((item, i) => (
-            <Box key={i} marginLeft={2}>
-              <Text>
-                {item.provider}/{item.model}:{' '}
-              </Text>
-              <Text color={zen.success}>{formatCost(item.cost)}</Text>
-              <Text dimColor>
-                {' '}
-                ({item.inputTokens + item.outputTokens} tok)
-              </Text>
-            </Box>
-          ))}
+          {data.breakdown.map((item, i) => {
+            const label = `${item.provider}/${item.model}`;
+            const cost = formatCost(item.cost);
+            const tokens = item.inputTokens + item.outputTokens;
+            const maxLabelLen = contentWidth ? Math.max(8, contentWidth - 16) : 30;
+            const truncatedLabel = label.length > maxLabelLen ? label.slice(0, maxLabelLen - 1) + '…' : label;
+            return (
+              <Box key={i} marginLeft={2}>
+                <Text>{truncatedLabel}: </Text>
+                <Text color={zen.success}>{cost}</Text>
+                <Text dimColor> ({tokens} tok)</Text>
+              </Box>
+            );
+          })}
         </Box>
       )}
     </Box>

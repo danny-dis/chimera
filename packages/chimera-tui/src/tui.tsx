@@ -3,10 +3,8 @@ import { Box, Text, useInput } from 'ink';
 import type { Mode, DeliberationMode } from '@chimera/core';
 import { Chat } from './components/chat.js';
 import { Input } from './components/input.js';
+import { Sidebar } from './components/sidebar.js';
 import { AgentDashboard } from './components/agent-dashboard.js';
-import { CostTracker } from './components/cost-tracker.js';
-import { ModeSelector } from './components/mode-selector.js';
-import { PresetSelector } from './components/preset-selector.js';
 import { EventLog } from './components/event-log.js';
 import { StatusBar } from './components/status-bar.js';
 import { SessionBrowser } from './components/session-browser.js';
@@ -30,6 +28,9 @@ export const TUI: React.FC<TUIProps> = ({
   diffFiles = [],
   events: initialEvents = [],
   activeTool,
+  workingDir,
+  instructions,
+  tokenUsage,
   onSendMessage,
   onModeChange,
   onPresetChange,
@@ -215,20 +216,20 @@ export const TUI: React.FC<TUIProps> = ({
 
         {/* Sidebar (conditional) */}
         {sidebarVisible && (
-          <Box flexDirection="column" width={layout.sidebarWidth} marginLeft={1} borderStyle="single" borderColor="gray" paddingX={1}>
-            <ModeSelector currentMode={mode} onModeChange={handleModeChange} />
-            <Box marginTop={1}>
-              <PresetSelector currentPreset={preset} onPresetChange={handlePresetChange} />
-            </Box>
-            <Box marginTop={1}>
-              <AgentDashboard agents={agents} />
-            </Box>
-            <Box marginTop={1}>
-              <CostTracker data={costData} />
-            </Box>
-            <Box marginTop={1} flexGrow={1}>
-              <EventLog events={events} height={6} />
-            </Box>
+          <Box flexDirection="column" width={layout.sidebarWidth} marginLeft={1} borderStyle="single" borderColor="gray">
+            <Sidebar
+              sessionId={sessionId}
+              mode={mode}
+              preset={preset}
+              agents={agents}
+              costData={costData}
+              tokenUsage={tokenUsage}
+              workingDir={workingDir}
+              instructions={instructions}
+              contentWidth={layout.sidebarContentWidth}
+              onModeChange={handleModeChange}
+              onPresetChange={handlePresetChange}
+            />
           </Box>
         )}
       </Box>

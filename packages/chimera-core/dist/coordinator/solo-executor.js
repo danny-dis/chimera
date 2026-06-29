@@ -1,6 +1,7 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.SoloExecutor = void 0;
+const output_sanitizer_js_1 = require("./output-sanitizer.js");
 /**
  * The simplest executor: one model answers one prompt.
  *
@@ -77,7 +78,7 @@ class SoloExecutor {
         }
         try {
             const res = await this.callPeer('writer', config.model, task, config, providerFactory, undefined, thought);
-            draftContent = res.content;
+            draftContent = (0, output_sanitizer_js_1.sanitizeWriterOutput)(res.content);
             totalTokens += res.inputTokens + res.outputTokens;
             const cost = this.computeCost(config.model, res.inputTokens, res.outputTokens);
             totalCostUsd += cost;
