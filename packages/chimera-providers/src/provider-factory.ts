@@ -23,6 +23,7 @@ const EnvProviderConfigSchema = z.object({
   baseUrl: z.string().optional(),
   apiKey: z.string().optional(),
   projectId: z.string().optional(),
+  timeoutMs: z.number().positive().optional(),
 });
 
 type EnvProviderConfig = z.infer<typeof EnvProviderConfigSchema>;
@@ -39,7 +40,9 @@ function resolveApiKey(config: EnvProviderConfig): string {
 
   const keyMap: Record<string, string> = {
     openai: 'OPENAI_API_KEY',
-    'openai-compatible': 'OPENAI_API_KEY',
+    // 'openai-compatible' intentionally omitted — each compatible provider
+    // (NVIDIA NIM, Mistral, OpenRouter, etc.) has its own API key.
+    // Falling back to OPENAI_API_KEY caused cross-provider key leakage.
     anthropic: 'ANTHROPIC_API_KEY',
     google: 'GOOGLE_API_KEY',
   };
@@ -49,7 +52,7 @@ function resolveApiKey(config: EnvProviderConfig): string {
 
   if (!key) {
     throw new InvalidConfigError(
-      `No API key provided for ${config.provider}. Set ${envKey} or pass apiKey in config.`,
+      `No API key provided for ${config.provider}. Set ${envKey ?? 'apiKey'} in your provider config or environment.`,
       config.provider,
     );
   }
@@ -93,6 +96,7 @@ export class ProviderFactory {
       model: config.model,
       baseUrl: config.baseUrl,
       apiKey: config.apiKey,
+      timeoutMs: config.timeoutMs,
     });
   }
 
@@ -192,6 +196,7 @@ export class ProviderFactory {
         const anthropicConfig: AnthropicConfig = {
           apiKey: resolveApiKey(config),
           model: config.model,
+          options: { timeoutMs: config.timeoutMs },
         };
         return new AnthropicProvider(anthropicConfig);
       }
@@ -201,6 +206,7 @@ export class ProviderFactory {
           apiKey: resolveApiKey(config),
           model: config.model,
           projectId: config.projectId,
+          options: { timeoutMs: config.timeoutMs },
         };
         return new GoogleProvider(googleConfig);
       }
@@ -209,6 +215,7 @@ export class ProviderFactory {
         const ollamaConfig: OllamaConfig = {
           baseUrl: resolveBaseUrl(config),
           model: config.model,
+          options: { timeoutMs: config.timeoutMs },
         };
         return new OllamaProvider(ollamaConfig);
       }
@@ -219,6 +226,7 @@ export class ProviderFactory {
           baseUrl: resolveBaseUrl(config),
           apiKey: resolveApiKey(config),
           model: config.model,
+          options: { timeoutMs: config.timeoutMs },
         };
         return new OpenAICompatibleProvider(openaiConfig);
       }
@@ -299,4 +307,41 @@ async function listOllamaModels(): Promise<string[]> {
   if (!res.ok) return [];
   const data = await res.json() as { models?: Array<{ name: string }> };
   return (data.models ?? []).map((m) => m.name);
+}
+
+// ── Default Model Registry ───────────────────────────────────────────────
+
+import { ModelRegistry } from './model-registry.js';
+
+let defaultRegistry: ModelRegistry | null = null;
+
+/**
+ * Get the default ModelRegistry instance.
+ * The registry automatically loads cached model metadata from disk on construction.
+ * This provides a singleton registry with dynamically updated context windows and pricing.
+ * 
+ * @example
+ * ```typescript
+ * import { getDefaultRegistry } from '@chimera/providers';
+ * 
+ * const registry = getDefaultRegistry();
+ * const model = registry.get('anthropic/claude-sonnet-4-20250514');
+ * console.log(model?.contextWindow); // Uses cached value if available
+ * 
+ * // Refresh from API
+ * await registry.refreshFromAPI();
+ * ```
+ */
+export function getDefaultRegistry(): ModelRegistry {
+  if (!defaultRegistry) {
+    defaultRegistry = new ModelRegistry(); // Auto-loads cache in constructor
+  }
+  return defaultRegistry;
+}
+
+/**
+ * Reset the default registry (useful for testing).
+ */
+export function resetDefaultRegistry(): void {
+  defaultRegistry = null;
 }

@@ -1,17 +1,27 @@
 "use strict";
 // @chimera/providers — Provider abstraction layer
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.GOOGLE_CAPABILITIES = exports.OLLAMA_CAPABILITIES = exports.OPENROUTER_CAPABILITIES = exports.OPENAI_CAPABILITIES = exports.ANTHROPIC_CAPABILITIES = exports.DEFAULT_CAPABILITIES = exports.StructuredOutputLevel = exports.ProviderCapabilitiesSchema = exports.OpenRouterProvider = exports.OpenAICompatibleProvider = exports.createDefaultMockProvider = exports.MockProvider = exports.StreamingError = exports.InvalidConfigError = exports.ProviderUnavailableError = exports.QuotaExceededError = exports.RateLimitError = exports.ProviderError = exports.ModelComparator = exports.CostProjectionEngine = exports.RateLimiter = exports.BudgetEnforcer = exports.ProviderCostTracker = exports.CostCalculator = exports.ModelEntrySchema = exports.ModelRegistry = exports.ProviderConfigSchema = exports.listModels = exports.ProviderFactory = exports.ProviderRegistry = void 0;
+exports.GOOGLE_CAPABILITIES = exports.OLLAMA_CAPABILITIES = exports.OPENROUTER_CAPABILITIES = exports.OPENAI_CAPABILITIES = exports.ANTHROPIC_CAPABILITIES = exports.DEFAULT_CAPABILITIES = exports.StructuredOutputLevel = exports.ProviderCapabilitiesSchema = exports.OpenRouterProvider = exports.OpenAICompatibleProvider = exports.createDefaultMockProvider = exports.MockProvider = exports.StreamingError = exports.InvalidConfigError = exports.ProviderUnavailableError = exports.QuotaExceededError = exports.RateLimitError = exports.ProviderError = exports.ModelComparator = exports.CostProjectionEngine = exports.RateLimiter = exports.BudgetEnforcer = exports.ProviderCostTracker = exports.CostCalculator = exports.createProviderWithDynamicMetadata = exports.createMetadataAwareFactory = exports.MetadataAwareProviderFactory = exports.getModelEntriesFromAPI = exports.fetchAndCacheModelMetadata = exports.ModelMetadataFetcher = exports.ModelEntrySchema = exports.ModelRegistry = exports.ProviderConfigSchema = exports.resetDefaultRegistry = exports.getDefaultRegistry = exports.listModels = exports.ProviderFactory = exports.ProviderRegistry = void 0;
 var provider_registry_js_1 = require("./provider-registry.js");
 Object.defineProperty(exports, "ProviderRegistry", { enumerable: true, get: function () { return provider_registry_js_1.ProviderRegistry; } });
 var provider_factory_js_1 = require("./provider-factory.js");
 Object.defineProperty(exports, "ProviderFactory", { enumerable: true, get: function () { return provider_factory_js_1.ProviderFactory; } });
 Object.defineProperty(exports, "listModels", { enumerable: true, get: function () { return provider_factory_js_1.listModels; } });
+Object.defineProperty(exports, "getDefaultRegistry", { enumerable: true, get: function () { return provider_factory_js_1.getDefaultRegistry; } });
+Object.defineProperty(exports, "resetDefaultRegistry", { enumerable: true, get: function () { return provider_factory_js_1.resetDefaultRegistry; } });
 var model_adapter_js_1 = require("./model-adapter.js");
 Object.defineProperty(exports, "ProviderConfigSchema", { enumerable: true, get: function () { return model_adapter_js_1.ProviderConfigSchema; } });
 var model_registry_js_1 = require("./model-registry.js");
 Object.defineProperty(exports, "ModelRegistry", { enumerable: true, get: function () { return model_registry_js_1.ModelRegistry; } });
 Object.defineProperty(exports, "ModelEntrySchema", { enumerable: true, get: function () { return model_registry_js_1.ModelEntrySchema; } });
+var model_metadata_fetcher_js_1 = require("./model-metadata-fetcher.js");
+Object.defineProperty(exports, "ModelMetadataFetcher", { enumerable: true, get: function () { return model_metadata_fetcher_js_1.ModelMetadataFetcher; } });
+Object.defineProperty(exports, "fetchAndCacheModelMetadata", { enumerable: true, get: function () { return model_metadata_fetcher_js_1.fetchAndCacheModelMetadata; } });
+Object.defineProperty(exports, "getModelEntriesFromAPI", { enumerable: true, get: function () { return model_metadata_fetcher_js_1.getModelEntriesFromAPI; } });
+var metadata_aware_factory_js_1 = require("./metadata-aware-factory.js");
+Object.defineProperty(exports, "MetadataAwareProviderFactory", { enumerable: true, get: function () { return metadata_aware_factory_js_1.MetadataAwareProviderFactory; } });
+Object.defineProperty(exports, "createMetadataAwareFactory", { enumerable: true, get: function () { return metadata_aware_factory_js_1.createMetadataAwareFactory; } });
+Object.defineProperty(exports, "createProviderWithDynamicMetadata", { enumerable: true, get: function () { return metadata_aware_factory_js_1.createProviderWithDynamicMetadata; } });
 var cost_calculator_js_1 = require("./cost-calculator.js");
 Object.defineProperty(exports, "CostCalculator", { enumerable: true, get: function () { return cost_calculator_js_1.CostCalculator; } });
 var cost_tracker_provider_js_1 = require("./cost-tracker-provider.js");

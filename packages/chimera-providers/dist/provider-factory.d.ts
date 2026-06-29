@@ -7,15 +7,18 @@ declare const EnvProviderConfigSchema: z.ZodObject<{
     baseUrl: z.ZodOptional<z.ZodString>;
     apiKey: z.ZodOptional<z.ZodString>;
     projectId: z.ZodOptional<z.ZodString>;
+    timeoutMs: z.ZodOptional<z.ZodNumber>;
 }, "strip", z.ZodTypeAny, {
     provider: "google" | "openai" | "anthropic" | "ollama" | "mock" | "openai-compatible";
     model: string;
+    timeoutMs?: number | undefined;
     baseUrl?: string | undefined;
     apiKey?: string | undefined;
     projectId?: string | undefined;
 }, {
     provider: "google" | "openai" | "anthropic" | "ollama" | "mock" | "openai-compatible";
     model: string;
+    timeoutMs?: number | undefined;
     baseUrl?: string | undefined;
     apiKey?: string | undefined;
     projectId?: string | undefined;
@@ -39,5 +42,28 @@ export declare class ProviderFactory {
  * Returns model ID strings, or an empty array on failure.
  */
 export declare function listModels(provider: string, apiKey: string): Promise<string[]>;
+import { ModelRegistry } from './model-registry.js';
+/**
+ * Get the default ModelRegistry instance.
+ * The registry automatically loads cached model metadata from disk on construction.
+ * This provides a singleton registry with dynamically updated context windows and pricing.
+ *
+ * @example
+ * ```typescript
+ * import { getDefaultRegistry } from '@chimera/providers';
+ *
+ * const registry = getDefaultRegistry();
+ * const model = registry.get('anthropic/claude-sonnet-4-20250514');
+ * console.log(model?.contextWindow); // Uses cached value if available
+ *
+ * // Refresh from API
+ * await registry.refreshFromAPI();
+ * ```
+ */
+export declare function getDefaultRegistry(): ModelRegistry;
+/**
+ * Reset the default registry (useful for testing).
+ */
+export declare function resetDefaultRegistry(): void;
 export {};
 //# sourceMappingURL=provider-factory.d.ts.map

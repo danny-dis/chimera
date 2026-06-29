@@ -24,6 +24,8 @@ export const ModelEntrySchema = z.object({
   releaseDate: z.string().optional(),
   deprecated: z.boolean().optional(),
   replacement: z.string().optional(),
+  /** Timestamp when this metadata was fetched from API (0 = hardcoded) */
+  fetchedAt: z.number().optional(),
 });
 
 export type ModelEntry = z.infer<typeof ModelEntrySchema>;
@@ -416,12 +418,133 @@ const MODELS: ModelEntry[] = [
 
 export class ModelRegistry {
   private models: Map<string, ModelEntry> = new Map();
+  private hardcodedIds: Set<string> = new Set();
+  private cacheLoaded: boolean = false;
+  private cacheTimestamp: number = 0;
+  private skipCacheLoading: boolean;
 
-  constructor(initialModels?: ModelEntry[]) {
+  constructor(
+    initialModels?: ModelEntry[],
+    options?: { skipCacheLoading?: boolean },
+  ) {
+    this.skipCacheLoading = options?.skipCacheLoading ?? false;
     const source = initialModels ?? MODELS;
     for (const entry of source) {
       this.models.set(entry.id, entry);
+      this.hardcodedIds.add(entry.id);
     }
+    // Auto-load cache synchronously if available (unless skipped for testing)
+    if (!this.skipCacheLoading) {
+      this.loadCacheSync();
+    }
+  }
+
+  /**
+   * Get the default cache file path (~/.chimera/model-metadata-cache.json)
+   */
+  private getCachePath(): string {
+    const home = (typeof process !== 'undefined' && process.env)
+      ? (process.env.HOME || process.env.USERPROFILE || '')
+      : '';
+    const path = home ? `${home}/.chimera/model-metadata-cache.json` : '.chimera/model-metadata-cache.json';
+    return path;
+  }
+
+  /**
+   * Synchronously load and merge cache from disk.
+   * Called automatically in constructor. Silently fails if cache is missing/expired.
+   */
+  private loadCacheSync(): void {
+    try {
+      // Use dynamic import to avoid issues in non-Node environments
+      const fs = typeof require !== 'undefined' ? require('fs') : null;
+      if (!fs) return;
+
+      const cachePath = this.getCachePath();
+      if (!fs.existsSync(cachePath)) return;
+
+      const raw = fs.readFileSync(cachePath, 'utf-8');
+      const cache = JSON.parse(raw);
+
+      // Validate cache format
+      if (cache.version !== 1) return;
+      if (!Array.isArray(cache.metadata)) return;
+
+      // Check if cache is expired (24 hours)
+      const CACHE_TTL_MS = 24 * 60 * 60 * 1000;
+      if (Date.now() - cache.timestamp > CACHE_TTL_MS) return;
+
+      // Convert and merge
+      const entries = this.toModelEntries(cache.metadata);
+      this.mergeFetchedMetadata(entries);
+
+      this.cacheLoaded = true;
+      this.cacheTimestamp = cache.timestamp;
+    } catch {
+      // Silently fail - use hardcoded data only
+    }
+  }
+
+  /**
+   * Convert fetched metadata format to ModelEntry format.
+   */
+  private toModelEntries(metadata: Array<{
+    id: string;
+    name: string;
+    provider: string;
+    contextWindow: number;
+    maxOutputTokens: number;
+    inputPerMillion: number;
+    outputPerMillion: number;
+    cacheReadPerMillion?: number;
+    cacheWritePerMillion?: number;
+    supportsToolCalling: boolean;
+    supportsStructuredOutput: boolean;
+    supportsVision: boolean;
+    supportsReasoning: boolean;
+    supportsParallelToolCalls: boolean;
+    releaseDate?: string;
+    fetchedAt?: number;
+  }>): ModelEntry[] {
+    return metadata.map((m) => ({
+      id: m.id,
+      name: m.name,
+      provider: m.provider,
+      contextWindow: m.contextWindow,
+      maxOutputTokens: m.maxOutputTokens,
+      pricing: {
+        inputPerMillion: m.inputPerMillion,
+        outputPerMillion: m.outputPerMillion,
+        cacheReadPerMillion: m.cacheReadPerMillion,
+        cacheWritePerMillion: m.cacheWritePerMillion,
+      },
+      capabilities: {
+        toolCalling: m.supportsToolCalling,
+        structuredOutput: m.supportsStructuredOutput,
+        vision: m.supportsVision,
+        reasoning: m.supportsReasoning,
+        parallelToolCalls: m.supportsParallelToolCalls,
+      },
+      degradationThreshold: 0.7,
+      tier: this.inferTier(m.inputPerMillion, m.outputPerMillion, m.supportsReasoning),
+      releaseDate: m.releaseDate,
+      fetchedAt: m.fetchedAt,
+    }));
+  }
+
+  /**
+   * Infer model tier from pricing and capabilities.
+   */
+  private inferTier(
+    inputPerMillion: number,
+    outputPerMillion: number,
+    supportsReasoning: boolean,
+  ): 'cheap' | 'mid' | 'frontier' | 'reasoning' {
+    if (supportsReasoning) return 'reasoning';
+    const avgCost = (inputPerMillion + outputPerMillion) / 2;
+    if (avgCost < 1) return 'cheap';
+    if (avgCost < 10) return 'mid';
+    return 'frontier';
   }
 
   get(id: string): ModelEntry | undefined {
@@ -474,5 +597,158 @@ export class ModelRegistry {
 
   isRegistered(id: string): boolean {
     return this.models.has(id);
+  }
+
+  /**
+   * Merge fetched metadata into the registry.
+   * - For existing models: updates contextWindow, maxOutputTokens, and pricing if the fetched data is newer
+   * - For new models: adds them to the registry
+   * - Preserves hardcoded models' tier and degradationThreshold unless explicitly overridden
+   */
+  mergeFetchedMetadata(fetchedEntries: ModelEntry[]): { added: number; updated: number } {
+    let added = 0;
+    let updated = 0;
+
+    for (const fetched of fetchedEntries) {
+      const existing = this.models.get(fetched.id);
+
+      if (existing) {
+        // Update existing model with fetched data (context window, pricing, capabilities)
+        const isHardcoded = this.hardcodedIds.has(fetched.id);
+        this.models.set(fetched.id, {
+          ...existing,
+          // Always update these fields from API (they're more accurate)
+          contextWindow: fetched.contextWindow,
+          maxOutputTokens: fetched.maxOutputTokens,
+          pricing: fetched.pricing,
+          capabilities: fetched.capabilities,
+          // Preserve hardcoded tier and degradationThreshold for known models
+          tier: isHardcoded ? existing.tier : fetched.tier,
+          degradationThreshold: isHardcoded ? existing.degradationThreshold : fetched.degradationThreshold,
+          // Update release date if provided
+          releaseDate: fetched.releaseDate ?? existing.releaseDate,
+          // Mark as fetched from API
+          fetchedAt: fetched.fetchedAt,
+        });
+        updated++;
+      } else {
+        // Add new model from API
+        this.models.set(fetched.id, fetched);
+        added++;
+      }
+    }
+
+    return { added, updated };
+  }
+
+  /**
+   * Get all model IDs that were loaded from hardcoded data.
+   */
+  getHardcodedIds(): string[] {
+    return Array.from(this.hardcodedIds);
+  }
+
+  /**
+   * Check if a model was loaded from hardcoded data.
+   */
+  isHardcoded(id: string): boolean {
+    return this.hardcodedIds.has(id);
+  }
+
+  /**
+   * Check if cache was loaded successfully during construction.
+   */
+  isCacheLoaded(): boolean {
+    return this.cacheLoaded;
+  }
+
+  /**
+   * Get the timestamp of when the cache was last updated.
+   */
+  getCacheTimestamp(): number {
+    return this.cacheTimestamp;
+  }
+
+  /**
+   * Get the total number of models in the registry (hardcoded + cached).
+   */
+  getModelCount(): number {
+    return this.models.size;
+  }
+
+  /**
+   * Get the number of hardcoded models.
+   */
+  getHardcodedCount(): number {
+    return this.hardcodedIds.size;
+  }
+
+  /**
+   * Get the number of models added from cache (non-hardcoded).
+   */
+  getCachedCount(): number {
+    return this.models.size - this.hardcodedIds.size;
+  }
+
+  /**
+   * Async refresh of model metadata from OpenRouter API.
+   * Fetches fresh data, updates cache file, and merges into registry.
+   * 
+   * @param config - Optional configuration for the fetcher
+   * @returns Object with counts of added and updated models
+   * 
+   * @example
+   * ```typescript
+   * const registry = new ModelRegistry();
+   * const result = await registry.refreshFromAPI();
+   * console.log(`Added ${result.added} new models, updated ${result.updated} existing`);
+   * ```
+   */
+  async refreshFromAPI(config?: { openrouterApiKey?: string }): Promise<{ added: number; updated: number }> {
+    // Dynamic import to avoid issues in non-Node environments
+    const { ModelMetadataFetcher } = await import('./model-metadata-fetcher.js');
+    
+    const fetcher = new ModelMetadataFetcher({
+      openrouterApiKey: config?.openrouterApiKey,
+    });
+    
+    const metadata = await fetcher.refreshMetadata();
+    fetcher.saveToCache(metadata);
+    
+    const entries = this.toModelEntries(metadata);
+    const result = this.mergeFetchedMetadata(entries);
+    
+    this.cacheLoaded = true;
+    this.cacheTimestamp = Date.now();
+    
+    return result;
+  }
+
+  /**
+   * Load cache from disk and merge into registry.
+   * Useful for reloading after cache has been updated externally.
+   * 
+   * @returns true if cache was loaded, false otherwise
+   */
+  reloadCache(): boolean {
+    this.cacheLoaded = false;
+    this.cacheTimestamp = 0;
+    
+    // We need to remove previously cached (non-hardcoded) models first
+    // to avoid stale data
+    const modelsToRemove: string[] = [];
+    for (const [id] of this.models) {
+      if (!this.hardcodedIds.has(id)) {
+        modelsToRemove.push(id);
+      }
+    }
+    for (const id of modelsToRemove) {
+      this.models.delete(id);
+    }
+    
+    if (!this.skipCacheLoading) {
+      this.loadCacheSync();
+    }
+    return this.cacheLoaded;
   }
 }

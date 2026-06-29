@@ -1,7 +1,9 @@
 export { ProviderRegistry } from './provider-registry.js';
-export { ProviderFactory, listModels } from './provider-factory.js';
+export { ProviderFactory, listModels, getDefaultRegistry, resetDefaultRegistry } from './provider-factory.js';
 export { ModelAdapter, ProviderConfigSchema, type ProviderConfig } from './model-adapter.js';
 export { ModelRegistry, ModelEntrySchema, type ModelEntry, } from './model-registry.js';
+export { ModelMetadataFetcher, fetchAndCacheModelMetadata, getModelEntriesFromAPI, type FetchedModelMetadata, type CacheEntry, type FetcherConfig, } from './model-metadata-fetcher.js';
+export { MetadataAwareProviderFactory, createMetadataAwareFactory, createProviderWithDynamicMetadata, type MetadataAwareFactoryConfig, } from './metadata-aware-factory.js';
 export { CostCalculator, type CostBreakdown, } from './cost-calculator.js';
 export { ProviderCostTracker, type CostSession, } from './cost-tracker-provider.js';
 export { BudgetEnforcer, type BudgetConfig, type BudgetAction, type BudgetCheckResult, } from './budget-enforcer.js';

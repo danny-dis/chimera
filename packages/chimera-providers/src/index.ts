@@ -1,7 +1,7 @@
 // @chimera/providers — Provider abstraction layer
 
 export { ProviderRegistry } from './provider-registry.js';
-export { ProviderFactory, listModels } from './provider-factory.js';
+export { ProviderFactory, listModels, getDefaultRegistry, resetDefaultRegistry } from './provider-factory.js';
 export { ModelAdapter, ProviderConfigSchema, type ProviderConfig } from './model-adapter.js';
 
 export {
@@ -9,6 +9,22 @@ export {
   ModelEntrySchema,
   type ModelEntry,
 } from './model-registry.js';
+
+export {
+  ModelMetadataFetcher,
+  fetchAndCacheModelMetadata,
+  getModelEntriesFromAPI,
+  type FetchedModelMetadata,
+  type CacheEntry,
+  type FetcherConfig,
+} from './model-metadata-fetcher.js';
+
+export {
+  MetadataAwareProviderFactory,
+  createMetadataAwareFactory,
+  createProviderWithDynamicMetadata,
+  type MetadataAwareFactoryConfig,
+} from './metadata-aware-factory.js';
 
 export {
   CostCalculator,

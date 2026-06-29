@@ -1,5 +1,7 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { ModelRegistry } from '../model-registry.js';
+import * as fs from 'fs';
+import * as path from 'path';
 
 describe('ModelRegistry', () => {
   it('pre-populates with 30+ models', () => {
@@ -95,5 +97,125 @@ describe('ModelRegistry', () => {
       expect(typeof model.capabilities.reasoning).toBe('boolean');
       expect(typeof model.capabilities.parallelToolCalls).toBe('boolean');
     }
+  });
+});
+
+describe('ModelRegistry Cache Auto-Loading', () => {
+  const testCachePath = path.join(__dirname, '__test-registry-cache__.json');
+
+  beforeEach(() => {
+    // Clean up test cache before each test
+    if (fs.existsSync(testCachePath)) {
+      fs.unlinkSync(testCachePath);
+    }
+  });
+
+  afterEach(() => {
+    // Clean up test cache after each test
+    if (fs.existsSync(testCachePath)) {
+      fs.unlinkSync(testCachePath);
+    }
+  });
+
+  it('initializes with cache status tracking', () => {
+    const registry = new ModelRegistry();
+    expect(typeof registry.isCacheLoaded()).toBe('boolean');
+    expect(typeof registry.getCacheTimestamp()).toBe('number');
+    expect(typeof registry.getModelCount()).toBe('number');
+    expect(typeof registry.getHardcodedCount()).toBe('number');
+    expect(typeof registry.getCachedCount()).toBe('number');
+  });
+
+  it('tracks hardcoded model count correctly', () => {
+    const registry = new ModelRegistry([], { skipCacheLoading: true });
+    const hardcodedCount = registry.getHardcodedCount();
+    // Empty registry has 0 hardcoded models
+    expect(hardcodedCount).toBe(0);
+    expect(registry.getModelCount()).toBe(0);
+    expect(registry.getCachedCount()).toBe(0);
+  });
+
+  it('identifies hardcoded models', () => {
+    const registry = new ModelRegistry([], { skipCacheLoading: true });
+    // Register a model manually
+    registry.register({
+      id: 'test/model',
+      name: 'Test Model',
+      provider: 'test',
+      contextWindow: 1000,
+      maxOutputTokens: 500,
+      pricing: { inputPerMillion: 1, outputPerMillion: 2 },
+      capabilities: { toolCalling: false, structuredOutput: false, vision: false, reasoning: false, parallelToolCalls: false },
+      degradationThreshold: 0.7,
+      tier: 'cheap',
+    });
+    expect(registry.isHardcoded('test/model')).toBe(false);
+  });
+
+  it('mergeFetchedMetadata updates existing models', () => {
+    const registry = new ModelRegistry([], { skipCacheLoading: true });
+    // Add a model manually first
+    registry.register({
+      id: 'openai/gpt-4o',
+      name: 'GPT-4o',
+      provider: 'openai',
+      contextWindow: 128_000,
+      maxOutputTokens: 16_384,
+      pricing: { inputPerMillion: 2.50, outputPerMillion: 10.00 },
+      capabilities: { toolCalling: true, structuredOutput: true, vision: true, reasoning: false, parallelToolCalls: true },
+      degradationThreshold: 0.7,
+      tier: 'mid',
+    });
+    const originalModel = registry.get('openai/gpt-4o');
+    expect(originalModel).toBeDefined();
+    expect(originalModel?.contextWindow).toBe(128_000);
+
+    // Merge with updated context window
+    const result = registry.mergeFetchedMetadata([
+      {
+        ...originalModel!,
+        contextWindow: 256_000, // Updated from API
+        pricing: { inputPerMillion: 5.0, outputPerMillion: 20.0 }, // Updated pricing
+      },
+    ]);
+
+    expect(result.updated).toBe(1);
+    expect(result.added).toBe(0);
+
+    const updatedModel = registry.get('openai/gpt-4o');
+    expect(updatedModel?.contextWindow).toBe(256_000);
+    expect(updatedModel?.pricing.inputPerMillion).toBe(5.0);
+    // Tier should be preserved for hardcoded models
+    expect(updatedModel?.tier).toBe('mid');
+  });
+
+  it('mergeFetchedMetadata adds new models', () => {
+    const registry = new ModelRegistry([], { skipCacheLoading: true });
+    const initialCount = registry.getModelCount();
+
+    const result = registry.mergeFetchedMetadata([
+      {
+        id: 'new-provider/new-model',
+        name: 'New Model',
+        provider: 'new-provider',
+        contextWindow: 50_000,
+        maxOutputTokens: 4_096,
+        pricing: { inputPerMillion: 1.0, outputPerMillion: 2.0 },
+        capabilities: { toolCalling: true, structuredOutput: false, vision: false, reasoning: false, parallelToolCalls: false },
+        degradationThreshold: 0.7,
+        tier: 'cheap',
+      },
+    ]);
+
+    expect(result.added).toBe(1);
+    expect(result.updated).toBe(0);
+    expect(registry.getModelCount()).toBe(initialCount + 1);
+    expect(registry.get('new-provider/new-model')).toBeDefined();
+  });
+
+  it('reloadCache returns false when no cache exists', () => {
+    const registry = new ModelRegistry([], { skipCacheLoading: true });
+    // Since we're using empty registry, there's no cache to load
+    expect(registry.reloadCache()).toBe(false);
   });
 });

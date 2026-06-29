@@ -2,6 +2,8 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.ProviderFactory = void 0;
 exports.listModels = listModels;
+exports.getDefaultRegistry = getDefaultRegistry;
+exports.resetDefaultRegistry = resetDefaultRegistry;
 const zod_1 = require("zod");
 const model_adapter_js_1 = require("./model-adapter.js");
 const errors_js_1 = require("./errors.js");
@@ -24,6 +26,7 @@ const EnvProviderConfigSchema = zod_1.z.object({
     baseUrl: zod_1.z.string().optional(),
     apiKey: zod_1.z.string().optional(),
     projectId: zod_1.z.string().optional(),
+    timeoutMs: zod_1.z.number().positive().optional(),
 });
 function getEnv(key) {
     if (typeof process !== 'undefined' && process.env) {
@@ -36,14 +39,16 @@ function resolveApiKey(config) {
         return config.apiKey;
     const keyMap = {
         openai: 'OPENAI_API_KEY',
-        'openai-compatible': 'OPENAI_API_KEY',
+        // 'openai-compatible' intentionally omitted — each compatible provider
+        // (NVIDIA NIM, Mistral, OpenRouter, etc.) has its own API key.
+        // Falling back to OPENAI_API_KEY caused cross-provider key leakage.
         anthropic: 'ANTHROPIC_API_KEY',
         google: 'GOOGLE_API_KEY',
     };
     const envKey = keyMap[config.provider];
     const key = envKey ? getEnv(envKey) : undefined;
     if (!key) {
-        throw new errors_js_1.InvalidConfigError(`No API key provided for ${config.provider}. Set ${envKey} or pass apiKey in config.`, config.provider);
+        throw new errors_js_1.InvalidConfigError(`No API key provided for ${config.provider}. Set ${envKey ?? 'apiKey'} in your provider config or environment.`, config.provider);
     }
     return key;
 }
@@ -73,6 +78,7 @@ class ProviderFactory {
             model: config.model,
             baseUrl: config.baseUrl,
             apiKey: config.apiKey,
+            timeoutMs: config.timeoutMs,
         });
     }
     static createFromEnv(overrides) {
@@ -154,6 +160,7 @@ class ProviderFactory {
                 const anthropicConfig = {
                     apiKey: resolveApiKey(config),
                     model: config.model,
+                    options: { timeoutMs: config.timeoutMs },
                 };
                 return new anthropic_js_1.AnthropicProvider(anthropicConfig);
             }
@@ -162,6 +169,7 @@ class ProviderFactory {
                     apiKey: resolveApiKey(config),
                     model: config.model,
                     projectId: config.projectId,
+                    options: { timeoutMs: config.timeoutMs },
                 };
                 return new google_js_1.GoogleProvider(googleConfig);
             }
@@ -169,6 +177,7 @@ class ProviderFactory {
                 const ollamaConfig = {
                     baseUrl: resolveBaseUrl(config),
                     model: config.model,
+                    options: { timeoutMs: config.timeoutMs },
                 };
                 return new ollama_js_1.OllamaProvider(ollamaConfig);
             }
@@ -178,6 +187,7 @@ class ProviderFactory {
                     baseUrl: resolveBaseUrl(config),
                     apiKey: resolveApiKey(config),
                     model: config.model,
+                    options: { timeoutMs: config.timeoutMs },
                 };
                 return new openai_compatible_js_1.OpenAICompatibleProvider(openaiConfig);
             }
@@ -253,5 +263,37 @@ async function listOllamaModels() {
         return [];
     const data = await res.json();
     return (data.models ?? []).map((m) => m.name);
+}
+// ── Default Model Registry ───────────────────────────────────────────────
+const model_registry_js_1 = require("./model-registry.js");
+let defaultRegistry = null;
+/**
+ * Get the default ModelRegistry instance.
+ * The registry automatically loads cached model metadata from disk on construction.
+ * This provides a singleton registry with dynamically updated context windows and pricing.
+ *
+ * @example
+ * ```typescript
+ * import { getDefaultRegistry } from '@chimera/providers';
+ *
+ * const registry = getDefaultRegistry();
+ * const model = registry.get('anthropic/claude-sonnet-4-20250514');
+ * console.log(model?.contextWindow); // Uses cached value if available
+ *
+ * // Refresh from API
+ * await registry.refreshFromAPI();
+ * ```
+ */
+function getDefaultRegistry() {
+    if (!defaultRegistry) {
+        defaultRegistry = new model_registry_js_1.ModelRegistry(); // Auto-loads cache in constructor
+    }
+    return defaultRegistry;
+}
+/**
+ * Reset the default registry (useful for testing).
+ */
+function resetDefaultRegistry() {
+    defaultRegistry = null;
 }
 //# sourceMappingURL=provider-factory.js.map

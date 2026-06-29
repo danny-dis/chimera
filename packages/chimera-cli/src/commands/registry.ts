@@ -8,9 +8,23 @@ import type {
 } from '@chimera/core';
 import { runWorkflow } from '@chimera/core';
 import type { ModelProvider } from '@chimera/providers';
+import { ModelMetadataFetcher } from '@chimera/providers';
 import type { CheckpointStore } from '@chimera/session';
 import { loadCustomCommands, runCustomCommand } from './custom-loader.js';
 import { initAgentsMd } from './init.js';
+
+const HELP_TEXT = [
+  '  Core commands:',
+  '    /mode <ask|plan|code|debug|review|oal|auto>  — switch mode',
+  '    /cost /history /sessions /clear /exit /help',
+  '',
+  '  Tasks:',
+  '    /tasks /compact /init /rewind /loop /goal',
+  '',
+  '  Settings:',
+  '    /model /status /config /doctor /export',
+  '    /refresh-models  — fetch latest model metadata from APIs',
+];
 
 /**
  * Lightweight handle to the live REPL state. The router constructs one of
@@ -79,57 +93,7 @@ export async function printHelp(_ctx: ReplContext): Promise<void> {
         }),
       ].join('\n');
 
-  console.log(`
-  Core commands:
-    /mode <ask|plan|code|debug|review|oal|auto>  — switch mode
-    /cost                              — show session cost (aggregate)
-    /history                           — show command history
-    /sessions                          — list saved sessions
-    /clear                             — clear screen
-    /exit                              — exit interactive mode
-    /help                              — show this help
-
-  Task + planning:
-    /tasks                             — list active tasks
-    /compact                           — summarise current context into memory
-    /init                              — generate AGENTS.md for this project
-    /todos                             — alias of /tasks
-    /rewind                            — rewind to last checkpoint
-    /rewind <session-id>               — rewind to specific checkpoint
-
-  Settings:
-    /model [name]                      — show or set the active model
-    /theme <name>                      — switch TUI theme
-    /vim                               — toggle vim keybindings
-    /status                            — session id, mode, cost
-    /output-style <name>               — set output style
-    /permissions                       — show current permission mode
-    /config                            — show resolved config
-    /sandbox                           — show sandbox state
-
-  Account + memory:
-    /login                             — sign in for cloud features
-    /logout                            — sign out
-    /memory                            — show memory stats
-    /mcp                               — list MCP servers
-    /hooks                             — show registered hooks
-    /ide                               — show IDE connection status
-
-  Discovery:
-    /agents                            — list active agents
-    /doctor                            — run health checks
-    /bug                               — file a bug report
-    /feedback                          — send feedback
-    /usage                             — show token usage
-    /export                            — export current session to file
-    /release-notes                     — show release notes
-    /pr-comments                       — list PR comments (requires auth)
-    /privacy-settings                  — show privacy settings
-    /migrate-installer                 — run schema migrations
-    /resume [id]                       — resume a saved session
-    /teleport [host]                   — transfer session to remote machine
-    /loop <interval> <task>            — start a periodic re-prompt${customSection}
-      `);
+  console.log(HELP_TEXT.join('\n') + customSection);
 }
 
 /**
@@ -240,6 +204,8 @@ export async function runSlashCommand(
       return handleResume(ctx, args);
     case 'sessions':
       return handleSessions(ctx);
+    case 'refresh-models':
+      return handleRefreshModels(args);
     case 'clear':
       console.clear();
       return 'continue';
@@ -446,6 +412,39 @@ async function handleInit(args: string[]): Promise<ReplExitSignal> {
   } catch (err) {
     console.error(`  /init failed: ${err instanceof Error ? err.message : String(err)}`);
   }
+  return 'continue';
+}
+
+async function handleRefreshModels(args: string[]): Promise<ReplExitSignal> {
+  const force = args.includes('--force');
+  const fetcher = new ModelMetadataFetcher();
+
+  console.log('  Fetching model metadata from OpenRouter API...');
+
+  try {
+    let metadata;
+    if (force) {
+      console.log('  (forcing refresh, ignoring cache)');
+      metadata = await fetcher.refreshMetadata();
+    } else {
+      metadata = await fetcher.getMetadata();
+    }
+
+    const ctxCount = metadata.filter((m) => m.contextWindow > 0).length;
+    const pricingCount = metadata.filter((m) => m.inputPerMillion > 0 || m.outputPerMillion > 0).length;
+
+    console.log(`  ✓ Fetched metadata for ${metadata.length} models`);
+    console.log(`  ✓ ${ctxCount} models with context window info`);
+    console.log(`  ✓ ${pricingCount} models with pricing info`);
+    console.log(`  ✓ Cache saved to: ${fetcher['config'].cachePath}`);
+    console.log('');
+    console.log('  Context windows are now available for cost calculations.');
+    console.log('  Restart the session to apply to existing providers.');
+  } catch (err) {
+    console.error(`  Failed to fetch model metadata: ${err instanceof Error ? err.message : String(err)}`);
+    console.log('  Using hardcoded values as fallback.');
+  }
+
   return 'continue';
 }
 
