@@ -390,6 +390,110 @@ The improver detects:
 - **quality-failure**: artifact-related quality issues`,
 };
 
+const CHIMERA_YAGNI: BundledSkill = {
+  name: 'chimera-yagni',
+  description: 'The YAGNI ladder: minimal solutions, stdlib-first, no speculative code.',
+  modes: ['code', 'plan', 'review'],
+  content: `# YAGNI — You Ain't Gonna Need It
+
+The best code is the code you never wrote. Before writing anything, climb the ladder:
+
+1. **Does this need to exist?** Speculative need = skip it.
+2. **Already in this codebase?** Reuse existing helpers, utils, patterns.
+3. **Stdlib does it?** Use the standard library.
+4. **Native platform feature?** Use it (HTML input types, CSS, DB constraints).
+5. **Installed dependency?** Use it. Never add a new one for what a few lines can do.
+6. **One line?** One line.
+7. **Only then:** the minimum code that works.
+
+## Rules
+- No unrequested abstractions.
+- No new dependencies if avoidable.
+- No boilerplate nobody asked for.
+- Deletion over addition. Boring over clever.
+- Fewest files possible. Shortest working diff wins.
+- Two stdlib options, same size? Pick the one correct on edge cases.
+
+## When NOT to be lazy
+Never simplify away: input validation at trust boundaries, error handling
+that prevents data loss, security measures, accessibility basics.
+
+## Deliberate shortcuts
+Mark intentional simplifications with a \`// yagni:\` comment:
+\`\`\`
+// yagni: global lock, per-account locks if throughput matters
+\`\`\``,
+};
+
+const CHIMERA_OVERENGINEERING_REVIEW: BundledSkill = {
+  name: 'chimera-overengineering-review',
+  description: 'Review diffs for over-engineering: reinvented stdlib, unneeded deps, speculative abstractions.',
+  modes: ['review', 'code'],
+  content: `# Over-Engineering Review
+
+Review diffs for unnecessary complexity. One finding per line. The diff's best outcome is getting shorter.
+
+## Tags
+
+- \`delete:\` dead code, unused flexibility, speculative feature. Replacement: nothing.
+- \`stdlib:\` hand-rolled thing the standard library ships. Name the function.
+- \`native:\` dependency or code doing what the platform already does. Name the feature.
+- \`yagni:\` abstraction with one implementation, config nobody sets, layer with one caller.
+- \`shrink:\` same logic, fewer lines. Show the shorter form.
+
+## Format
+
+\`<file>:L<line>: <tag> <what to cut>. <replacement>.\`
+
+## Examples
+
+- \`src/validators.ts:L12-38: stdlib: 27-line email validator. "@" check + Intl, 2 lines.\`
+- \`src/api.ts:L4: native: moment.js for one format call. Intl.DateTimeFormat, 0 deps.\`
+- \`src/repo.ts:L88: yagni: AbstractRepository with one impl. Inline it.\`
+- \`src/utils.ts:L52-71: delete: retry wrapper around idempotent call. Nothing replaces it.\`
+- \`src/helpers.ts:L30-44: shrink: manual loop builds dict. dict(zip(keys, values)), 1 line.\`
+
+## Scoring
+
+End with: \`net: -<N> lines possible.\`
+If nothing to cut: \`Lean already. Ship.\`
+
+## Boundaries
+
+Scope: over-engineering only. Correctness, security, performance are separate review concerns.
+Does not apply fixes — only lists them.`,
+};
+
+const CHIMERA_DEBT_TRACKER: BundledSkill = {
+  name: 'chimera-debt-tracker',
+  description: 'Harvest yagni: comment shortcuts into a tracked debt ledger.',
+  modes: ['review', 'plan'],
+  content: `# Debt Tracker
+
+Every deliberate shortcut marked with \`// yagni:\` should be tracked so deferrals don't rot.
+
+## Scan
+
+Grep the repo for yagni markers:
+\`\`\`
+grep -rn '// yagni:' --include='*.ts' --include='*.js' --include='*.py' .
+\`\`\`
+
+## Output Format
+
+One row per marker, grouped by file:
+\`<file>:<line>, <what was simplified>. ceiling: <the limit>. upgrade: <the trigger>.\`
+
+Flag \`no-trigger\` for comments without an upgrade path — these are rot risks.
+
+End with \`<N> markers, <M> with no trigger.\`
+Nothing found: \`Clean ledger.\`
+
+## Boundaries
+
+Reads and reports only. Changes nothing unless explicitly asked.`,
+};
+
 const CHIMERA_SKILL_CREATION: BundledSkill = {
   name: 'chimera-skill-creation',
   description: 'How to create skills, workflows, and skill packs using the create_skill and create_workflow tools.',
@@ -517,6 +621,9 @@ export const BUNDLED_SKILLS: Readonly<Record<string, BundledSkill>> = Object.fre
   [CHIMERA_TELEMETRY.name]: CHIMERA_TELEMETRY,
   [CHIMERA_COST_CONTROL.name]: CHIMERA_COST_CONTROL,
   [CHIMERA_LEARNING.name]: CHIMERA_LEARNING,
+  [CHIMERA_YAGNI.name]: CHIMERA_YAGNI,
+  [CHIMERA_OVERENGINEERING_REVIEW.name]: CHIMERA_OVERENGINEERING_REVIEW,
+  [CHIMERA_DEBT_TRACKER.name]: CHIMERA_DEBT_TRACKER,
   [CHIMERA_SKILL_CREATION.name]: CHIMERA_SKILL_CREATION,
 });
 
@@ -524,7 +631,7 @@ export const BUNDLED_SKILLS: Readonly<Record<string, BundledSkill>> = Object.fre
  * Bump on every change to any bundled skill's content. Tests assert the
  * version so a content edit that forgets to bump is caught at CI time.
  */
-export const BUNDLED_SKILLS_VERSION = '1.1.0';
+export const BUNDLED_SKILLS_VERSION = '1.2.0';
 
 /**
  * All bundled skill names, in a stable order (insertion order — TS preserves

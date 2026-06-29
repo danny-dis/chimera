@@ -22,11 +22,11 @@ exports.SKILL_BUNDLES = void 0;
  *   - `oal`    — internal automation; load everything.
  */
 exports.SKILL_BUNDLES = {
-    code: ['chimera-modes', 'chimera-workflows', 'chimera-tool-loop', 'chimera-skill-creation'],
-    plan: ['chimera-modes', 'chimera-workflows', 'chimera-tool-loop'],
+    code: ['chimera-modes', 'chimera-workflows', 'chimera-tool-loop', 'chimera-skill-creation', 'chimera-yagni'],
+    plan: ['chimera-modes', 'chimera-workflows', 'chimera-tool-loop', 'chimera-yagni'],
     ask: ['chimera-modes', 'chimera-cli'],
     debug: ['chimera-modes', 'chimera-tool-loop', 'chimera-safety', 'chimera-telemetry', 'chimera-skill-creation'],
-    review: ['chimera-modes', 'chimera-workflows', 'chimera-safety', 'chimera-skill-creation'],
+    review: ['chimera-modes', 'chimera-workflows', 'chimera-safety', 'chimera-skill-creation', 'chimera-overengineering-review', 'chimera-debt-tracker'],
     oal: [
         'chimera-modes',
         'chimera-workflows',

@@ -47,7 +47,7 @@ export declare const BUNDLED_SKILLS: Readonly<Record<string, BundledSkill>>;
  * Bump on every change to any bundled skill's content. Tests assert the
  * version so a content edit that forgets to bump is caught at CI time.
  */
-export declare const BUNDLED_SKILLS_VERSION = "1.1.0";
+export declare const BUNDLED_SKILLS_VERSION = "1.2.0";
 /**
  * All bundled skill names, in a stable order (insertion order — TS preserves
  * the literal order of the Object.freeze call above).
