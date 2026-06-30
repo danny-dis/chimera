@@ -24,19 +24,16 @@ export const TUI = ({ mode: initialMode = 'code', preset: initialPreset = 'solo'
     const layout = useLayout(sidebarVisible);
     const focus = useFocus();
     useEffect(() => {
-        if (initialMessages.length > 0)
-            setMessages(initialMessages);
+        setMessages(initialMessages);
     }, [initialMessages]);
     useEffect(() => {
-        if (initialAgents.length > 0)
-            setAgents(initialAgents);
+        setAgents(initialAgents);
     }, [initialAgents]);
     useEffect(() => {
         setCostData(initialCostData);
     }, [initialCostData]);
     useEffect(() => {
-        if (initialEvents.length > 0)
-            setEvents(initialEvents);
+        setEvents(initialEvents);
     }, [initialEvents]);
     useEffect(() => {
         setMode(initialMode);
@@ -132,7 +129,7 @@ export const TUI = ({ mode: initialMode = 'code', preset: initialPreset = 'solo'
     const chatHeight = layout.height - statusBarHeight - footerHeight - inputHeight - 2;
     return (React.createElement(Box, { flexDirection: "column", height: layout.height },
         React.createElement(Box, { height: statusBarHeight },
-            React.createElement(StatusBar, { mode: mode, costData: costData, agents: agents, activeTool: activeTool, sidebarVisible: sidebarVisible })),
+            React.createElement(StatusBar, { mode: mode, costData: costData, agents: agents, activeTool: activeTool, sidebarVisible: sidebarVisible, workingDir: workingDir })),
         React.createElement(Box, { flexDirection: "row", flexGrow: 1, padding: 1 },
             React.createElement(Box, { flexDirection: "column", flexGrow: 1 },
                 activeOverlay === 'sessions' ? (React.createElement(SessionBrowser, { sessions: sessions, onSelect: onSessionSelect, onDelete: onSessionDelete })) : activeOverlay === 'diff' ? (React.createElement(DiffViewer, { files: diffFiles })) : activeOverlay === 'agents' ? (React.createElement(AgentDashboard, { agents: agents })) : activeOverlay === 'events' ? (React.createElement(Box, { flexGrow: 1, borderStyle: "round", borderColor: "gray" },

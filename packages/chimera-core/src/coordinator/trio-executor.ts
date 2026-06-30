@@ -5,7 +5,8 @@ import type { CostTracker } from '../cost-tracker.js';
 import type { WorktreeIsolation, WorktreeInfo } from '../agent/worktree-isolation.js';
 import { ResponseSynthesizer, type SynthesisInput } from '../response-synthesizer.js';
 import { buildMessages } from '../prompts.js';
-import { sanitizeWriterOutput } from './output-sanitizer.js';
+import { sanitizeWriterOutput, sanitizeReviewerOutput } from './output-sanitizer.js';
+import { TaskRouter } from '../task-router.js';
 import type { Mode } from '../types/agent.js';
 import type {
   TrioConfig,
@@ -200,7 +201,7 @@ export class TrioExecutor {
         return {
           modelId: config.reviewer,
           role: 'reviewer',
-          content: result.content,
+          content: sanitizeReviewerOutput(result.content),
           inputTokens,
           outputTokens,
           durationMs: Date.now() - start,
@@ -285,7 +286,7 @@ export class TrioExecutor {
         reviewStage = {
           modelId: config.reviewer,
           role: 'reviewer',
-          content: reviewResult.content,
+          content: sanitizeReviewerOutput(reviewResult.content),
           inputTokens,
           outputTokens,
           durationMs: Date.now() - reviewStart,
@@ -410,6 +411,7 @@ export class TrioExecutor {
       status: needsUserEscalation ? 'needs_user' : 'done',
       cost: totalCostUsd,
       agentCount: stages.length,
+      output: finalResponse,
     });
 
     return {
@@ -525,10 +527,24 @@ export class TrioExecutor {
   }
 
   private buildDraftPrompt(task: string): string {
-    return `You are a code writer. Complete the following task:\n\n${task}`;
+    const base = `You are a code writer. Complete the following task:\n\n${task}`;
+    if (TaskRouter.isConversationalTask(task)) {
+      return `You are a helpful assistant. Answer the following conversational question directly.\n` +
+        `Do NOT produce code, file changes, or technical analysis unless specifically asked.\n` +
+        `Provide a clear, concise, factual answer.\n\n${task}`;
+    }
+    return base;
   }
 
   private buildReviewPrompt(task: string, draft: string): string {
+    if (TaskRouter.isConversationalTask(task)) {
+      return `[!] CONVERSATIONAL REVIEW [!]\n` +
+        `This is a conversational/general question, NOT a code task.\n` +
+        `Do NOT apply code-review criteria (race conditions, input validation, architectural coupling, etc.).\n` +
+        `Evaluate ONLY: factual accuracy, completeness, and clarity.\n` +
+        `Default to PASS unless the answer is factually incorrect.\n\n` +
+        `## Task\n${task}\n\n## Draft\n${draft}`;
+    }
     return `You are a code reviewer. Review the following draft against the task.\n\n## Task\n${task}\n\n## Draft\n${draft}`;
   }
 

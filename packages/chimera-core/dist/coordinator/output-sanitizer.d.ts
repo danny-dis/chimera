@@ -1,4 +1,12 @@
 /**
+ * Extract a clean, human-readable summary from reviewer JSON output.
+ * Discards internal reasoning fields (thought, findings details) and
+ * returns only the verdict line suitable for display.
+ *
+ * Returns the clean summary, or the raw text if parsing fails.
+ */
+export declare function sanitizeReviewerOutput(raw: string): string;
+/**
  * Extract the clean response from writer output, discarding all
  * reasoning, analysis scaffolding, and JSON schema echoes.
  *

@@ -73,9 +73,9 @@ export function Viewport({ items, height, renderItem, focused = false, autoScrol
         }
     });
     const visibleItems = items.slice(scrollOffset, scrollOffset + height);
-    return (React.createElement(Box, { flexDirection: "column", height: height, overflow: "hidden" }, visibleItems.map((item, index) => {
+    return (React.createElement(Box, { flexDirection: "column", height: height, overflow: "hidden", width: "100%" }, visibleItems.map((item, index) => {
         const actualIndex = scrollOffset + index;
-        return (React.createElement(Box, { key: actualIndex }, renderItem(item, actualIndex, actualIndex === selectedIndex)));
+        return (React.createElement(Box, { key: actualIndex, width: "100%" }, renderItem(item, actualIndex, actualIndex === selectedIndex)));
     })));
 }
 //# sourceMappingURL=viewport.js.map

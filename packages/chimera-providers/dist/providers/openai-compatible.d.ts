@@ -5,6 +5,8 @@ export interface OpenAICompatibleOptions {
     modelInfo?: Partial<ModelInfo>;
     headers?: Record<string, string>;
     timeoutMs?: number;
+    /** Whether the upstream provider supports response_format: json_object. Defaults to true for OpenAI, false for others. */
+    supportsResponseFormat?: boolean;
 }
 export interface OpenAICompatibleConfig {
     baseUrl: string;
@@ -20,6 +22,7 @@ export declare class OpenAICompatibleProvider implements ModelProvider {
     private readonly modelInfo;
     private readonly headers;
     private readonly timeoutMs;
+    private readonly supportsResponseFormat;
     constructor(config: OpenAICompatibleConfig);
     complete(prompt: Message[], options?: CompletionOptions): Promise<CompletionResult>;
     stream(prompt: Message[], options?: CompletionOptions): AsyncIterable<StreamChunk>;

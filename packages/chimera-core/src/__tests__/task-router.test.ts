@@ -197,4 +197,29 @@ describe('TaskRouter', () => {
       expect(mode).toBe('code');
     });
   });
+
+  describe('isConversationalTask', () => {
+    it('detects greetings', () => {
+      expect(TaskRouter.isConversationalTask('hello')).toBe(true);
+      expect(TaskRouter.isConversationalTask('hi there')).toBe(true);
+      expect(TaskRouter.isConversationalTask('hello ,what is this project ?')).toBe(true);
+    });
+
+    it('detects conversational questions', () => {
+      expect(TaskRouter.isConversationalTask('who are you')).toBe(true);
+      expect(TaskRouter.isConversationalTask('tell me about this folder you are in')).toBe(true);
+      expect(TaskRouter.isConversationalTask('how does auth work')).toBe(true);
+      expect(TaskRouter.isConversationalTask('can you explain the flow')).toBe(true);
+      expect(TaskRouter.isConversationalTask('describe the architecture')).toBe(true);
+      expect(TaskRouter.isConversationalTask('retry')).toBe(true);
+    });
+
+    it('does not false-positive on code tasks', () => {
+      expect(TaskRouter.isConversationalTask('fix this bug')).toBe(false);
+      expect(TaskRouter.isConversationalTask('What is the answer?')).toBe(false);
+      expect(TaskRouter.isConversationalTask('review this PR')).toBe(false);
+      expect(TaskRouter.isConversationalTask('create a new module')).toBe(false);
+      expect(TaskRouter.isConversationalTask('implement the auth system')).toBe(false);
+    });
+  });
 });

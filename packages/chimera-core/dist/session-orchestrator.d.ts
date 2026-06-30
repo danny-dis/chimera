@@ -253,6 +253,10 @@ export declare class SessionOrchestrator {
         preset?: DeliberationMode;
         maxRetries?: number;
         costCap?: number;
+        conversationHistory?: Array<{
+            role: string;
+            content: string;
+        }>;
     }): Promise<OrchestratorResult>;
     executeWithDeliberation(task: string, mode: Mode, providers: {
         writer: LLMProvider;
@@ -321,7 +325,10 @@ export declare class SessionOrchestrator {
     private logToolCall;
     private logSecurityEvent;
     private shouldVerify;
-    buildWriterPrompt(task: string, mode: Mode): Array<{
+    buildWriterPrompt(task: string, mode: Mode, conversationHistory?: Array<{
+        role: string;
+        content: string;
+    }>): Array<{
         role: string;
         content: string;
     }>;

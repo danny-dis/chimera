@@ -1,9 +1,9 @@
 import { zen } from '../theme.js';
 export const statusSymbols = {
-    pending: { symbol: '○', color: zen.muted },
-    running: { symbol: '◉', color: zen.warning },
-    completed: { symbol: '✓', color: zen.success },
-    error: { symbol: '✗', color: zen.error },
+    pending: { symbol: 'o', color: zen.muted },
+    running: { symbol: '*', color: zen.warning },
+    completed: { symbol: '+', color: zen.success },
+    error: { symbol: 'x', color: zen.error },
 };
 export const formatCost = (cost) => `$${cost.toFixed(4)}`;
 export const formatBudget = (budget) => `$${budget.toFixed(2)}`;

@@ -1653,7 +1653,7 @@ export class SessionOrchestrator {
   }
 
   buildWriterPrompt(task: string, mode: Mode, conversationHistory?: Array<{ role: string; content: string }>): Array<{ role: string; content: string }> {
-    const messages = buildMessages({ role: 'writer', mode, task, cacheControl: DEFAULT_CACHE_CONTROL });
+    const messages = buildMessages({ role: 'writer', mode, task, workspaceRoot: this._workspaceRoot, cacheControl: DEFAULT_CACHE_CONTROL });
 
     const outputInstructions = [
       'Respond with valid JSON matching this schema:',
@@ -1714,6 +1714,7 @@ export class SessionOrchestrator {
         '',
         'Evaluate the draft against the task. Return structured JSON.',
       ].join('\n'),
+      workspaceRoot: this._workspaceRoot,
       cacheControl: DEFAULT_CACHE_CONTROL,
     });
 
@@ -1751,6 +1752,7 @@ export class SessionOrchestrator {
         '',
         'Critique both the draft and the review. Propose alternatives if needed. Return structured JSON.',
       ].join('\n'),
+      workspaceRoot: this._workspaceRoot,
       cacheControl: DEFAULT_CACHE_CONTROL,
     });
 

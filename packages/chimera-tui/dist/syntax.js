@@ -75,6 +75,10 @@ const languageRules = {
     sh: shellRules,
     zsh: shellRules,
 };
+function makeGlobalRegex(pattern) {
+    const flags = pattern.flags.includes('g') ? pattern.flags : `${pattern.flags}g`;
+    return new RegExp(pattern.source, flags);
+}
 export function tokenizeCode(code, lang) {
     if (!code)
         return [];
@@ -85,7 +89,7 @@ export function tokenizeCode(code, lang) {
     const tokens = [];
     const matches = [];
     for (const rule of rules) {
-        const regex = new RegExp(rule.pattern.source, rule.pattern.flags);
+        const regex = makeGlobalRegex(rule.pattern);
         let m;
         while ((m = regex.exec(code)) !== null) {
             matches.push({ start: m.index, end: m.index + m[0].length, color: rule.color });

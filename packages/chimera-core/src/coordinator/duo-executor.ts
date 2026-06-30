@@ -3,7 +3,8 @@ import type { LLMProvider } from '../session-orchestrator.js';
 import type { ModelRegistry, ModelEntry } from '@chimera/providers';
 import type { CostTracker } from '../cost-tracker.js';
 import { ResponseSynthesizer, type SynthesisInput } from '../response-synthesizer.js';
-import { sanitizeWriterOutput } from './output-sanitizer.js';
+import { sanitizeWriterOutput, sanitizeReviewerOutput } from './output-sanitizer.js';
+import { TaskRouter } from '../task-router.js';
 import type {
   DuoConfig,
   DuoContext,
@@ -156,7 +157,7 @@ export class DuoExecutor {
       const sourceB: DuoSource = {
         modelId: config.modelB,
         role: 'reviewer',
-        content: resB.content,
+        content: sanitizeReviewerOutput(resB.content),
         tokens: resB.inputTokens + resB.outputTokens,
         durationMs: resB.durationMs,
       };
@@ -274,10 +275,23 @@ export class DuoExecutor {
   }
 
   private buildPeerPrompt(role: 'writer' | 'reviewer', task: string): string {
+    if (TaskRouter.isConversationalTask(task)) {
+      return `You are a helpful assistant. Answer the following conversational question directly.\n` +
+        `Do NOT produce code, file changes, or technical analysis unless specifically asked.\n` +
+        `Provide a clear, concise, factual answer.\n\nTASK: ${task}\n\nANSWER:`;
+    }
     return `You are the ${role}. Provide a complete answer to the following task. Be specific and concrete.\n\nTASK: ${task}\n\nANSWER:`;
   }
 
   private buildReviewPrompt(task: string, draft: string): string {
+    if (TaskRouter.isConversationalTask(task)) {
+      return `[!] CONVERSATIONAL REVIEW [!]\n` +
+        `This is a conversational/general question, NOT a code task.\n` +
+        `Do NOT apply code-review criteria.\n` +
+        `Evaluate ONLY: factual accuracy, completeness, and clarity.\n` +
+        `Default to PASS unless the answer is factually incorrect.\n\n` +
+        `TASK: ${task}\n\nDRAFT:\n${draft}\n\nIMPROVED ANSWER:`;
+    }
     return `You are the reviewer. Read the following draft answer to the task and identify any issues, hallucinations, or missing parts. Provide an improved version of the answer.\n\nTASK: ${task}\n\nDRAFT:\n${draft}\n\nIMPROVED ANSWER:`;
   }
 

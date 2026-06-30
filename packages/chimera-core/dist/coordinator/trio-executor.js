@@ -4,6 +4,7 @@ exports.TrioExecutor = void 0;
 const response_synthesizer_js_1 = require("../response-synthesizer.js");
 const prompts_js_1 = require("../prompts.js");
 const output_sanitizer_js_1 = require("./output-sanitizer.js");
+const task_router_js_1 = require("../task-router.js");
 /**
  * Multi-stage quality gate: writer → reviewer → [challenger] → synthesize.
  *
@@ -135,7 +136,7 @@ class TrioExecutor {
                 return {
                     modelId: config.reviewer,
                     role: 'reviewer',
-                    content: result.content,
+                    content: (0, output_sanitizer_js_1.sanitizeReviewerOutput)(result.content),
                     inputTokens,
                     outputTokens,
                     durationMs: Date.now() - start,
@@ -206,7 +207,7 @@ class TrioExecutor {
                 reviewStage = {
                     modelId: config.reviewer,
                     role: 'reviewer',
-                    content: reviewResult.content,
+                    content: (0, output_sanitizer_js_1.sanitizeReviewerOutput)(reviewResult.content),
                     inputTokens,
                     outputTokens,
                     durationMs: Date.now() - reviewStart,
@@ -315,6 +316,7 @@ class TrioExecutor {
             status: needsUserEscalation ? 'needs_user' : 'done',
             cost: totalCostUsd,
             agentCount: stages.length,
+            output: finalResponse,
         });
         return {
             output: finalResponse,
@@ -410,9 +412,23 @@ class TrioExecutor {
         return conflictFreeContents.map((i) => i.content.split('\n')[0].slice(0, 200));
     }
     buildDraftPrompt(task) {
-        return `You are a code writer. Complete the following task:\n\n${task}`;
+        const base = `You are a code writer. Complete the following task:\n\n${task}`;
+        if (task_router_js_1.TaskRouter.isConversationalTask(task)) {
+            return `You are a helpful assistant. Answer the following conversational question directly.\n` +
+                `Do NOT produce code, file changes, or technical analysis unless specifically asked.\n` +
+                `Provide a clear, concise, factual answer.\n\n${task}`;
+        }
+        return base;
     }
     buildReviewPrompt(task, draft) {
+        if (task_router_js_1.TaskRouter.isConversationalTask(task)) {
+            return `[!] CONVERSATIONAL REVIEW [!]\n` +
+                `This is a conversational/general question, NOT a code task.\n` +
+                `Do NOT apply code-review criteria (race conditions, input validation, architectural coupling, etc.).\n` +
+                `Evaluate ONLY: factual accuracy, completeness, and clarity.\n` +
+                `Default to PASS unless the answer is factually incorrect.\n\n` +
+                `## Task\n${task}\n\n## Draft\n${draft}`;
+        }
         return `You are a code reviewer. Review the following draft against the task.\n\n## Task\n${task}\n\n## Draft\n${draft}`;
     }
     buildChallengePrompt(task, draft, review) {

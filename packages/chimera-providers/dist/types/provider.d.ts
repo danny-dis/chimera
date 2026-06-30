@@ -49,6 +49,8 @@ export interface CompletionResult {
     toolCalls?: ToolCall[];
     finishReason: string;
     usage: TokenUsage;
+    /** Raw content from the API before any post-processing. Useful for debugging empty responses. */
+    rawContent?: string;
 }
 export interface StreamChunk {
     content?: string;

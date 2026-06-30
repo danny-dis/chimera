@@ -240,7 +240,7 @@ class SessionOrchestrator {
         };
     }
     async execute(params) {
-        const { task, mode, providers, preset, costCap = 10 } = params;
+        const { task, mode, providers, preset, costCap = 10, conversationHistory } = params;
         const outputs = [];
         let totalCost = 0;
         // Single per-execute AbortController. Composed with a 5-minute hard
@@ -406,12 +406,12 @@ class SessionOrchestrator {
             }
             // --- Inline fallback (backward-compatible) ---
             this.transition({ status: 'planning', task, complexity });
-            const needsVerification = this.shouldVerify(resolvedMode, complexity);
+            const needsVerification = this.shouldVerify(resolvedMode, complexity, task);
             const writerId = nextAgentId();
             this.transition({ status: 'drafting', task, agentId: writerId });
             this.agentMesh.registerAgent(this.buildAgentConfig(writerId, 'writer', costCap));
             const toolDefs = this.buildToolDefinitions();
-            const writerMessages = this.buildWriterPrompt(task, resolvedMode);
+            const writerMessages = this.buildWriterPrompt(task, resolvedMode, conversationHistory);
             const budgetCheck = this.checkBudget(8192);
             if (budgetCheck && budgetCheck.action === 'stop') {
                 this.eventStream.append({
@@ -549,7 +549,7 @@ class SessionOrchestrator {
             outputs.push({
                 agentId: reviewerId,
                 role: 'reviewer',
-                content: reviewResult.content,
+                content: (0, output_sanitizer_js_1.sanitizeReviewerOutput)(reviewResult.content),
                 confidence: reviewParsed.confidence ?? 0.5,
                 provider: 'llm',
                 model: 'default',
@@ -967,11 +967,12 @@ class SessionOrchestrator {
      * summary suitable for use as an agent's `content` field.
      */
     buildReviewerSummary(verdict, findings, _thought) {
-        const verdictLine = `Reviewer verdict: ${verdict}`;
+        if (verdict === 'PASS')
+            return '';
         if (findings.length === 0)
-            return `${verdictLine}. No issues found.`;
+            return '';
         const lines = findings.map((f) => `- [${f.severity.toUpperCase()}] ${f.description}`);
-        return `${verdictLine}.\nFindings:\n${lines.join('\n')}`;
+        return `Review findings:\n${lines.join('\n')}`;
     }
     /**
      * P0.7 — Apply relay-racing observation masking before the next LLM
@@ -1037,7 +1038,7 @@ class SessionOrchestrator {
             outputs.push({
                 agentId: reviewerId,
                 role: 'reviewer',
-                content: result.content,
+                content: (0, output_sanitizer_js_1.sanitizeReviewerOutput)(result.content),
                 confidence: parsed.confidence ?? 0.5,
                 provider: 'llm',
                 model: 'default',
@@ -1184,23 +1185,52 @@ class SessionOrchestrator {
             },
         });
     }
-    shouldVerify(mode, complexity) {
+    shouldVerify(mode, complexity, task) {
+        if (task && task_router_js_1.TaskRouter.isConversationalTask(task))
+            return false;
         if (mode === 'ask' && complexity.overall < 0.4)
             return false;
         return true;
     }
-    buildWriterPrompt(task, mode) {
-        const messages = (0, prompts_js_1.buildMessages)({ role: 'writer', mode, task, cacheControl: DEFAULT_CACHE_CONTROL });
+    buildWriterPrompt(task, mode, conversationHistory) {
+        const messages = (0, prompts_js_1.buildMessages)({ role: 'writer', mode, task, workspaceRoot: this._workspaceRoot, cacheControl: DEFAULT_CACHE_CONTROL });
         const outputInstructions = [
             'Respond with valid JSON matching this schema:',
             '{"thought": string, "response": string, "confidence": number 0-1, "filesChanged": string[], "issues": string[], "rationale": string}',
             'The "thought" field must contain your comprehensive Chain-of-Thought reasoning.',
-            'The "response" field contains your main output.',
+            'The "response" field contains your main output — this is what the user sees.',
             'The "confidence" field is how confident you are (0 = guessing, 1 = certain).',
             'The "filesChanged" field lists any files referenced or modified.',
             'The "rationale" field explains why you chose this approach.',
+            '',
+            'CRITICAL: For conversational questions (e.g., "what can you do?", "who are you?", "how do I use X?"),',
+            'answer directly in the "response" field. Do NOT put analysis, meta-reasoning, or internal',
+            'assessment of other agents in the response field. The response field is the user-facing answer.',
+            'Analysis like "The original writer draft was empty..." or "The reviewer identified..." belongs',
+            'in "thought" only, NEVER in "response".',
         ].join('\n');
         messages.splice(1, 0, { role: 'system', content: outputInstructions });
+        // Insert conversation history between output instructions and current task
+        if (conversationHistory && conversationHistory.length > 0) {
+            const MAX_HISTORY_TURNS = 10;
+            const MAX_HISTORY_CHARS = 32000;
+            let historyMessages = conversationHistory.slice(-MAX_HISTORY_TURNS * 2);
+            let totalChars = historyMessages.reduce((sum, m) => sum + m.content.length, 0);
+            while (totalChars > MAX_HISTORY_CHARS && historyMessages.length > 2) {
+                const removed = historyMessages.shift();
+                totalChars -= removed.content.length;
+            }
+            const historyBlock = [
+                '--- PREVIOUS CONVERSATION CONTEXT ---',
+                'Use this context to understand what the user has been discussing.',
+                'Do NOT repeat information already provided. Build on previous answers.',
+                ...historyMessages.map(m => `[${m.role === 'user' ? 'User' : 'Assistant'}]: ${m.content.slice(0, 500)}`),
+                '--- END PREVIOUS CONVERSATION ---',
+                '',
+            ].join('\n');
+            // Insert before the last message (which is the current task)
+            messages.splice(messages.length - 1, 0, { role: 'user', content: historyBlock });
+        }
         return messages;
     }
     buildReviewerPrompt(task, draft, mode) {
@@ -1213,14 +1243,18 @@ class SessionOrchestrator {
                 '',
                 'Evaluate the draft against the task. Return structured JSON.',
             ].join('\n'),
+            workspaceRoot: this._workspaceRoot,
             cacheControl: DEFAULT_CACHE_CONTROL,
         });
         const outputInstructions = [
             'Respond with valid JSON matching this schema:',
             '{"thought": string, "verdict": "PASS" | "FAIL" | "NEEDS_REVISION", "confidence": number 0-1, "findings": Array<{description: string, severity: "high"|"med"|"low", evidence: string}>}',
             'The "thought" field must contain your detailed reasoning and adversarial critique.',
-        ].join('\n');
-        messages.splice(1, 0, { role: 'system', content: outputInstructions });
+        ];
+        if (task_router_js_1.TaskRouter.isConversationalTask(task)) {
+            outputInstructions.push('', 'IMPORTANT: This is a conversational/general question, not a code task.', 'Do NOT apply code-review criteria. Evaluate only: accuracy, completeness, clarity.', 'Default to PASS unless the answer is factually incorrect.');
+        }
+        messages.splice(1, 0, { role: 'system', content: outputInstructions.join('\n') });
         return messages;
     }
     buildChallengerPrompt(task, draft, review) {
@@ -1234,6 +1268,7 @@ class SessionOrchestrator {
                 '',
                 'Critique both the draft and the review. Propose alternatives if needed. Return structured JSON.',
             ].join('\n'),
+            workspaceRoot: this._workspaceRoot,
             cacheControl: DEFAULT_CACHE_CONTROL,
         });
         const outputInstructions = [

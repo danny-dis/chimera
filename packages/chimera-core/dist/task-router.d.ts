@@ -13,6 +13,7 @@ export declare class TaskRouter {
     classifyTaskHeuristic(task: string): ComplexityScore;
     private scoreKeyword;
     private estimateCost;
+    static isConversationalTask(task: string): boolean;
     suggestMode(task: string, complexity: ComplexityScore): Mode;
     selectProvider(_complexity: ComplexityScore, role: string): AgentConfig | null;
     private getModelTier;

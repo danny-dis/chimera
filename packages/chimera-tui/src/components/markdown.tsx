@@ -311,7 +311,7 @@ interface MarkdownProps {
 export const Markdown: React.FC<MarkdownProps> = ({ content }) => {
   const tokens = tokenize(content);
   return (
-    <Box flexDirection="column">
+    <Box flexDirection="column" width="100%">
       {tokens.map((token, i) => (
         <BlockTokenRenderer key={i} token={token} />
       ))}

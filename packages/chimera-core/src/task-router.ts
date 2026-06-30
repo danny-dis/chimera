@@ -129,6 +129,44 @@ Return: {"overall": <0-1>, "dimensions": {"codeVolume": <0-1>, ...}}`,
     return complexity * 5;
   }
 
+  static isConversationalTask(task: string): boolean {
+    const lower = task.toLowerCase().replace(/[,;!]+$/g, '').trim();
+
+    const conversationalPatterns = [
+      /^(hello|hi|hey|howdy|greetings|sup|yo|retry|again|repeat)\b/,
+      /^(who|what|where|when|why|how)\s+(are|r|is|do|does|did|can|could|would|should|will|shall)\b/,
+      /^(tell me about|tell me what|tell me how|tell me why|tell me if)\b/,
+      /^(describe|explain|summarize|study|analyze|analyse|examine|inspect|look at|look into|tell me)\b/,
+      /^(what do you|what can you|what are you)\b/,
+      /^(can you|could you|would you)\b/,
+      /^(thanks|thank you|please|help)\b/,
+      /^(is there|are there|does|do)\s+\w+\b/,
+    ];
+
+    const hasConversationalOpener = conversationalPatterns.some((p) => p.test(lower));
+
+    const codeSignals = [
+      'fix', 'error', 'bug', 'failing', 'broken', 'crash', 'exception',
+      'implement', 'create', 'build', 'add', 'write', 'develop', 'refactor',
+      'migrate', 'integrate', 'setup', 'configure', 'deploy', 'commit',
+      'push', 'merge', 'rebase', 'test', 'lint', 'format', 'debug',
+      'review', 'audit', 'critique', 'evaluate', 'assess',
+      'plan', 'design', 'strategy', 'approach',
+      'the answer', 'code', 'function', 'class', 'module', 'file',
+    ];
+    const hasCodeSignal = codeSignals.some((s) => lower.includes(s));
+
+    if (hasConversationalOpener && !hasCodeSignal) return true;
+
+    if (hasCodeSignal) return false;
+
+    const informationalVerbs = ['study', 'analyze', 'analyse', 'examine', 'inspect', 'look at', 'look into', 'tell me', 'what is', 'what are', 'describe', 'explain'];
+    const hasInformationalVerb = informationalVerbs.some((v) => lower.includes(v));
+    if (hasInformationalVerb) return true;
+
+    return false;
+  }
+
   suggestMode(task: string, complexity: ComplexityScore): Mode {
     const lower = task.toLowerCase();
 

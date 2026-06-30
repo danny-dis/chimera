@@ -2,6 +2,7 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.DuoExecutor = void 0;
 const output_sanitizer_js_1 = require("./output-sanitizer.js");
+const task_router_js_1 = require("../task-router.js");
 /**
  * Two-model sequential deliberation with **deterministic** synthesis.
  *
@@ -99,7 +100,7 @@ class DuoExecutor {
             const sourceB = {
                 modelId: config.modelB,
                 role: 'reviewer',
-                content: resB.content,
+                content: (0, output_sanitizer_js_1.sanitizeReviewerOutput)(resB.content),
                 tokens: resB.inputTokens + resB.outputTokens,
                 durationMs: resB.durationMs,
             };
@@ -192,9 +193,22 @@ class DuoExecutor {
         return conflictFreeContents.map((i) => i.content.split('\n')[0].slice(0, 200));
     }
     buildPeerPrompt(role, task) {
+        if (task_router_js_1.TaskRouter.isConversationalTask(task)) {
+            return `You are a helpful assistant. Answer the following conversational question directly.\n` +
+                `Do NOT produce code, file changes, or technical analysis unless specifically asked.\n` +
+                `Provide a clear, concise, factual answer.\n\nTASK: ${task}\n\nANSWER:`;
+        }
         return `You are the ${role}. Provide a complete answer to the following task. Be specific and concrete.\n\nTASK: ${task}\n\nANSWER:`;
     }
     buildReviewPrompt(task, draft) {
+        if (task_router_js_1.TaskRouter.isConversationalTask(task)) {
+            return `[!] CONVERSATIONAL REVIEW [!]\n` +
+                `This is a conversational/general question, NOT a code task.\n` +
+                `Do NOT apply code-review criteria.\n` +
+                `Evaluate ONLY: factual accuracy, completeness, and clarity.\n` +
+                `Default to PASS unless the answer is factually incorrect.\n\n` +
+                `TASK: ${task}\n\nDRAFT:\n${draft}\n\nIMPROVED ANSWER:`;
+        }
         return `You are the reviewer. Read the following draft answer to the task and identify any issues, hallucinations, or missing parts. Provide an improved version of the answer.\n\nTASK: ${task}\n\nDRAFT:\n${draft}\n\nIMPROVED ANSWER:`;
     }
     runLinter(content) {

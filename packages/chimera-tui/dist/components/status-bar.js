@@ -27,12 +27,17 @@ const Clock = () => {
     return React.createElement(Text, { dimColor: true }, time);
 };
 // ── Component ────────────────────────────────────────────────────────────
-export const StatusBar = ({ mode, costData, agents, activeTool, sidebarVisible = false, }) => {
+export const StatusBar = ({ mode, costData, agents, activeTool, sidebarVisible = false, workingDir, }) => {
     const ratio = costData.budget > 0 ? costData.currentCost / costData.budget : 0;
     const costColor = budgetColor(ratio);
+    const projectName = workingDir
+        ? workingDir.split(/[/\\]/).filter(Boolean).pop() ?? 'CHIMERA'
+        : 'CHIMERA';
     return (React.createElement(Box, { borderStyle: "single", borderColor: zen.border, paddingX: 1, justifyContent: "space-between" },
         React.createElement(Box, { marginRight: 1 },
-            React.createElement(Text, { bold: true, color: zen.info }, "CHIMERA "),
+            React.createElement(Text, { bold: true, color: zen.info },
+                projectName,
+                " "),
             React.createElement(Text, { dimColor: true }, "v0.0.1"),
             React.createElement(Text, null, " "),
             React.createElement(Text, { color: zen.accent, bold: true }, mode)),

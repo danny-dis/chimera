@@ -1,16 +1,31 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { render } from 'ink';
 import { TUI } from './tui.js';
 export * from './types.js';
 export { TUI };
 export { runCommand, autocompleteCommand, HELP_TEXT } from './commands/commands.js';
+const TUIBridge = ({ initial, latestRef, onReady }) => {
+    const [props, setProps] = useState(initial);
+    latestRef.current = props;
+    React.useEffect(() => {
+        onReady(setProps);
+    }, []);
+    return React.createElement(TUI, props);
+};
 export function runTUI(props) {
-    const { rerender, waitUntilExit, cleanup } = render(React.createElement(TUI, props), {
-        exitOnCtrlC: false,
-    });
+    const setterRef = { current: null };
+    const latestRef = { current: props };
+    const { waitUntilExit, cleanup } = render(React.createElement(TUIBridge, {
+        initial: props,
+        latestRef,
+        onReady: (set) => { setterRef.current = set; },
+    }), { exitOnCtrlC: false });
     return {
         update: (newProps) => {
-            rerender(React.createElement(TUI, { ...props, ...newProps }));
+            const merged = { ...latestRef.current, ...newProps };
+            if (setterRef.current) {
+                setterRef.current(merged);
+            }
         },
         waitUntilExit,
         cleanup,

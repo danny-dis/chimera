@@ -2,7 +2,8 @@ import { EventStream } from '../event-stream.js';
 import type { ModelRegistry, ModelEntry } from '@chimera/providers';
 import type { CostTracker } from '../cost-tracker.js';
 import { ResponseSynthesizer, type SynthesisInput } from '../response-synthesizer.js';
-import { sanitizeWriterOutput } from './output-sanitizer.js';
+import { sanitizeWriterOutput, sanitizeReviewerOutput } from './output-sanitizer.js';
+import { TaskRouter } from '../task-router.js';
 import type {
   SoloConfig,
   SoloContext,
@@ -143,7 +144,7 @@ export class SoloExecutor {
     let reviewContent: string;
     try {
       const res = await this.callPeer('reviewer', config.model, task, config, providerFactory, draftContent);
-      reviewContent = res.content;
+      reviewContent = sanitizeReviewerOutput(res.content);
       totalTokens += res.inputTokens + res.outputTokens;
       const cost = this.computeCost(config.model, res.inputTokens, res.outputTokens);
       totalCostUsd += cost;
@@ -154,10 +155,10 @@ export class SoloExecutor {
     }
 
     // ── Synthesis ─────────────────────────────────────────────────────
-    // For Solo mode, we treat the 'reviewer' as the improved version.
-    // We return it directly as the output, while keeping the 5-field
-    // analysis for consistency.
-    const finalResponse = reviewContent;
+    // The reviewer may produce meta-analysis (verdict/findings) rather
+    // than a user-facing answer. Pick whichever response is actually
+    // useful to the user.
+    const finalResponse = this.chooseBestResponse(draftContent, reviewContent);
 
     const analysis: Partial<SoloAnalysis> = {
       thought,
@@ -201,15 +202,21 @@ export class SoloExecutor {
         prompt = this.buildThinkPrompt(task);
         break;
       case 'writer':
-        prompt = this.buildDraftPrompt(task, thought);
+        prompt = this.buildDraftPrompt(task, thought, config.isConversational);
         break;
       case 'reviewer':
-        prompt = this.buildReviewPrompt(task, draft!);
+        prompt = this.buildReviewPrompt(task, draft!, config.isConversational);
         break;
     }
 
+    const messages: Array<{ role: 'system' | 'user'; content: string }> = [];
+    if (config.systemPrompt) {
+      messages.push({ role: 'system', content: config.systemPrompt });
+    }
+    messages.push({ role: 'user', content: prompt });
+
     const r = await provider.complete(
-      [{ role: 'user', content: prompt }],
+      messages,
       { temperature: config.temperature, maxTokens: config.maxCompletionTokens }
     );
     return {
@@ -224,13 +231,33 @@ export class SoloExecutor {
     return `You are a strategic thinker. Analyze the following task and plan your approach. Identify potential pitfalls and best practices. Do not provide the final answer yet, just your reasoning process.\n\nTASK: ${task}\n\nTHOUGHT:`;
   }
 
-  private buildDraftPrompt(task: string, thought?: string): string {
+  private buildDraftPrompt(task: string, thought?: string, isConversational?: boolean): string {
+    if (TaskRouter.isConversationalTask(task) || isConversational) {
+      return `You are a helpful assistant. Answer the following question directly and thoroughly.\n` +
+        `Do NOT produce code, file changes, or technical analysis unless specifically asked.\n` +
+        `Provide a clear, concise, factual answer based on what you know or can observe.\n` +
+        `If the question asks about a project or codebase, look at the files and describe what you find.\n\n` +
+        `TASK: ${task}\n\nANSWER:`;
+    }
     const thoughtPrefix = thought ? `STRATEGIC PLAN:\n${thought}\n\n` : '';
     return `You are the writer. Provide a complete answer to the following task. ${thought ? 'Follow the strategic plan provided.' : 'Be specific and concrete.'}\n\n${thoughtPrefix}TASK: ${task}\n\nANSWER:`;
   }
 
-  private buildReviewPrompt(task: string, draft: string): string {
-    return `You are the reviewer. Read the following draft answer to the task and identify any issues, hallucinations, or missing parts. Provide an improved version of the answer.\n\nTASK: ${task}\n\nDRAFT:\n${draft}\n\nIMPROVED ANSWER:`;
+  private buildReviewPrompt(task: string, draft: string, isConversational?: boolean): string {
+    if (TaskRouter.isConversationalTask(task) || isConversational) {
+      return `[!] CONVERSATIONAL REVIEW [!]\n` +
+        `This is a conversational/general question, NOT a code task.\n` +
+        `Do NOT apply code-review criteria.\n` +
+        `Evaluate ONLY: factual accuracy, completeness, and clarity.\n` +
+        `Default to PASS unless the answer is factually incorrect.\n\n` +
+        `IMPORTANT: If the draft is accurate and complete, return it as-is or with minor improvements.\n` +
+        `Do NOT produce a JSON verdict with findings. Instead, provide an improved version of the answer.\n\n` +
+        `TASK: ${task}\n\nDRAFT:\n${draft}\n\nIMPROVED ANSWER:`;
+    }
+    return `You are the reviewer. Read the following draft answer to the task and identify any issues, hallucinations, or missing parts. Provide an improved version of the answer.\n\n` +
+      `IMPORTANT: Do NOT produce a JSON verdict with findings. Instead, provide an improved version of the answer.\n` +
+      `If the draft is correct, return it with minor improvements. Only flag issues if the answer is factually wrong or incomplete.\n\n` +
+      `TASK: ${task}\n\nDRAFT:\n${draft}\n\nIMPROVED ANSWER:`;
   }
 
   private finalizeSolo(
@@ -284,6 +311,34 @@ export class SoloExecutor {
 
   private safeEmit(event: unknown): void {
     try { this.eventStream.append(event as Parameters<EventStream['append']>[0]); } catch { /* schema mismatch — ignore */ }
+  }
+
+  /**
+   * Pick the response most useful to the user. The reviewer may produce
+   * meta-analysis ("Reviewer verdict: PASS") rather than an actual
+   * answer. In that case, fall back to the writer's draft.
+   */
+  private chooseBestResponse(draft: string, review: string): string {
+    if (!review || review.trim().length === 0) return draft;
+    if (!draft || draft.trim().length === 0) return review;
+
+    const reviewLower = review.trim().toLowerCase();
+    const isMetaAnalysis =
+      reviewLower.startsWith('reviewer verdict') ||
+      reviewLower.startsWith('verdict:') ||
+      reviewLower.startsWith('findings:') ||
+      reviewLower.startsWith('review findings:') ||
+      reviewLower.startsWith('- [high]') ||
+      reviewLower.startsWith('- [med]') ||
+      reviewLower.startsWith('- [low]');
+
+    if (isMetaAnalysis && draft.trim().length > 20) return draft;
+
+    if (isMetaAnalysis && draft.trim().length <= 20) {
+      return draft.trim().length > 0 ? draft : '';
+    }
+
+    return review;
   }
 
   private degraded(

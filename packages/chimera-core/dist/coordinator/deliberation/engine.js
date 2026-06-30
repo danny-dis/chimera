@@ -26,6 +26,8 @@ const task_decomposer_js_1 = require("../task-decomposer.js");
 const sub_agent_spawner_js_1 = require("../sub-agent-spawner.js");
 const llm_router_js_1 = require("../llm-router.js");
 const preset_router_js_1 = require("./preset-router.js");
+const task_router_js_1 = require("../../task-router.js");
+const prompts_js_1 = require("../../prompts.js");
 class DeliberationEngine {
     deps;
     constructor(deps) {
@@ -68,6 +70,7 @@ class DeliberationEngine {
             registry: this.deps.registry,
             ...(this.deps.costTracker ? { costTracker: this.deps.costTracker } : {}),
         });
+        const isConversational = task_router_js_1.TaskRouter.isConversationalTask(cfg.task);
         const soloConfig = {
             model: cfg.model,
             ...(cfg.temperature !== undefined ? { temperature: cfg.temperature } : {}),
@@ -80,6 +83,8 @@ class DeliberationEngine {
                 ? { reasoning: cfg.reasoning }
                 : {}),
             ...(cfg.eternalCoT !== undefined ? { eternalCoT: cfg.eternalCoT } : {}),
+            systemPrompt: prompts_js_1.CHIMERA_CORE_IDENTITY,
+            isConversational,
         };
         // Auto-CoT: enable thinker if complexity is high or no router available (safe default)
         // eternalCoT: true overrides to always-on, eternalCoT: false overrides to always-off

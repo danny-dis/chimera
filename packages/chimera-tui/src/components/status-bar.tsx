@@ -52,6 +52,7 @@ interface StatusBarProps {
   agents: Agent[];
   activeTool?: ToolActivity;
   sidebarVisible?: boolean;
+  workingDir?: string;
 }
 
 // ── Component ────────────────────────────────────────────────────────────
@@ -62,15 +63,20 @@ export const StatusBar: React.FC<StatusBarProps> = ({
   agents,
   activeTool,
   sidebarVisible = false,
+  workingDir,
 }) => {
   const ratio = costData.budget > 0 ? costData.currentCost / costData.budget : 0;
   const costColor = budgetColor(ratio);
+
+  const projectName = workingDir
+    ? workingDir.split(/[/\\]/).filter(Boolean).pop() ?? 'CHIMERA'
+    : 'CHIMERA';
 
   return (
     <Box borderStyle="single" borderColor={zen.border} paddingX={1} justifyContent="space-between">
       {/* Brand + mode */}
       <Box marginRight={1}>
-        <Text bold color={zen.info}>CHIMERA </Text>
+        <Text bold color={zen.info}>{projectName} </Text>
         <Text dimColor>v0.0.1</Text>
         <Text> </Text>
         <Text color={zen.accent} bold>{mode}</Text>

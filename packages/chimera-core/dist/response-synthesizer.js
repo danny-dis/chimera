@@ -163,11 +163,52 @@ class ResponseSynthesizer {
         return base + '\n\n[!] #CRITICAL QUALITY ADVISORY# [!]\n>>> SOURCE: SENIOR REVIEWER <<<\n' + highIssues.map((i) => `- [!] ${i.description}`).join('\n');
     }
     buildNoConflictResponse(inputs) {
-        const base = [...inputs].sort((a, b) => b.confidence - a.confidence)[0];
+        const sorted = [...inputs].sort((a, b) => b.confidence - a.confidence);
+        const base = sorted[0];
+        if (this.isAnalysisText(base.content)) {
+            const fallback = sorted.find((i) => !this.isAnalysisText(i.content) && i.content.trim().length > 0);
+            if (fallback)
+                return fallback.content;
+            return '';
+        }
         return base.content;
     }
+    isAnalysisText(text) {
+        const trimmed = text.trim();
+        if (trimmed.length === 0)
+            return false;
+        const analysisPatterns = [
+            /The original writer draft was empty/i,
+            /critical failure to initiate/i,
+            /The reviewer.*correctly identified/i,
+            /proposed a passive/i,
+            /violating core system rules/i,
+            /severity rating.*underestimated/i,
+            /A superior approach is to/i,
+            /prioritizes understanding/i,
+            /avoids unnecessary information overhead/i,
+            /meta-analysis/i,
+            /internal assessment/i,
+            /analysis of.*agents/i,
+            /writer.*draft.*empty/i,
+            /reviewer.*verdict.*correctly/i,
+            /challenger.*identified/i,
+            /The writer.*produced/i,
+            /The reviewer.*found/i,
+            /The challenger.*suggested/i,
+            /this is a critical/i,
+            /which is a critical/i,
+        ];
+        return analysisPatterns.some((p) => p.test(trimmed));
+    }
     buildResolvedResponse(inputs, conflicts) {
-        const base = [...inputs].sort((a, b) => b.confidence - a.confidence)[0];
+        const sorted = [...inputs].sort((a, b) => b.confidence - a.confidence);
+        let base = sorted[0];
+        if (this.isAnalysisText(base.content)) {
+            const fallback = sorted.find((i) => !this.isAnalysisText(i.content) && i.content.trim().length > 0);
+            if (fallback)
+                base = fallback;
+        }
         const notes = conflicts
             .filter((c) => c.resolvedBy !== 'user_escalation')
             .map((c) => `[!] #RESOLVED: ${c.description.toUpperCase()}#\n>>> ACTION: ${c.resolution.toUpperCase()}`);

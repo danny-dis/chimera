@@ -25,6 +25,8 @@ export interface OpenAICompatibleOptions {
   modelInfo?: Partial<ModelInfo>;
   headers?: Record<string, string>;
   timeoutMs?: number;
+  /** Whether the upstream provider supports response_format: json_object. Defaults to true for OpenAI, false for others. */
+  supportsResponseFormat?: boolean;
 }
 
 export interface OpenAICompatibleConfig {
@@ -225,6 +227,7 @@ export class OpenAICompatibleProvider implements ModelProvider {
   private readonly modelInfo: ModelInfo;
   private readonly headers: Record<string, string>;
   private readonly timeoutMs: number;
+  private readonly supportsResponseFormat: boolean;
 
   constructor(config: OpenAICompatibleConfig) {
     this.baseUrl = config.baseUrl.replace(/\/+$/, '');
@@ -249,6 +252,15 @@ export class OpenAICompatibleProvider implements ModelProvider {
       Authorization: `Bearer ${this.apiKey}`,
       ...config.options?.headers,
     };
+
+    // Detect response_format support: OpenAI supports it, others may not.
+    // Allow explicit override via options.
+    if (config.options?.supportsResponseFormat !== undefined) {
+      this.supportsResponseFormat = config.options.supportsResponseFormat;
+    } else {
+      const hostname = new URL(config.baseUrl).hostname;
+      this.supportsResponseFormat = hostname.includes('openai.com');
+    }
   }
 
   async complete(prompt: Message[], options?: CompletionOptions): Promise<CompletionResult> {
@@ -272,7 +284,7 @@ export class OpenAICompatibleProvider implements ModelProvider {
     if (options?.stopSequences?.length) body.stop = options.stopSequences;
     if (options?.tools?.length) body.tools = mapTools(options.tools);
     if (options?.toolChoice) body.tool_choice = mapToolChoice(options.toolChoice);
-    if (options?.responseFormat) {
+    if (options?.responseFormat && this.supportsResponseFormat) {
       body.response_format = { type: options.responseFormat };
     }
 
@@ -288,7 +300,14 @@ export class OpenAICompatibleProvider implements ModelProvider {
     }
 
     const json = (await response.json()) as Record<string, unknown>;
-    return parseCompletionResult(json);
+    const result = parseCompletionResult(json);
+    if (!result.content && (!result.toolCalls || result.toolCalls.length === 0)) {
+      throw new ProviderError(
+        `Model "${this.model}" returned empty content with no tool calls. This may indicate a content filter, rate limit, or provider issue.`,
+        this.modelInfo.provider,
+      );
+    }
+    return { ...result, rawContent: result.content };
   }
 
   async *stream(prompt: Message[], options?: CompletionOptions): AsyncIterable<StreamChunk> {
@@ -313,7 +332,7 @@ export class OpenAICompatibleProvider implements ModelProvider {
     if (options?.stopSequences?.length) body.stop = options.stopSequences;
     if (options?.tools?.length) body.tools = mapTools(options.tools);
     if (options?.toolChoice) body.tool_choice = mapToolChoice(options.toolChoice);
-    if (options?.responseFormat) {
+    if (options?.responseFormat && this.supportsResponseFormat) {
       body.response_format = { type: options.responseFormat };
     }
 

@@ -7,6 +7,11 @@ export declare class CliRouter {
     private learningEngine;
     constructor();
     private initOrchestrator;
+    private buildProviderFromEntry;
+    /**
+     * Return providers mapped by role. Falls back to flat-array for backward compat.
+     */
+    private getRoleMappedProviders;
     private getProviders;
     private run;
     private printResult;

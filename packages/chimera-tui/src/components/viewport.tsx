@@ -96,11 +96,11 @@ export function Viewport<T>({
   const visibleItems = items.slice(scrollOffset, scrollOffset + height);
 
   return (
-    <Box flexDirection="column" height={height} overflow="hidden">
+    <Box flexDirection="column" height={height} overflow="hidden" width="100%">
       {visibleItems.map((item, index) => {
         const actualIndex = scrollOffset + index;
         return (
-          <Box key={actualIndex}>
+          <Box key={actualIndex} width="100%">
             {renderItem(item, actualIndex, actualIndex === selectedIndex)}
           </Box>
         );

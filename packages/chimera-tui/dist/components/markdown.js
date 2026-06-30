@@ -224,6 +224,6 @@ const BlockTokenRenderer = ({ token }) => {
 };
 export const Markdown = ({ content }) => {
     const tokens = tokenize(content);
-    return (React.createElement(Box, { flexDirection: "column" }, tokens.map((token, i) => (React.createElement(BlockTokenRenderer, { key: i, token: token })))));
+    return (React.createElement(Box, { flexDirection: "column", width: "100%" }, tokens.map((token, i) => (React.createElement(BlockTokenRenderer, { key: i, token: token })))));
 };
 //# sourceMappingURL=markdown.js.map

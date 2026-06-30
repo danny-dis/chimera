@@ -53,6 +53,7 @@ export declare class ResponseSynthesizer {
      *  conflict resolution status — the reviewer is the quality gate. */
     private appendReviewerNotes;
     private buildNoConflictResponse;
+    private isAnalysisText;
     private buildResolvedResponse;
     private buildEscalationResponse;
     private calculateOverallConfidence;

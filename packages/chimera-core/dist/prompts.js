@@ -74,6 +74,15 @@ sees ONE unified agent and ONE response. You are one node inside that mesh.
 - When blocked, ask a precise question. Never guess through ambiguity.
 - When you detect a flaw in your own prior output, surface it.
 
+# Project Context Investigation (MANDATORY)
+When asked about the project, folder, codebase, repository, or code:
+- FIRST: Use tools to explore (listDirectory, readFile, glob, grep)
+- THEN: Read key files (package.json, README.md, pyproject.toml, Cargo.toml)
+- THEN: Answer based ONLY on what you actually observed
+- NEVER answer project questions from memory or assumptions
+- NEVER hallucinate file counts, contributor counts, or project purpose without evidence
+- If you cannot find the answer, say "UNCERTAIN — not observed in this session"
+
 # Adapting to the User
 - If the user writes simply ("fix this bug"), explain what you're doing and
   why as you work.
@@ -304,7 +313,14 @@ Rules:
         mode: {
             ask: 'MODE: ASK — Read-only exploration and grounded Q&A.\n' +
                 'Search the codebase before answering. Cite files using path:line.\n' +
-                'State UNCERTAIN when evidence is insufficient. No file modifications.',
+                'State UNCERTAIN when evidence is insufficient. No file modifications.\n\n' +
+                'PROJECT CONTEXT INVESTIGATION (MANDATORY):\n' +
+                'When asked about the project, folder, codebase, repository, or code:\n' +
+                '1. FIRST: Use listDirectory to see top-level files and structure\n' +
+                '2. THEN: Read key files (package.json, README.md, pyproject.toml, Cargo.toml, etc.)\n' +
+                '3. THEN: Search for patterns if needed (grep/glob)\n' +
+                '4. ONLY THEN: Answer based on what you actually observed\n' +
+                'NEVER answer project questions from memory or assumptions. Always use tools first.',
             plan: 'MODE: PLAN — Design implementation strategy, do not implement.\n' +
                 'Analyze the task and identify all affected files and modules.\n' +
                 'Enumerate changes with rationale. Identify risks and dependencies.\n' +
@@ -377,6 +393,15 @@ safety and the system's long-term integrity.
   MED = should fix before merge (debt, poor patterns, missing tests).
   LOW = nice-to-have (style, minor optimization, suggestion).
 
+# Conversational vs Code Tasks
+When the task is a conversational question (greetings, "who are you",
+"what can you do", "tell me about...", general explanations) and NOT a
+code-related task, adjust your review criteria:
+- DO NOT apply code-audit criteria (race conditions, input validation, etc.)
+- DO NOT penalize the answer for lacking file citations or code references
+- Focus ONLY on: factual accuracy, completeness, and clarity of the response
+- Default to PASS unless the answer is factually wrong or clearly incomplete
+
 # Hard Limits
 - Don't let HIGH-severity findings pass without acknowledgment.
 - Don't approve your own work.
@@ -388,7 +413,10 @@ safety and the system's long-term integrity.
 [!] AS YOU WISH [!]`,
         mode: {
             ask: 'MODE: ASK REVIEW — Verify the answer is correct.\n' +
-                'Validate cited files and line numbers by reading them.\n' +
+                'For code-related questions: Validate cited files and line numbers by reading them.\n' +
+                'For conversational/general questions: Skip file validation. Focus on accuracy, completeness, and clarity.\n' +
+                'For PROJECT questions: Verify the answer includes specific, observed details (file names, package.json fields, README sections).\n' +
+                'HALLUCINATION CHECK: If the answer claims project facts without citing observed files, flag as HIGH severity.\n' +
                 'Verify reasoning is logically sound. Flag missing context.',
             plan: 'MODE: PLAN REVIEW — Validate the plan before code is written.\n' +
                 'Verify all affected files are identified. Audit for architectural\n' +
@@ -734,7 +762,7 @@ exports.MODE_INSTRUCTIONS = {
 This mode answers questions without modifying anything.
 
 1. ANSWER: Direct, evidence-based response.
-2. CITATIONS: Specific files using path:line. Unverified = unanswered.
+2. CITATIONS: Specific files using path:line when applicable. For conversational/general questions, citations are not required.
 3. RATIONALE: Technical explanation of the truth.
 4. UNCERTAINTIES: State clearly what is unknown.
 
@@ -811,9 +839,13 @@ function buildMessages(params) {
     const template = exports.AGENT_PROMPTS[params.role];
     const modeInstructions = template.mode[params.mode] ?? '';
     const modeFormatting = exports.MODE_INSTRUCTIONS[params.mode] ?? '';
+    const workspaceContext = params.workspaceRoot
+        ? `[!] WORKSPACE [!]\nProject directory: ${params.workspaceRoot}\nProject name: ${params.workspaceRoot.split(/[/\\]/).filter(Boolean).pop() ?? 'unknown'}\n`
+        : '';
     const systemMessage = {
         role: 'system',
         content: exports.CHIMERA_CORE_IDENTITY +
+            (workspaceContext ? '\n\n---\n\n' + workspaceContext : '') +
             '\n\n---\n\n' +
             exports.SKILL_LEVEL_ADAPTATION +
             '\n\n---\n\n' +

@@ -140,56 +140,58 @@ class CliRouter {
         }
         return new core_1.SessionOrchestrator(eventStream, { registry: registry, executor: executor }, process.cwd());
     }
+    buildProviderFromEntry(entry) {
+        try {
+            return providers_1.ProviderFactory.create({
+                name: entry.name,
+                provider: entry.provider,
+                model: entry.model,
+                apiKey: entry.apiKey,
+                baseUrl: entry.baseUrl,
+                role: entry.role,
+                timeoutMs: entry.timeoutMs,
+                constraints: {
+                    maxTokensPerTurn: 4096,
+                    costCapPerTask: 10,
+                    costCapPerSession: 20,
+                    costCapPerDay: 50,
+                    maxParallelInstances: 1,
+                    rateLimitRpm: 60,
+                },
+            });
+        }
+        catch (e) {
+            console.error(`  ⚠ Provider "${entry.name}" (${entry.role}, ${entry.provider}/${entry.model}) skipped: ${e instanceof Error ? e.message : String(e)}`);
+            return null;
+        }
+    }
+    /**
+     * Return providers mapped by role. Falls back to flat-array for backward compat.
+     */
+    async getRoleMappedProviders() {
+        const config = (0, config_loader_js_1.loadConfig)();
+        if (config) {
+            const byRole = (0, config_loader_js_1.getProvidersByRole)(config);
+            const writer = byRole.writer ? this.buildProviderFromEntry(byRole.writer) ?? undefined : undefined;
+            const reviewer = byRole.reviewer ? this.buildProviderFromEntry(byRole.reviewer) ?? undefined : undefined;
+            const challenger = byRole.challenger ? this.buildProviderFromEntry(byRole.challenger) ?? undefined : undefined;
+            const fallback = [writer, reviewer, challenger].filter(Boolean);
+            if (fallback.length > 0) {
+                return { writer, reviewer, challenger, fallback };
+            }
+            console.error('\n  ⚠ All providers from .chimera/config.yaml failed. Check your config and API keys.\n');
+        }
+        const fallback = providers_1.ProviderFactory.createFromEnv();
+        const hasRealKeys = fallback.some((p) => p.getModel().provider !== 'mock');
+        if (!hasRealKeys) {
+            console.log('\n  ⚠ No API keys configured — using offline MockProvider. Set ANTHROPIC_API_KEY, OPENAI_API_KEY, or GOOGLE_API_KEY to use a real model.\n');
+        }
+        return { fallback };
+    }
     async getProviders() {
         try {
-            // Prefer .chimera/config.yaml when present
-            const config = (0, config_loader_js_1.loadConfig)();
-            if (config) {
-                const byRole = (0, config_loader_js_1.getProvidersByRole)(config);
-                const roleOrder = [
-                    ['writer', byRole.writer],
-                    ['reviewer', byRole.reviewer],
-                    ['challenger', byRole.challenger],
-                ];
-                const providers = [];
-                for (const [role, entry] of roleOrder) {
-                    if (!entry)
-                        continue;
-                    try {
-                        providers.push(providers_1.ProviderFactory.create({
-                            name: entry.name,
-                            provider: entry.provider,
-                            model: entry.model,
-                            apiKey: entry.apiKey,
-                            baseUrl: entry.baseUrl,
-                            role: entry.role,
-                            timeoutMs: entry.timeoutMs,
-                            constraints: {
-                                maxTokensPerTurn: 4096,
-                                costCapPerTask: 10,
-                                costCapPerSession: 20,
-                                costCapPerDay: 50,
-                                maxParallelInstances: 1,
-                                rateLimitRpm: 60,
-                            },
-                        }));
-                    }
-                    catch (e) {
-                        console.error(`  ⚠ Provider "${entry.name}" (${role}, ${entry.provider}/${entry.model}) skipped: ${e instanceof Error ? e.message : String(e)}`);
-                    }
-                }
-                if (providers.length > 0) {
-                    return providers;
-                }
-                console.error('\n  ⚠ All providers from .chimera/config.yaml failed. Check your config and API keys.\n');
-            }
-            // Fallback to env-var discovery
-            const providers = providers_1.ProviderFactory.createFromEnv();
-            const hasRealKeys = providers.some((p) => p.getModel().provider !== 'mock');
-            if (!hasRealKeys) {
-                console.log('\n  ⚠ No API keys configured — using offline MockProvider. Set ANTHROPIC_API_KEY, OPENAI_API_KEY, or GOOGLE_API_KEY to use a real model.\n');
-            }
-            return providers;
+            const mapped = await this.getRoleMappedProviders();
+            return mapped.fallback;
         }
         catch (err) {
             console.error(`\n✗ Provider initialization failed: ${err instanceof Error ? err.message : String(err)}\n`);
@@ -214,15 +216,16 @@ class CliRouter {
                 console.log(`  ✓ Auto-configured from environment (${generated.providers.length} providers)`);
             }
         }
-        const providers = await this.getProviders();
-        const writer = adaptProvider(providers[0]);
-        const reviewer = adaptProvider(providers[1] ?? providers[0]);
+        const mapped = await this.getRoleMappedProviders();
+        const writer = adaptProvider(mapped.writer ?? mapped.fallback[0]);
+        const reviewer = adaptProvider(mapped.reviewer ?? mapped.writer ?? mapped.fallback[0]);
+        const challenger = mapped.challenger ? adaptProvider(mapped.challenger) : undefined;
         const orchestrator = await this.initOrchestrator();
         try {
             const result = await orchestrator.execute({
                 task,
                 mode,
-                providers: { writer, reviewer },
+                providers: { writer, reviewer, ...(challenger ? { challenger } : {}) },
             });
             this.printResult(result);
         }
@@ -241,7 +244,13 @@ class CliRouter {
         console.log(`\n${statusIcon[result.status] ?? '·'} Status: ${result.status}`);
         console.log(`  Cost: $${result.cost.toFixed(4)}`);
         console.log(`  Agents: ${result.agentCount}`);
-        console.log(`\n${result.output}\n`);
+        if (result.output && result.output.trim().length > 0) {
+            console.log(`\n${result.output}\n`);
+        }
+        else {
+            console.log(`\n⚠ Empty response. The model returned no content.`);
+            console.log(`  Check your API key, model availability, and provider status.\n`);
+        }
     }
     /**
      * Run the learning engine on a completed session checkpoint.
@@ -406,14 +415,15 @@ class CliRouter {
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
             await orchestrator.restoreState(checkpoint);
             console.log(`  Restored ${checkpoint.toolCallHistory?.length ?? 0} tool calls, ${checkpoint.metadata.turnCount} turns`);
-            const providers = await this.getProviders();
-            const writer = adaptProvider(providers[0]);
-            const reviewer = adaptProvider(providers[1] ?? providers[0]);
+            const mapped = await this.getRoleMappedProviders();
+            const writer = adaptProvider(mapped.writer ?? mapped.fallback[0]);
+            const reviewer = adaptProvider(mapped.reviewer ?? mapped.writer ?? mapped.fallback[0]);
+            const challenger = mapped.challenger ? adaptProvider(mapped.challenger) : undefined;
             try {
                 const result = await orchestrator.execute({
                     task: checkpoint.task,
                     mode: checkpoint.mode,
-                    providers: { writer, reviewer },
+                    providers: { writer, reviewer, ...(challenger ? { challenger } : {}) },
                 });
                 this.printResult(result);
             }
@@ -438,10 +448,10 @@ class CliRouter {
             try {
                 let providers;
                 if (options.real) {
-                    const modelProviders = await this.getProviders();
+                    const mapped = await this.getRoleMappedProviders();
                     providers = {
-                        writer: modelProviders[0],
-                        reviewer: modelProviders[1] ?? modelProviders[0],
+                        writer: mapped.writer ?? mapped.fallback[0],
+                        reviewer: mapped.reviewer ?? mapped.writer ?? mapped.fallback[0],
                     };
                 }
                 const report = await (0, eval_runner_js_1.runEval)(taskRef, {
@@ -544,9 +554,10 @@ class CliRouter {
                 console.log(`  ✓ Auto-configured from environment (${generated.providers.length} providers)`);
             }
         }
-        const providers = await this.getProviders();
-        const writer = adaptProvider(providers[0]);
-        const reviewer = adaptProvider(providers[1] ?? providers[0]);
+        const mapped = await this.getRoleMappedProviders();
+        const writer = adaptProvider(mapped.writer ?? mapped.fallback[0]);
+        const reviewer = adaptProvider(mapped.reviewer ?? mapped.writer ?? mapped.fallback[0]);
+        const challenger = mapped.challenger ? adaptProvider(mapped.challenger) : undefined;
         const orchestrator = await this.initOrchestrator();
         const sessionId = this.sessionStore.generateSessionId();
         let currentMessages = [];
@@ -593,6 +604,7 @@ class CliRouter {
                 return [];
             }
         };
+        const workspaceRoot = process.cwd();
         const tui = runTUI({
             mode: currentMode,
             preset: currentPreset,
@@ -603,6 +615,7 @@ class CliRouter {
             sessions: await loadSessions(),
             sessionId,
             activeTool,
+            workingDir: workspaceRoot,
             onSendMessage: async (text) => {
                 // Reset agents at the start of each new task so they don't accumulate
                 currentAgents = [];
@@ -619,9 +632,35 @@ class CliRouter {
                     await orchestrator.execute({
                         task: text,
                         mode: currentMode,
-                        providers: { writer, reviewer },
+                        providers: { writer, reviewer, ...(challenger ? { challenger } : {}) },
                         preset: currentPreset,
                     });
+                    // If the deliberation produced empty output (degraded provider),
+                    // surface a user-visible error instead of showing a blank response.
+                    const lastMsg = currentMessages[currentMessages.length - 1];
+                    if (lastMsg?.role === 'assistant' && (!lastMsg.content || lastMsg.content.trim().length === 0)) {
+                        const providerName = mapped.writer?.getModel()?.provider ?? 'unknown';
+                        const modelName = mapped.writer?.getModel()?.id ?? 'unknown';
+                        currentMessages = [
+                            ...currentMessages.slice(0, -1),
+                            {
+                                ...lastMsg,
+                                content: [
+                                    `The model returned an empty response.`,
+                                    `Provider: ${providerName} | Model: ${modelName}`,
+                                    ``,
+                                    `Possible causes:`,
+                                    `- Invalid or missing API key`,
+                                    `- Model not available or deprecated`,
+                                    `- Rate limit or quota exceeded`,
+                                    `- Content filter blocked the response`,
+                                    ``,
+                                    `Check your .chimera/config.yaml and environment variables.`,
+                                ].join('\n'),
+                                analysis: undefined,
+                            },
+                        ];
+                    }
                     // Assistant message already added by event-stream handlers
                     // (deliberation_result / final_response). Just sync state.
                     tui.update({ messages: currentMessages });
@@ -633,13 +672,21 @@ class CliRouter {
                     });
                 }
                 catch (err) {
+                    const errorMsg = err instanceof Error ? err.message : String(err);
+                    // Show the error as an assistant message so the user sees it in chat
+                    currentMessages = [...currentMessages, {
+                            id: Math.random().toString(36).slice(2),
+                            role: 'assistant',
+                            content: `Error: ${errorMsg}`,
+                            timestamp: Date.now(),
+                        }];
                     currentEvents = [...currentEvents, {
                             id: Math.random().toString(36).slice(2),
                             timestamp: Date.now(),
                             type: 'error',
-                            message: err instanceof Error ? err.message : String(err)
+                            message: errorMsg,
                         }];
-                    tui.update({ events: currentEvents });
+                    tui.update({ messages: currentMessages, events: currentEvents });
                 }
             },
             onModeChange: (mode) => {
@@ -791,18 +838,23 @@ class CliRouter {
             // ── Deliberation result (detailed analysis) ────────────────────
             if (event.type === 'deliberation_result') {
                 const lastMsg = currentMessages[currentMessages.length - 1];
+                const output = event.output ?? '';
+                // Only attach analysis when there is actual content to display;
+                // empty output with analysis metadata is confusing to the user.
+                const hasContent = output.trim().length > 0;
+                const analysis = hasContent ? event.analysis : undefined;
                 if (lastMsg && lastMsg.role === 'assistant') {
                     currentMessages = [
                         ...currentMessages.slice(0, -1),
-                        { ...lastMsg, content: event.output, analysis: event.analysis }
+                        { ...lastMsg, content: output, analysis }
                     ];
                 }
                 else {
                     currentMessages = [...currentMessages, {
                             id: Math.random().toString(36).slice(2),
                             role: 'assistant',
-                            content: event.output,
-                            analysis: event.analysis,
+                            content: output,
+                            analysis,
                             timestamp: Date.now()
                         }];
                 }
@@ -810,7 +862,10 @@ class CliRouter {
             // ── Final response ──────────────────────────────────────────────
             if (event.type === 'final_response') {
                 const lastMsg = currentMessages[currentMessages.length - 1];
-                const content = event.output || (lastMsg?.role === 'assistant' ? lastMsg.content : 'Task completed.');
+                const eventOutput = event.output;
+                const content = (eventOutput && eventOutput.trim().length > 0)
+                    ? eventOutput
+                    : (lastMsg?.role === 'assistant' ? lastMsg.content : 'Task completed.');
                 // Update cost from the final_response cost field
                 if (event.cost !== undefined) {
                     currentCostData = buildLiveCostData();
@@ -852,7 +907,7 @@ class CliRouter {
             await orchestrator.execute({
                 task: initialTask,
                 mode: initialMode,
-                providers: { writer, reviewer },
+                providers: { writer, reviewer, ...(challenger ? { challenger } : {}) },
                 preset: currentPreset,
             });
             // Refresh cost after initial task
@@ -875,6 +930,7 @@ class CliRouter {
         let currentPreset = 'solo';
         let sessionId = this.sessionStore.generateSessionId();
         const history = [];
+        const conversationHistory = [];
         let loopState = null;
         const rl = readline.createInterface({
             input: process.stdin,
@@ -933,23 +989,30 @@ class CliRouter {
             catch {
                 // Memory retrieval is non-blocking
             }
-            const providers = await this.getProviders();
-            if (providers.length === 0) {
+            const mapped = await this.getRoleMappedProviders();
+            if (mapped.fallback.length === 0) {
                 console.error('\n✗ No providers available. Configure API keys.\n');
                 process.exit(1);
             }
-            const writer = adaptProvider(providers[0]);
-            const reviewer = adaptProvider(providers[1] ?? providers[0]);
+            const writer = adaptProvider(mapped.writer ?? mapped.fallback[0]);
+            const reviewer = adaptProvider(mapped.reviewer ?? mapped.writer ?? mapped.fallback[0]);
+            const challenger = mapped.challenger ? adaptProvider(mapped.challenger) : undefined;
             const orchestrator = await this.initOrchestrator();
             try {
                 const taskWithContext = memoryContext ? `${input}${memoryContext}` : input;
                 const result = await orchestrator.execute({
                     task: taskWithContext,
                     mode: currentMode,
-                    providers: { writer, reviewer },
+                    providers: { writer, reviewer, ...(challenger ? { challenger } : {}) },
                     preset: currentPreset,
+                    conversationHistory,
                 });
                 this.printResult(result);
+                // Accumulate conversation history for context
+                if (result.output && result.status === 'done') {
+                    conversationHistory.push({ role: 'user', content: input });
+                    conversationHistory.push({ role: 'assistant', content: result.output.slice(0, 2000) });
+                }
                 // Store key facts from this turn
                 if (result.output && result.status === 'done') {
                     try {
@@ -990,8 +1053,8 @@ class CliRouter {
     }
     async runParallel(task) {
         console.log(`\n⚙ Chimera [parallel] — decomposing task...\n`);
-        const providers = await this.getProviders();
-        const provider = adaptProvider(providers[0]);
+        const mapped = await this.getRoleMappedProviders();
+        const provider = adaptProvider(mapped.writer ?? mapped.fallback[0]);
         const eventStream = new core_1.EventStream();
         if (this.verbose) {
             eventStream.subscribe('*', (event) => {
@@ -1013,9 +1076,9 @@ class CliRouter {
     }
     async runLoop(turns, task) {
         console.log(`\n⟳ Chimera loop — running "${task}" ${turns} time(s)...\n`);
-        const providers = await this.getProviders();
-        const writer = adaptProvider(providers[0]);
-        const reviewer = adaptProvider(providers[1] ?? providers[0]);
+        const mapped = await this.getRoleMappedProviders();
+        const writer = adaptProvider(mapped.writer ?? mapped.fallback[0]);
+        const reviewer = adaptProvider(mapped.reviewer ?? mapped.writer ?? mapped.fallback[0]);
         const loopWf = {
             name: 'cli-loop',
             steps: [{
@@ -1044,9 +1107,9 @@ class CliRouter {
     }
     async runGoal(goal) {
         console.log(`\n◎ Chimera goal — "${goal}"\n`);
-        const providers = await this.getProviders();
-        const writer = adaptProvider(providers[0]);
-        const reviewer = adaptProvider(providers[1] ?? providers[0]);
+        const mapped = await this.getRoleMappedProviders();
+        const writer = adaptProvider(mapped.writer ?? mapped.fallback[0]);
+        const reviewer = adaptProvider(mapped.reviewer ?? mapped.writer ?? mapped.fallback[0]);
         const goalWf = {
             name: 'cli-goal',
             steps: [{

@@ -66,7 +66,7 @@ const MessageBubble = ({ message, isSelected }) => {
             React.createElement(Text, { dimColor: true },
                 " ",
                 new Date(message.timestamp).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }))),
-        React.createElement(Box, { marginLeft: 2, flexDirection: "column", width: "100%" },
+        React.createElement(Box, { marginLeft: 2, flexDirection: "column", width: "100%", flexShrink: 1 },
             isSystem ? (React.createElement(Text, { dimColor: true }, message.content)) : (React.createElement(Markdown, { content: message.content })),
             message.streaming && React.createElement(Text, { dimColor: true }, "\u258A"),
             message.toolCalls?.map((tc, i) => (React.createElement(ToolCallBadge, { key: i, indicator: tc }))),

@@ -315,7 +315,14 @@ export class AnthropicProvider implements ModelProvider {
     }
 
     const json = (await response.json()) as Record<string, unknown>;
-    return parseCompletionResult(json);
+    const result = parseCompletionResult(json);
+    if (!result.content && (!result.toolCalls || result.toolCalls.length === 0)) {
+      throw new ProviderError(
+        `Model "${this.model}" returned empty content with no tool calls. This may indicate a content filter, rate limit, or provider issue.`,
+        this.model,
+      );
+    }
+    return { ...result, rawContent: result.content };
   }
 
   async *stream(prompt: Message[], options?: CompletionOptions): AsyncIterable<StreamChunk> {

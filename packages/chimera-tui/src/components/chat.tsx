@@ -85,7 +85,7 @@ const MessageBubble: React.FC<{ message: Message; isSelected: boolean }> = ({ me
         </Text>
         <Text dimColor> {new Date(message.timestamp).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false })}</Text>
       </Box>
-      <Box marginLeft={2} flexDirection="column" width="100%">
+      <Box marginLeft={2} flexDirection="column" width="100%" flexShrink={1}>
         {/* Render assistant/user messages through the markdown renderer.
             System messages are plain text (command output). */}
         {isSystem ? (

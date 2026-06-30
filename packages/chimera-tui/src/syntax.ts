@@ -94,6 +94,11 @@ const languageRules: Record<string, LanguageRule[]> = {
   zsh: shellRules,
 };
 
+function makeGlobalRegex(pattern: RegExp): RegExp {
+  const flags = pattern.flags.includes('g') ? pattern.flags : `${pattern.flags}g`;
+  return new RegExp(pattern.source, flags);
+}
+
 export function tokenizeCode(code: string, lang: string): SyntaxToken[] {
   if (!code) return [];
 
@@ -106,7 +111,7 @@ export function tokenizeCode(code: string, lang: string): SyntaxToken[] {
   const matches: Array<{ start: number; end: number; color: Color }> = [];
 
   for (const rule of rules) {
-    const regex = new RegExp(rule.pattern.source, rule.pattern.flags);
+    const regex = makeGlobalRegex(rule.pattern);
     let m: RegExpExecArray | null;
     while ((m = regex.exec(code)) !== null) {
       matches.push({ start: m.index, end: m.index + m[0].length, color: rule.color });

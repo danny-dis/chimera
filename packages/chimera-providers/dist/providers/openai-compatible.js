@@ -160,6 +160,7 @@ class OpenAICompatibleProvider {
     modelInfo;
     headers;
     timeoutMs;
+    supportsResponseFormat;
     constructor(config) {
         this.baseUrl = config.baseUrl.replace(/\/+$/, '');
         this.apiKey = config.apiKey;
@@ -181,6 +182,15 @@ class OpenAICompatibleProvider {
             Authorization: `Bearer ${this.apiKey}`,
             ...config.options?.headers,
         };
+        // Detect response_format support: OpenAI supports it, others may not.
+        // Allow explicit override via options.
+        if (config.options?.supportsResponseFormat !== undefined) {
+            this.supportsResponseFormat = config.options.supportsResponseFormat;
+        }
+        else {
+            const hostname = new URL(config.baseUrl).hostname;
+            this.supportsResponseFormat = hostname.includes('openai.com');
+        }
     }
     async complete(prompt, options) {
         const body = {
@@ -207,7 +217,7 @@ class OpenAICompatibleProvider {
             body.tools = mapTools(options.tools);
         if (options?.toolChoice)
             body.tool_choice = mapToolChoice(options.toolChoice);
-        if (options?.responseFormat) {
+        if (options?.responseFormat && this.supportsResponseFormat) {
             body.response_format = { type: options.responseFormat };
         }
         const response = await this.fetchJson('/v1/chat/completions', {
@@ -220,7 +230,11 @@ class OpenAICompatibleProvider {
             mapError(response.status, errorBody, this.modelInfo.provider);
         }
         const json = (await response.json());
-        return parseCompletionResult(json);
+        const result = parseCompletionResult(json);
+        if (!result.content && (!result.toolCalls || result.toolCalls.length === 0)) {
+            throw new errors_js_1.ProviderError(`Model "${this.model}" returned empty content with no tool calls. This may indicate a content filter, rate limit, or provider issue.`, this.modelInfo.provider);
+        }
+        return { ...result, rawContent: result.content };
     }
     async *stream(prompt, options) {
         const body = {
@@ -248,7 +262,7 @@ class OpenAICompatibleProvider {
             body.tools = mapTools(options.tools);
         if (options?.toolChoice)
             body.tool_choice = mapToolChoice(options.toolChoice);
-        if (options?.responseFormat) {
+        if (options?.responseFormat && this.supportsResponseFormat) {
             body.response_format = { type: options.responseFormat };
         }
         const response = await this.fetchStream('/v1/chat/completions', {

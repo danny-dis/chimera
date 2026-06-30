@@ -53,6 +53,12 @@ export declare class SoloExecutor {
     private recordSpend;
     private isOverBudget;
     private safeEmit;
+    /**
+     * Pick the response most useful to the user. The reviewer may produce
+     * meta-analysis ("Reviewer verdict: PASS") rather than an actual
+     * answer. In that case, fall back to the writer's draft.
+     */
+    private chooseBestResponse;
     private degraded;
 }
 //# sourceMappingURL=solo-executor.d.ts.map

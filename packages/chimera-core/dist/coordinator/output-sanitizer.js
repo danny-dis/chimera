@@ -1,6 +1,50 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
+exports.sanitizeReviewerOutput = sanitizeReviewerOutput;
 exports.sanitizeWriterOutput = sanitizeWriterOutput;
+/**
+ * Extract a clean, human-readable summary from reviewer JSON output.
+ * Discards internal reasoning fields (thought, findings details) and
+ * returns only the verdict line suitable for display.
+ *
+ * Returns the clean summary, or the raw text if parsing fails.
+ */
+function sanitizeReviewerOutput(raw) {
+    const trimmed = raw.trim();
+    if (trimmed.length === 0)
+        return '';
+    const jsonBlock = extractLargestJson(trimmed);
+    if (jsonBlock) {
+        try {
+            const obj = JSON.parse(jsonBlock);
+            if (typeof obj.response === 'string' && obj.response.trim().length > 10)
+                return obj.response.trim();
+            if (typeof obj.improvedAnswer === 'string' && obj.improvedAnswer.trim().length > 10)
+                return obj.improvedAnswer.trim();
+            if (typeof obj.answer === 'string' && obj.answer.trim().length > 10)
+                return obj.answer.trim();
+            const verdict = obj.verdict ?? 'PASS';
+            const findings = obj.findings ?? [];
+            if (findings.length === 0 && verdict === 'PASS')
+                return '';
+            if (findings.length === 0)
+                return '';
+            const lines = findings.map((f) => `- [${f.severity.toUpperCase()}] ${f.description}`);
+            return `Review findings:\n${lines.join('\n')}`;
+        }
+        catch { /* not valid JSON, continue */ }
+    }
+    const verdictMatch = trimmed.match(/"verdict"\s*:\s*"(\w+)"/);
+    if (verdictMatch?.[1]) {
+        return '';
+    }
+    if (hasReasoningScaffolding(trimmed)) {
+        const stripped = stripScaffolding(trimmed);
+        if (stripped.length > 0)
+            return stripped;
+    }
+    return trimmed;
+}
 /**
  * Extract the clean response from writer output, discarding all
  * reasoning, analysis scaffolding, and JSON schema echoes.
@@ -43,11 +87,19 @@ function sanitizeWriterOutput(raw) {
         if (stripped.length > 0)
             return stripped;
     }
-    // 5. No JSON, no scaffolding — plain text passthrough.
+    // 5. Analysis text leaked into response — this is meta-reasoning about other agents,
+    //    not an answer to the user's question. Strip it.
+    if (hasAnalysisLeak(trimmed)) {
+        const stripped = stripAnalysisLeak(trimmed);
+        if (stripped.length > 0)
+            return stripped;
+        return '';
+    }
+    // 6. No JSON, no scaffolding — plain text passthrough.
     if (!jsonBlock && !trimmed.includes('"response"') && !hasReasoningScaffolding(trimmed)) {
         return trimmed;
     }
-    // 6. Nothing extractable — return empty to trigger degraded path
+    // 7. Nothing extractable — return empty to trigger degraded path
     return '';
 }
 const SCAFFOLD_PATTERNS = [
@@ -76,8 +128,52 @@ const SCAFFOLD_PATTERNS = [
     /JSON schema/i,
     /schema:/i,
 ];
+const ANALYSIS_LEAK_PATTERNS = [
+    /The original writer draft was empty/i,
+    /critical failure to initiate/i,
+    /The reviewer.*correctly identified/i,
+    /proposed a passive/i,
+    /violating core system rules/i,
+    /The severity rating.*was also underestimated/i,
+    /A superior approach is to/i,
+    /This prioritizes understanding/i,
+    /avoids unnecessary information overhead/i,
+    /meta-analysis/i,
+    /internal assessment/i,
+    /analysis of.*agents/i,
+    /writer.*draft.*empty/i,
+    /reviewer.*verdict.*correctly/i,
+    /challenger.*identified/i,
+];
 function hasReasoningScaffolding(text) {
     return SCAFFOLD_PATTERNS.some((p) => p.test(text));
+}
+function hasAnalysisLeak(text) {
+    return ANALYSIS_LEAK_PATTERNS.some((p) => p.test(text));
+}
+function stripAnalysisLeak(text) {
+    const lines = text.split('\n');
+    const cleanLines = [];
+    let skipping = false;
+    for (const line of lines) {
+        if (ANALYSIS_LEAK_PATTERNS.some((p) => p.test(line))) {
+            skipping = true;
+            continue;
+        }
+        if (skipping) {
+            if (line.trim() === '' || /^[A-Z]/.test(line.trim())) {
+                skipping = false;
+            }
+            else {
+                continue;
+            }
+        }
+        cleanLines.push(line);
+    }
+    const result = cleanLines.join('\n').trim();
+    if (result.length < text.length * 0.3 && result.length < 50)
+        return '';
+    return result;
 }
 function stripScaffolding(text) {
     const lines = text.split('\n');

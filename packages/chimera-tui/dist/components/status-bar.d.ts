@@ -7,6 +7,7 @@ interface StatusBarProps {
     agents: Agent[];
     activeTool?: ToolActivity;
     sidebarVisible?: boolean;
+    workingDir?: string;
 }
 export declare const StatusBar: React.FC<StatusBarProps>;
 export {};

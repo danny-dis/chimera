@@ -49,6 +49,8 @@ import type { SubTaskResult, ModelPool, SubTask } from '../types.js';
 
 import { PresetRouter, getAutoSelectionReason } from './preset-router.js';
 import type { ComplexityScore } from '../../types/router.js';
+import { TaskRouter } from '../../task-router.js';
+import { CHIMERA_CORE_IDENTITY } from '../../prompts.js';
 
 import type {
   DeliberationAnalysis,
@@ -113,6 +115,8 @@ export class DeliberationEngine {
       ...(this.deps.costTracker ? { costTracker: this.deps.costTracker } : {}),
     });
 
+    const isConversational = TaskRouter.isConversationalTask(cfg.task);
+
     const soloConfig: SoloConfig = {
       model: cfg.model,
       ...(cfg.temperature !== undefined ? { temperature: cfg.temperature } : {}),
@@ -125,6 +129,8 @@ export class DeliberationEngine {
         ? { reasoning: cfg.reasoning as { effort?: 'low' | 'medium' | 'high'; maxTokens?: number } }
         : {}),
       ...(cfg.eternalCoT !== undefined ? { eternalCoT: cfg.eternalCoT } : {}),
+      systemPrompt: CHIMERA_CORE_IDENTITY,
+      isConversational,
     };
 
     // Auto-CoT: enable thinker if complexity is high or no router available (safe default)

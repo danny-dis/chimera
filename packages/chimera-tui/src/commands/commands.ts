@@ -1,5 +1,6 @@
 import type { Mode, DeliberationMode } from '@chimera/core';
 import type { CostData } from '../types.js';
+import { AGENT_CAPABILITIES, PRESET_CAPABILITIES } from '../agent-capabilities.js';
 
 // ── Command result ──────────────────────────────────────────────────────
 
@@ -244,18 +245,29 @@ export function runCommand(
       return { output: [], viewHint: 'diff' };
 
     case 'agents': {
+      const capabilityLines = [
+        '  Capabilities:',
+        ...AGENT_CAPABILITIES.map((capability) => (
+          `    ${capability.title.padEnd(12)} ${capability.capability}`
+        )),
+        '  Presets:',
+        ...PRESET_CAPABILITIES.map((preset) => (
+          `    ${preset.label.padEnd(8)} ${preset.capability}`
+        )),
+      ];
+
       if (ctx.getEventStream) {
         const stream = ctx.getEventStream();
         const spawned = stream?.getAll().filter((e) => e.type === 'agent_spawned') ?? [];
         if (spawned.length === 0) {
-          return { output: ['  No agents active. Run a task first.'] };
+          return { output: ['  No agents active.', ...capabilityLines], viewHint: 'agents' };
         }
         const lines = [`  Agents (${spawned.length} total):`];
         for (const evt of spawned) {
           const data = evt as { agentId?: string; role?: string; provider?: string; model?: string };
           lines.push(`    ${data.agentId ?? '?'}  ${data.role ?? '?'}  ${data.provider ?? '?'}/${data.model ?? '?'}`);
         }
-        return { output: lines };
+        return { output: [...lines, '', ...capabilityLines], viewHint: 'agents' };
       }
       return { output: [], viewHint: 'agents' };
     }

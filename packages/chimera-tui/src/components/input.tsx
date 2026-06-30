@@ -23,6 +23,10 @@ export const Input: React.FC<InputProps> = ({
   const historyRef = useRef(history);
   historyRef.current = history;
   const historyIndexRef = useRef(-1);
+  const onSubmitRef = useRef(onSubmit);
+  onSubmitRef.current = onSubmit;
+  const autocompleteRef = useRef(autocomplete);
+  autocompleteRef.current = autocomplete;
 
   useEffect(() => {
     if (disabled) return;
@@ -43,7 +47,7 @@ export const Input: React.FC<InputProps> = ({
       if (str === '\r' || str === '\n') {
         const trimmed = valueRef.current.trim();
         if (!trimmed) return;
-        onSubmit(trimmed);
+        onSubmitRef.current(trimmed);
         setHistory((prev) => [...prev, trimmed]);
         historyIndexRef.current = -1;
         setValue('');
@@ -51,8 +55,8 @@ export const Input: React.FC<InputProps> = ({
       }
 
       if (str === '\t') {
-        if (!autocomplete || !valueRef.current.startsWith('/')) return;
-        const matches = autocomplete(valueRef.current);
+        if (!autocompleteRef.current || !valueRef.current.startsWith('/')) return;
+        const matches = autocompleteRef.current(valueRef.current);
         if (matches.length === 1) {
           setValue(matches[0] + ' ');
         }
@@ -93,7 +97,7 @@ export const Input: React.FC<InputProps> = ({
         process.stdin.setRawMode(wasRaw ?? false);
       }
     };
-  }, [disabled, onSubmit, autocomplete]);
+  }, [disabled]);
 
   const isCommand = value.startsWith('/');
 
@@ -105,9 +109,14 @@ export const Input: React.FC<InputProps> = ({
       paddingRight={1}
     >
       <Text>{'> '}</Text>
-      <Text color={isCommand ? 'yellow' : undefined}>
-        {value || <Text dimColor>{placeholder}</Text>}
-      </Text>
+      {isCommand ? (
+        <Box>
+          <Text color="yellow">{value.split(/\s/)[0]}</Text>
+          <Text color="white">{value.slice(value.split(/\s/)[0].length)}</Text>
+        </Box>
+      ) : (
+        <Text>{value || <Text dimColor>{placeholder}</Text>}</Text>
+      )}
       {!disabled && <Text color="blue">▊</Text>}
       {disabled && <Text dimColor> (disabled)</Text>}
     </Box>

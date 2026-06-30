@@ -38,6 +38,10 @@ export interface SoloConfig {
     maxDepth?: number;
     /** Force the executor to run even when the request looks simple. */
     forceInvocation?: boolean;
+    /** Optional system prompt prepended to every LLM call. */
+    systemPrompt?: string;
+    /** Whether the task is conversational (informational questions, not code tasks). */
+    isConversational?: boolean;
 }
 /**
  * Context carried through recursive solo calls. The top-level caller

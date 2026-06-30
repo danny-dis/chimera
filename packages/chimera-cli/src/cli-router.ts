@@ -648,6 +648,8 @@ export class CliRouter {
       }
     };
 
+    const workspaceRoot = process.cwd();
+
     const tui: TUIHandle = runTUI({
       mode: currentMode,
       preset: currentPreset,
@@ -658,6 +660,7 @@ export class CliRouter {
       sessions: await loadSessions(),
       sessionId,
       activeTool,
+      workingDir: workspaceRoot,
       onSendMessage: async (text) => {
         // Reset agents at the start of each new task so they don't accumulate
         currentAgents = [];

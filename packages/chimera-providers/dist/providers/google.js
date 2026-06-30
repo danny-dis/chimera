@@ -227,7 +227,11 @@ class GoogleProvider {
             mapError(response.status, errorBody, this.model);
         }
         const json = (await response.json());
-        return parseCompletionResult(json);
+        const result = parseCompletionResult(json);
+        if (!result.content && (!result.toolCalls || result.toolCalls.length === 0)) {
+            throw new errors_js_1.ProviderError(`Model "${this.model}" returned empty content with no tool calls. This may indicate a content filter, rate limit, or provider issue.`, this.model);
+        }
+        return { ...result, rawContent: result.content };
     }
     async *stream(prompt, options) {
         const body = {

@@ -2,6 +2,7 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.SoloExecutor = void 0;
 const output_sanitizer_js_1 = require("./output-sanitizer.js");
+const task_router_js_1 = require("../task-router.js");
 /**
  * The simplest executor: one model answers one prompt.
  *
@@ -98,7 +99,7 @@ class SoloExecutor {
         let reviewContent;
         try {
             const res = await this.callPeer('reviewer', config.model, task, config, providerFactory, draftContent);
-            reviewContent = res.content;
+            reviewContent = (0, output_sanitizer_js_1.sanitizeReviewerOutput)(res.content);
             totalTokens += res.inputTokens + res.outputTokens;
             const cost = this.computeCost(config.model, res.inputTokens, res.outputTokens);
             totalCostUsd += cost;
@@ -109,10 +110,10 @@ class SoloExecutor {
             return this.degraded(`verification call failed: ${String(err)}`, totalTokens, totalCostUsd, startTime, draftContent);
         }
         // ── Synthesis ─────────────────────────────────────────────────────
-        // For Solo mode, we treat the 'reviewer' as the improved version.
-        // We return it directly as the output, while keeping the 5-field
-        // analysis for consistency.
-        const finalResponse = reviewContent;
+        // The reviewer may produce meta-analysis (verdict/findings) rather
+        // than a user-facing answer. Pick whichever response is actually
+        // useful to the user.
+        const finalResponse = this.chooseBestResponse(draftContent, reviewContent);
         const analysis = {
             thought,
             finalResponse,
@@ -142,13 +143,18 @@ class SoloExecutor {
                 prompt = this.buildThinkPrompt(task);
                 break;
             case 'writer':
-                prompt = this.buildDraftPrompt(task, thought);
+                prompt = this.buildDraftPrompt(task, thought, config.isConversational);
                 break;
             case 'reviewer':
-                prompt = this.buildReviewPrompt(task, draft);
+                prompt = this.buildReviewPrompt(task, draft, config.isConversational);
                 break;
         }
-        const r = await provider.complete([{ role: 'user', content: prompt }], { temperature: config.temperature, maxTokens: config.maxCompletionTokens });
+        const messages = [];
+        if (config.systemPrompt) {
+            messages.push({ role: 'system', content: config.systemPrompt });
+        }
+        messages.push({ role: 'user', content: prompt });
+        const r = await provider.complete(messages, { temperature: config.temperature, maxTokens: config.maxCompletionTokens });
         return {
             content: r.content,
             inputTokens: r.usage?.inputTokens ?? 0,
@@ -159,12 +165,32 @@ class SoloExecutor {
     buildThinkPrompt(task) {
         return `You are a strategic thinker. Analyze the following task and plan your approach. Identify potential pitfalls and best practices. Do not provide the final answer yet, just your reasoning process.\n\nTASK: ${task}\n\nTHOUGHT:`;
     }
-    buildDraftPrompt(task, thought) {
+    buildDraftPrompt(task, thought, isConversational) {
+        if (task_router_js_1.TaskRouter.isConversationalTask(task) || isConversational) {
+            return `You are a helpful assistant. Answer the following question directly and thoroughly.\n` +
+                `Do NOT produce code, file changes, or technical analysis unless specifically asked.\n` +
+                `Provide a clear, concise, factual answer based on what you know or can observe.\n` +
+                `If the question asks about a project or codebase, look at the files and describe what you find.\n\n` +
+                `TASK: ${task}\n\nANSWER:`;
+        }
         const thoughtPrefix = thought ? `STRATEGIC PLAN:\n${thought}\n\n` : '';
         return `You are the writer. Provide a complete answer to the following task. ${thought ? 'Follow the strategic plan provided.' : 'Be specific and concrete.'}\n\n${thoughtPrefix}TASK: ${task}\n\nANSWER:`;
     }
-    buildReviewPrompt(task, draft) {
-        return `You are the reviewer. Read the following draft answer to the task and identify any issues, hallucinations, or missing parts. Provide an improved version of the answer.\n\nTASK: ${task}\n\nDRAFT:\n${draft}\n\nIMPROVED ANSWER:`;
+    buildReviewPrompt(task, draft, isConversational) {
+        if (task_router_js_1.TaskRouter.isConversationalTask(task) || isConversational) {
+            return `[!] CONVERSATIONAL REVIEW [!]\n` +
+                `This is a conversational/general question, NOT a code task.\n` +
+                `Do NOT apply code-review criteria.\n` +
+                `Evaluate ONLY: factual accuracy, completeness, and clarity.\n` +
+                `Default to PASS unless the answer is factually incorrect.\n\n` +
+                `IMPORTANT: If the draft is accurate and complete, return it as-is or with minor improvements.\n` +
+                `Do NOT produce a JSON verdict with findings. Instead, provide an improved version of the answer.\n\n` +
+                `TASK: ${task}\n\nDRAFT:\n${draft}\n\nIMPROVED ANSWER:`;
+        }
+        return `You are the reviewer. Read the following draft answer to the task and identify any issues, hallucinations, or missing parts. Provide an improved version of the answer.\n\n` +
+            `IMPORTANT: Do NOT produce a JSON verdict with findings. Instead, provide an improved version of the answer.\n` +
+            `If the draft is correct, return it with minor improvements. Only flag issues if the answer is factually wrong or incomplete.\n\n` +
+            `TASK: ${task}\n\nDRAFT:\n${draft}\n\nIMPROVED ANSWER:`;
     }
     finalizeSolo(output, totalTokens, totalCostUsd, startTime, agentCount, thought = '') {
         const analysis = {
@@ -212,6 +238,31 @@ class SoloExecutor {
             this.eventStream.append(event);
         }
         catch { /* schema mismatch — ignore */ }
+    }
+    /**
+     * Pick the response most useful to the user. The reviewer may produce
+     * meta-analysis ("Reviewer verdict: PASS") rather than an actual
+     * answer. In that case, fall back to the writer's draft.
+     */
+    chooseBestResponse(draft, review) {
+        if (!review || review.trim().length === 0)
+            return draft;
+        if (!draft || draft.trim().length === 0)
+            return review;
+        const reviewLower = review.trim().toLowerCase();
+        const isMetaAnalysis = reviewLower.startsWith('reviewer verdict') ||
+            reviewLower.startsWith('verdict:') ||
+            reviewLower.startsWith('findings:') ||
+            reviewLower.startsWith('review findings:') ||
+            reviewLower.startsWith('- [high]') ||
+            reviewLower.startsWith('- [med]') ||
+            reviewLower.startsWith('- [low]');
+        if (isMetaAnalysis && draft.trim().length > 20)
+            return draft;
+        if (isMetaAnalysis && draft.trim().length <= 20) {
+            return draft.trim().length > 0 ? draft : '';
+        }
+        return review;
     }
     degraded(reason, totalTokens, totalCostUsd, startTime, output = '') {
         this.safeEmit({ type: 'final_response', status: 'needs_user', cost: totalCostUsd, agentCount: 1 });

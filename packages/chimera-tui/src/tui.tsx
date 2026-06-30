@@ -52,11 +52,11 @@ export const TUI: React.FC<TUIProps> = ({
   const focus = useFocus();
 
   useEffect(() => {
-    if (initialMessages.length > 0) setMessages(initialMessages);
+    setMessages(initialMessages);
   }, [initialMessages]);
 
   useEffect(() => {
-    if (initialAgents.length > 0) setAgents(initialAgents);
+    setAgents(initialAgents);
   }, [initialAgents]);
 
   useEffect(() => {
@@ -64,7 +64,7 @@ export const TUI: React.FC<TUIProps> = ({
   }, [initialCostData]);
 
   useEffect(() => {
-    if (initialEvents.length > 0) setEvents(initialEvents);
+    setEvents(initialEvents);
   }, [initialEvents]);
 
   useEffect(() => {
@@ -180,6 +180,7 @@ export const TUI: React.FC<TUIProps> = ({
           agents={agents}
           activeTool={activeTool}
           sidebarVisible={sidebarVisible}
+          workingDir={workingDir}
         />
       </Box>
 

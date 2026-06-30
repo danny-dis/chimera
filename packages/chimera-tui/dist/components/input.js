@@ -9,6 +9,10 @@ export const Input = ({ onSubmit, autocomplete, placeholder = 'Type a message or
     const historyRef = useRef(history);
     historyRef.current = history;
     const historyIndexRef = useRef(-1);
+    const onSubmitRef = useRef(onSubmit);
+    onSubmitRef.current = onSubmit;
+    const autocompleteRef = useRef(autocomplete);
+    autocompleteRef.current = autocomplete;
     useEffect(() => {
         if (disabled)
             return;
@@ -26,16 +30,16 @@ export const Input = ({ onSubmit, autocomplete, placeholder = 'Type a message or
                 const trimmed = valueRef.current.trim();
                 if (!trimmed)
                     return;
-                onSubmit(trimmed);
+                onSubmitRef.current(trimmed);
                 setHistory((prev) => [...prev, trimmed]);
                 historyIndexRef.current = -1;
                 setValue('');
                 return;
             }
             if (str === '\t') {
-                if (!autocomplete || !valueRef.current.startsWith('/'))
+                if (!autocompleteRef.current || !valueRef.current.startsWith('/'))
                     return;
-                const matches = autocomplete(valueRef.current);
+                const matches = autocompleteRef.current(valueRef.current);
                 if (matches.length === 1) {
                     setValue(matches[0] + ' ');
                 }
@@ -72,11 +76,13 @@ export const Input = ({ onSubmit, autocomplete, placeholder = 'Type a message or
                 process.stdin.setRawMode(wasRaw ?? false);
             }
         };
-    }, [disabled, onSubmit, autocomplete]);
+    }, [disabled]);
     const isCommand = value.startsWith('/');
     return (React.createElement(Box, { borderStyle: "round", borderColor: isCommand ? 'yellow' : 'blue', paddingLeft: 1, paddingRight: 1 },
         React.createElement(Text, null, '> '),
-        React.createElement(Text, { color: isCommand ? 'yellow' : undefined }, value || React.createElement(Text, { dimColor: true }, placeholder)),
+        isCommand ? (React.createElement(Box, null,
+            React.createElement(Text, { color: "yellow" }, value.split(/\s/)[0]),
+            React.createElement(Text, { color: "white" }, value.slice(value.split(/\s/)[0].length)))) : (React.createElement(Text, null, value || React.createElement(Text, { dimColor: true }, placeholder))),
         !disabled && React.createElement(Text, { color: "blue" }, "\u258A"),
         disabled && React.createElement(Text, { dimColor: true }, " (disabled)")));
 };

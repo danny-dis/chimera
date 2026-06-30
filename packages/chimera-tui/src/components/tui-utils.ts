@@ -3,10 +3,10 @@ import { zen } from '../theme.js';
 export type AgentStatus = 'pending' | 'running' | 'completed' | 'error';
 
 export const statusSymbols: Record<AgentStatus, { symbol: string; color: string }> = {
-  pending: { symbol: '○', color: zen.muted },
-  running: { symbol: '◉', color: zen.warning },
-  completed: { symbol: '✓', color: zen.success },
-  error: { symbol: '✗', color: zen.error },
+  pending: { symbol: 'o', color: zen.muted },
+  running: { symbol: '*', color: zen.warning },
+  completed: { symbol: '+', color: zen.success },
+  error: { symbol: 'x', color: zen.error },
 };
 
 export const formatCost = (cost: number): string => `$${cost.toFixed(4)}`;
