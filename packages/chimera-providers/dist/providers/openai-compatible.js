@@ -182,14 +182,13 @@ class OpenAICompatibleProvider {
             Authorization: `Bearer ${this.apiKey}`,
             ...config.options?.headers,
         };
-        // Detect response_format support: OpenAI supports it, others may not.
-        // Allow explicit override via options.
+        // Detect response_format support: most OpenAI-compatible providers support it.
+        // Default to true; providers that don't support it can set supportsResponseFormat: false.
         if (config.options?.supportsResponseFormat !== undefined) {
             this.supportsResponseFormat = config.options.supportsResponseFormat;
         }
         else {
-            const hostname = new URL(config.baseUrl).hostname;
-            this.supportsResponseFormat = hostname.includes('openai.com');
+            this.supportsResponseFormat = true;
         }
     }
     async complete(prompt, options) {

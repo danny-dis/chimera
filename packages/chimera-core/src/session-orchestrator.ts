@@ -810,7 +810,7 @@ export class SessionOrchestrator {
 
       await this.enforceRateLimit(8192);
 
-      const reviewerMessages = this.buildReviewerPrompt(task, draftContent, resolvedMode);
+      const reviewerMessages = this.buildReviewerPrompt(task, draftContent, resolvedMode, conversationHistory);
       const reviewResult = await providers.reviewer.complete(reviewerMessages, {
         temperature: 0.2,
         maxTokens: 4096,
@@ -868,7 +868,7 @@ export class SessionOrchestrator {
 
         await this.enforceRateLimit(8192);
 
-        const challengerMessages = this.buildChallengerPrompt(task, draftContent, reviewResult.content);
+        const challengerMessages = this.buildChallengerPrompt(task, draftContent, reviewResult.content, conversationHistory);
         const challengeResult = await providers.challenger.complete(challengerMessages, {
           temperature: 0.5,
           maxTokens: 4096,
@@ -1200,6 +1200,7 @@ export class SessionOrchestrator {
     reviewerId: string;
     costCap: number;
     signal?: AbortSignal;
+    conversationHistory?: Array<{ role: string; content: string }>;
   }): Promise<{
     verdict: 'PASS' | 'FAIL' | 'NEEDS_REVISION';
     confidence: number;
@@ -1215,7 +1216,7 @@ export class SessionOrchestrator {
     this.transition({ status: 'verifying', task: args.task, draft: args.draft, agentId: args.reviewerId });
     this.agentMesh.registerAgent(this.buildAgentConfig(args.reviewerId, 'reviewer', args.costCap));
 
-    const reviewerMessages = this.buildReviewerPrompt(args.task, args.draft, args.mode);
+    const reviewerMessages = this.buildReviewerPrompt(args.task, args.draft, args.mode, args.conversationHistory);
     const reviewResult = await args.reviewer.complete(reviewerMessages, {
       temperature: 0.2,
       maxTokens: 4096,
@@ -1254,6 +1255,7 @@ export class SessionOrchestrator {
     challengerId: string;
     costCap: number;
     signal?: AbortSignal;
+    conversationHistory?: Array<{ role: string; content: string }>;
   }): Promise<{
     response: string;
     confidence: number;
@@ -1271,7 +1273,7 @@ export class SessionOrchestrator {
     });
     this.agentMesh.registerAgent(this.buildAgentConfig(args.challengerId, 'challenger', args.costCap));
 
-    const challengerMessages = this.buildChallengerPrompt(args.task, args.draft, args.review);
+    const challengerMessages = this.buildChallengerPrompt(args.task, args.draft, args.review, args.conversationHistory);
     const challengeResult = await args.challenger.complete(challengerMessages, {
       temperature: 0.5,
       maxTokens: 4096,
@@ -1438,12 +1440,13 @@ export class SessionOrchestrator {
       challenger?: LLMProvider;
     };
     costCap: number;
+    conversationHistory?: Array<{ role: string; content: string }>;
   }): Promise<{
     qualityGate: QualityGateResult;
     execution: ParallelExecutionResult;
     outputs: AgentOutput[];
   }> {
-    const { task, draft, mode, providers, costCap } = params;
+    const { task, draft, mode, providers, costCap, conversationHistory } = params;
     const startTime = Date.now();
     const outputs: AgentOutput[] = [];
 
@@ -1463,7 +1466,7 @@ export class SessionOrchestrator {
     });
 
     const reviewerPromise = (async () => {
-      const reviewerMessages = this.buildReviewerPrompt(task, draft, mode);
+      const reviewerMessages = this.buildReviewerPrompt(task, draft, mode, conversationHistory);
       const result = await providers.reviewer.complete(reviewerMessages, {
         temperature: 0.2,
         maxTokens: 4096,
@@ -1507,7 +1510,7 @@ export class SessionOrchestrator {
     const challenger = providers.challenger;
     const challengerPromise = challenger
       ? (async () => {
-          const challengerMessages = this.buildChallengerPrompt(task, draft, '');
+          const challengerMessages = this.buildChallengerPrompt(task, draft, '', conversationHistory);
           const result = await challenger.complete(challengerMessages, {
             temperature: 0.5,
             maxTokens: 4096,
@@ -1704,6 +1707,7 @@ export class SessionOrchestrator {
     task: string,
     draft: string,
     mode: Mode,
+    conversationHistory?: Array<{ role: string; content: string }>,
   ): Array<{ role: string; content: string }> {
     const messages = buildMessages({
       role: 'reviewer',
@@ -1734,6 +1738,28 @@ export class SessionOrchestrator {
     }
 
     messages.splice(1, 0, { role: 'system', content: outputInstructions.join('\n') });
+
+    if (conversationHistory && conversationHistory.length > 0) {
+      const MAX_HISTORY_TURNS = 10;
+      const MAX_HISTORY_CHARS = 32000;
+      let historyMessages = conversationHistory.slice(-MAX_HISTORY_TURNS * 2);
+      let totalChars = historyMessages.reduce((sum, m) => sum + m.content.length, 0);
+      while (totalChars > MAX_HISTORY_CHARS && historyMessages.length > 2) {
+        const removed = historyMessages.shift()!;
+        totalChars -= removed.content.length;
+      }
+
+      const historyBlock = [
+        '--- PREVIOUS CONVERSATION CONTEXT ---',
+        'Use this context to understand what the user has been discussing.',
+        ...historyMessages.map(m => `[${m.role === 'user' ? 'User' : 'Assistant'}]: ${m.content.slice(0, 500)}`),
+        '--- END PREVIOUS CONVERSATION ---',
+        '',
+      ].join('\n');
+
+      messages.splice(messages.length - 1, 0, { role: 'user', content: historyBlock });
+    }
+
     return messages;
   }
 
@@ -1741,6 +1767,7 @@ export class SessionOrchestrator {
     task: string,
     draft: string,
     review: string,
+    conversationHistory?: Array<{ role: string; content: string }>,
   ): Array<{ role: string; content: string }> {
     const messages = buildMessages({
       role: 'challenger',
@@ -1763,6 +1790,28 @@ export class SessionOrchestrator {
     ].join('\n');
 
     messages.splice(1, 0, { role: 'system', content: outputInstructions });
+
+    if (conversationHistory && conversationHistory.length > 0) {
+      const MAX_HISTORY_TURNS = 10;
+      const MAX_HISTORY_CHARS = 32000;
+      let historyMessages = conversationHistory.slice(-MAX_HISTORY_TURNS * 2);
+      let totalChars = historyMessages.reduce((sum, m) => sum + m.content.length, 0);
+      while (totalChars > MAX_HISTORY_CHARS && historyMessages.length > 2) {
+        const removed = historyMessages.shift()!;
+        totalChars -= removed.content.length;
+      }
+
+      const historyBlock = [
+        '--- PREVIOUS CONVERSATION CONTEXT ---',
+        'Use this context to understand what the user has been discussing.',
+        ...historyMessages.map(m => `[${m.role === 'user' ? 'User' : 'Assistant'}]: ${m.content.slice(0, 500)}`),
+        '--- END PREVIOUS CONVERSATION ---',
+        '',
+      ].join('\n');
+
+      messages.splice(messages.length - 1, 0, { role: 'user', content: historyBlock });
+    }
+
     return messages;
   }
 

@@ -313,6 +313,10 @@ export declare class SessionOrchestrator {
             challenger?: LLMProvider;
         };
         costCap: number;
+        conversationHistory?: Array<{
+            role: string;
+            content: string;
+        }>;
     }): Promise<{
         qualityGate: QualityGateResult;
         execution: ParallelExecutionResult;
