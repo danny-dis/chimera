@@ -96,9 +96,9 @@ export const EventLog = ({ events, filter = null, onFilterChange, focused = fals
         }
     });
     const eventTypes = [...new Set(events.map((e) => e.type))];
-    return (React.createElement(Box, { flexDirection: "column", borderStyle: "round", borderColor: focused ? 'cyan' : 'gray', paddingX: 1, height: height + 4 },
+    return (React.createElement(Box, { flexDirection: "column", borderStyle: "round", borderColor: focused ? zen.accent : zen.border, paddingX: 1, height: height + 4 },
         React.createElement(Box, { marginBottom: 0 },
-            React.createElement(Text, { bold: true, color: focused ? 'cyan' : 'white' }, contentWidth && contentWidth < 25 ? 'Events' : 'Event Log'),
+            React.createElement(Text, { bold: true, color: focused ? zen.accent : zen.fg }, contentWidth && contentWidth < 25 ? 'Events' : 'Event Log'),
             React.createElement(Text, { dimColor: true },
                 ' ',
                 "(",
@@ -115,7 +115,7 @@ export const EventLog = ({ events, filter = null, onFilterChange, focused = fals
                     return (React.createElement(Box, null,
                         React.createElement(Text, { dimColor: true }, "No events yet. Start a task to see events.")));
                 }
-                const color = eventTypeColors[event.type] ?? 'white';
+                const color = eventTypeColors[event.type] ?? zen.fg;
                 const isCollapsed = collapsed.has(event.type);
                 const summary = renderEventSummary(event);
                 const isNarrow = contentWidth !== undefined && contentWidth < 30;

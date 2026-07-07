@@ -1,53 +1,29 @@
 import React, { useState, useCallback } from 'react';
 import { Box, Text, useInput } from 'ink';
 import type { Mode } from '@chimera/core';
-import { zen } from '../theme.js';
+import { zen, MODES, MODE_META } from '../theme.js';
 
 interface ModeSelectorProps {
-  currentMode: Mode;
-  onModeChange?: (mode: Mode) => void;
+  mode: Mode;
+  onSelect?: (mode: Mode) => void;
   focused?: boolean;
   compact?: boolean;
   contentWidth?: number;
 }
 
-const modes: Mode[] = ['auto', 'ask', 'plan', 'code', 'debug', 'review', 'oal'];
-
-const modeIcons: Record<Mode, string> = {
-  ask: '?',
-  plan: '◈',
-  code: '⚡',
-  debug: '◉',
-  review: '◎',
-  oal: '◆',
-  auto: '⟳',
-};
-
-const modeDescriptions: Record<Mode, string> = {
-  ask: 'Quick Q&A',
-  plan: 'Plan changes',
-  code: 'Write code',
-  debug: 'Debug issues',
-  review: 'Review code',
-  oal: 'OAL mode',
-  auto: 'Auto-select mode',
-};
-
 export const ModeSelector: React.FC<ModeSelectorProps> = ({
-  currentMode,
-  onModeChange,
+  mode,
+  onSelect,
   focused = false,
   compact = false,
   contentWidth,
 }) => {
-  const [navIndex, setNavIndex] = useState(() => modes.indexOf(currentMode));
+  const [navIndex, setNavIndex] = useState(() => Math.max(0, MODES.indexOf(mode)));
 
   const selectMode = useCallback((index: number) => {
-    const mode = modes[index];
-    if (mode && onModeChange) {
-      onModeChange(mode);
-    }
-  }, [onModeChange]);
+    const m = MODES[index];
+    if (m && onSelect) onSelect(m);
+  }, [onSelect]);
 
   useInput((_input, key) => {
     if (!focused) return;
@@ -63,7 +39,7 @@ export const ModeSelector: React.FC<ModeSelectorProps> = ({
 
     if (key.rightArrow) {
       setNavIndex((prev) => {
-        const next = Math.min(modes.length - 1, prev + 1);
+        const next = Math.min(MODES.length - 1, prev + 1);
         selectMode(next);
         return next;
       });
@@ -78,21 +54,21 @@ export const ModeSelector: React.FC<ModeSelectorProps> = ({
 
   if (compact) {
     return (
-      <Box>
-        <Text bold color={focused ? zen.accent : 'dimColor'}>
-          Mode{' '}
-        </Text>
-        {modes.map((mode) => (
-          <Box key={mode} marginRight={1}>
-            <Text
-              color={mode === currentMode ? zen.accent : zen.muted}
-              bold={mode === currentMode}
-              underline={mode === currentMode}
-            >
-              {modeIcons[mode]} {mode}
-            </Text>
-          </Box>
-        ))}
+      <Box flexWrap="wrap">
+        {MODES.map((m) => {
+          const sel = m === mode;
+          return (
+            <Box key={m} marginRight={1}>
+              <Text
+                color={sel ? zen.accent : zen.muted}
+                bold={sel}
+                underline={sel}
+              >
+                {MODE_META[m].icon} {m}
+              </Text>
+            </Box>
+          );
+        })}
       </Box>
     );
   }
@@ -100,20 +76,17 @@ export const ModeSelector: React.FC<ModeSelectorProps> = ({
   return (
     <Box flexDirection="column" borderStyle="single" borderColor={zen.accent} paddingX={1}>
       <Text bold color={zen.accent}>Mode</Text>
-      {modes.map((mode) => {
-        const isSelected = mode === currentMode;
+      {MODES.map((m) => {
+        const isSelected = m === mode;
         return (
-          <Box key={mode}>
+          <Box key={m}>
             <Text color={isSelected ? zen.accent : zen.muted}>
               {isSelected ? '▸ ' : '  '}
             </Text>
-            <Text
-              bold={isSelected}
-              color={isSelected ? zen.accent : zen.fg}
-            >
-              {modeIcons[mode]} {mode}
+            <Text bold={isSelected} color={isSelected ? zen.accent : zen.fg}>
+              {MODE_META[m].icon} {m}
             </Text>
-            <Text dimColor>{(!contentWidth || contentWidth >= 35) ? ` — ${modeDescriptions[mode].slice(0, Math.max(0, contentWidth ? contentWidth - 12 : 30))}` : ''}</Text>
+            <Text dimColor>{(!contentWidth || contentWidth >= 35) ? ` — ${MODE_META[m].description.slice(0, Math.max(0, contentWidth ? contentWidth - 12 : 30))}` : ''}</Text>
           </Box>
         );
       })}

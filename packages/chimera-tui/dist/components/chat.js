@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useCallback } from 'react';
 import { Box, Text } from 'ink';
 import { Viewport } from './viewport.js';
 import { Markdown } from './markdown.js';
@@ -22,6 +22,14 @@ const ToolCallBadge = ({ indicator }) => {
 };
 const AnalysisSection = ({ analysis }) => {
     if (!analysis)
+        return null;
+    // Hide analysis for straightforward tasks where the score adds visual noise
+    // (e.g. simple conversational questions). Show when there are real conflicts,
+    // unique insights, or the agent was genuinely uncertain.
+    const hasConflicts = analysis.conflicts.length > 0;
+    const hasInsights = analysis.uniqueInsights.length > 0;
+    const isTrivial = !hasConflicts && !hasInsights && analysis.confidence >= 0.7;
+    if (isTrivial)
         return null;
     const summaryParts = [];
     if (analysis.consensus.length > 0) {
@@ -48,6 +56,42 @@ const AnalysisSection = ({ analysis }) => {
             analysis.thought.slice(0, 120),
             analysis.thought.length > 120 ? '…' : ''))));
 };
+/**
+ * Estimate how many terminal rows a message will occupy.
+ *
+ * Layout per message:
+ *   Line 1: "▸ You: HH:MM:SS" header
+ *   Line 2+: content (word-wrapped to fitWidth)
+ *   Optional: streaming cursor, tool call badges, analysis section
+ *   Margin: 1 row between messages (non-system only)
+ */
+function estimateMessageHeight(message, fitWidth) {
+    let rows = 1; // header line (role + timestamp)
+    // Content area: subtract marginLeft=2 from the available width.
+    const contentWidth = Math.max(1, fitWidth - 4);
+    const content = message.content ?? '';
+    // Count explicit newlines + estimate wrapping per line.
+    const lines = content.split('\n');
+    for (const line of lines) {
+        rows += Math.max(1, Math.ceil(line.length / contentWidth));
+    }
+    // Streaming cursor adds 1 row while active.
+    if (message.streaming)
+        rows += 1;
+    // Tool call badges: 1 row each.
+    if (message.toolCalls)
+        rows += message.toolCalls.length;
+    // Analysis section: header (1) + optional thought (1-2).
+    if (message.analysis) {
+        rows += 1; // analysis header
+        if (message.analysis.thought)
+            rows += 1;
+    }
+    // Margin between messages (non-system).
+    if (message.role !== 'system')
+        rows += 1;
+    return rows;
+}
 const MessageBubble = ({ message, isSelected }) => {
     const prefix = message.role === 'user' ? 'You' :
         message.role === 'system' ? 'System' :
@@ -72,12 +116,13 @@ const MessageBubble = ({ message, isSelected }) => {
             message.toolCalls?.map((tc, i) => (React.createElement(ToolCallBadge, { key: i, indicator: tc }))),
             message.analysis && React.createElement(AnalysisSection, { analysis: message.analysis }))));
 };
-export const Chat = ({ messages, focused = false, height = 20 }) => {
+export const Chat = ({ messages, focused = false, height = 20, width = 80 }) => {
+    const getItemHeight = useCallback((msg) => estimateMessageHeight(msg, width), [width]);
     return (React.createElement(Box, { flexDirection: "column", height: height, overflow: "hidden" },
         messages.length === 0 && (React.createElement(Box, { flexDirection: "column", paddingX: 2, paddingY: 1 },
             React.createElement(Text, { bold: true, color: zen.accent }, "Chimera"),
             React.createElement(Text, { dimColor: true }, "Terminal-native parallel multi-agent coding platform."),
             React.createElement(Text, { dimColor: true }, "Type a task or /help for commands."))),
-        React.createElement(Viewport, { items: messages, height: height, focused: focused, renderItem: (msg, _index, isSelected) => (React.createElement(MessageBubble, { message: msg, isSelected: isSelected })) })));
+        React.createElement(Viewport, { items: messages, height: height, focused: focused, getItemHeight: getItemHeight, renderItem: (msg, _index, isSelected) => (React.createElement(MessageBubble, { message: msg, isSelected: isSelected })) })));
 };
 //# sourceMappingURL=chat.js.map

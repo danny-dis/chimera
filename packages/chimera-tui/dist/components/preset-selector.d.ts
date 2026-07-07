@@ -1,8 +1,8 @@
 import React from 'react';
 import type { DeliberationMode } from '@chimera/core';
 interface PresetSelectorProps {
-    currentPreset: DeliberationMode;
-    onPresetChange?: (preset: DeliberationMode) => void;
+    preset: DeliberationMode;
+    onSelect?: (preset: DeliberationMode) => void;
     focused?: boolean;
     compact?: boolean;
     contentWidth?: number;

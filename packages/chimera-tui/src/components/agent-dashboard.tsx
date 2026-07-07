@@ -29,7 +29,7 @@ const AgentRow: React.FC<{ agent: Agent; contentWidth?: number }> = ({ agent, co
         {showDetails && <Text dimColor>{agent.provider}/{agent.model}</Text>}
         {showDetails && tokenStr && <Text dimColor> {tokenStr}</Text>}
         {agent.progress !== undefined && (
-          <Text color="cyan"> [{Math.round(agent.progress * 100)}%]</Text>
+          <Text color={zen.accent}> [{Math.round(agent.progress * 100)}%]</Text>
         )}
       </Box>
       {showDetails && (

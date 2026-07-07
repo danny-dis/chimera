@@ -1,57 +1,48 @@
 import React from 'react';
 import { Box, Text } from 'ink';
-import { zen } from '../theme.js';
+import { zen, roleColors } from '../theme.js';
 import { formatCost, statusSymbols } from './tui-utils.js';
-const modes = ['auto', 'ask', 'plan', 'code', 'debug', 'review', 'oal'];
-const presets = ['auto', 'solo', 'duo', 'trio', 'hive', 'fusion', 'swarm'];
-const modeIcons = {
-    ask: '?', plan: '◈', code: '⚡', debug: '◉', review: '◎', oal: '◆', auto: '⟳',
-};
-const presetIcons = {
-    solo: '●', duo: '◉', trio: '◎', merge: '⬡', hive: '⬡', fusion: '◆', swarm: '🐝', auto: '⚡',
-};
+import { ModeSelector } from './mode-selector.js';
+import { PresetSelector } from './preset-selector.js';
 const Section = ({ label, color = zen.fg, children, }) => (React.createElement(Box, { flexDirection: "column", marginTop: 1 },
     React.createElement(Text, { bold: true, color: color }, label),
     children));
-export const Sidebar = ({ sessionId, mode, preset, agents, costData, tokenUsage, workingDir, instructions, contentWidth, }) => {
+export const Sidebar = ({ sessionId, mode, preset, agents, costData, tokenUsage, workingDir, instructions, contentWidth, onModeChange, onPresetChange, }) => {
     const totalTokens = tokenUsage?.total
         ?? agents.reduce((sum, a) => sum + a.tokenUsage.input + a.tokenUsage.output, 0);
+    const inputTokens = tokenUsage?.input
+        ?? agents.reduce((sum, a) => sum + a.tokenUsage.input, 0);
+    const outputTokens = tokenUsage?.output
+        ?? agents.reduce((sum, a) => sum + a.tokenUsage.output, 0);
     const usagePercent = costData.budget > 0
         ? Math.round((costData.currentCost / costData.budget) * 100)
         : 0;
+    const usageColor = usagePercent > 90 ? zen.error : usagePercent > 70 ? zen.warning : zen.success;
     const truncate = (s, max) => contentWidth && s.length > max ? s.slice(0, max - 1) + '…' : s;
     return (React.createElement(Box, { flexDirection: "column", paddingX: 1 },
         React.createElement(Box, { flexDirection: "column" },
-            React.createElement(Text, { bold: true, color: zen.info }, "CHIMERA "),
+            React.createElement(Text, { bold: true, color: zen.accent }, "CHIMERA"),
             React.createElement(Text, { dimColor: true }, sessionId)),
         React.createElement(Section, { label: "Mode", color: zen.accent },
-            React.createElement(Box, { flexDirection: "row", flexWrap: "wrap" }, modes.map((m) => {
-                const sel = m === mode;
-                return (React.createElement(Box, { key: m, marginRight: 1 },
-                    React.createElement(Text, { color: sel ? zen.accent : zen.muted, bold: sel },
-                        sel ? '▸ ' : '  ',
-                        modeIcons[m],
-                        " ",
-                        m)));
-            }))),
-        React.createElement(Section, { label: "Preset", color: "magenta" },
-            React.createElement(Box, { flexDirection: "row", flexWrap: "wrap" }, presets.map((p) => {
-                const sel = p === preset;
-                return (React.createElement(Box, { key: p, marginRight: 1 },
-                    React.createElement(Text, { color: sel ? 'magenta' : zen.muted, bold: sel },
-                        sel ? '▸ ' : '  ',
-                        presetIcons[p],
-                        " ",
-                        p)));
-            }))),
-        React.createElement(Section, { label: "Context" },
+            React.createElement(ModeSelector, { mode: mode, compact: true, focused: true, onSelect: onModeChange })),
+        React.createElement(Section, { label: "Preset", color: zen.agent },
+            React.createElement(PresetSelector, { preset: preset, compact: true, focused: true, onSelect: onPresetChange })),
+        React.createElement(Section, { label: "Token Usage", color: zen.info },
             React.createElement(Text, null,
                 totalTokens.toLocaleString(),
                 " tokens"),
-            React.createElement(Text, null,
+            React.createElement(Text, { dimColor: true },
+                inputTokens.toLocaleString(),
+                " in \u00B7 ",
+                outputTokens.toLocaleString(),
+                " out"),
+            React.createElement(Text, { color: usageColor },
+                '█'.repeat(Math.min(10, Math.round(usagePercent / 10))),
+                '░'.repeat(Math.max(0, 10 - Math.round(usagePercent / 10))),
+                " ",
                 usagePercent,
-                "% used"),
-            React.createElement(Text, null,
+                "% budget"),
+            React.createElement(Text, { dimColor: true },
                 formatCost(costData.currentCost),
                 " spent")),
         workingDir && (React.createElement(Section, { label: "Working Directory" },
@@ -59,11 +50,11 @@ export const Sidebar = ({ sessionId, mode, preset, agents, costData, tokenUsage,
         instructions && instructions.length > 0 && (React.createElement(Section, { label: "Instructions" }, instructions.map((file, i) => (React.createElement(Box, { key: i },
             React.createElement(Text, { color: zen.success }, "\u25CF "),
             React.createElement(Text, null, truncate(file, (contentWidth ?? 40) - 4))))))),
-        React.createElement(Section, { label: "Tasks" },
-            agents.length === 0 && React.createElement(Text, { dimColor: true }, "No active tasks"),
+        React.createElement(Section, { label: "Agents" },
+            agents.length === 0 && React.createElement(Text, { dimColor: true }, "No active agents"),
             agents.map((agent) => {
                 const st = statusSymbols[agent.status];
-                const roleColor = zen.role[agent.role] ?? zen.fg;
+                const roleColor = roleColors(agent.role);
                 return (React.createElement(Box, { key: agent.id },
                     React.createElement(Text, { color: st.color },
                         "[",
@@ -73,6 +64,12 @@ export const Sidebar = ({ sessionId, mode, preset, agents, costData, tokenUsage,
                     React.createElement(Text, { dimColor: true },
                         " \u2014 ",
                         agent.status)));
-            }))));
+            })),
+        React.createElement(Section, { label: "Capabilities" }, ['writer', 'reviewer', 'challenger', 'synthesizer'].map((r) => (React.createElement(Box, { key: r },
+            React.createElement(Text, { color: roleColors(r) }, "\u25CF "),
+            React.createElement(Text, { bold: true, color: roleColors(r) }, r),
+            React.createElement(Text, { dimColor: true },
+                " \u00B7 ",
+                r === 'writer' ? 'implements' : r === 'reviewer' ? 'verifies' : r === 'challenger' ? 'attacks' : 'merges')))))));
 };
 //# sourceMappingURL=sidebar.js.map

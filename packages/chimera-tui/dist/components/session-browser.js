@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { Box, Text, useInput } from 'ink';
+import { zen } from '../theme.js';
 import { formatCost, formatDateTime } from './tui-utils.js';
 export const SessionBrowser = ({ sessions, onSelect, onDelete, }) => {
     const [selectedIndex, setSelectedIndex] = useState(0);
@@ -37,9 +38,9 @@ export const SessionBrowser = ({ sessions, onSelect, onDelete, }) => {
             setConfirmDelete(null);
         }
     });
-    return (React.createElement(Box, { flexDirection: "column", borderStyle: "double", borderColor: "magenta", paddingX: 1 },
+    return (React.createElement(Box, { flexDirection: "column", borderStyle: "double", borderColor: zen.agent, paddingX: 1 },
         React.createElement(Box, { marginBottom: 1 },
-            React.createElement(Text, { bold: true, color: "magenta" }, "Sessions"),
+            React.createElement(Text, { bold: true, color: zen.agent }, "Sessions"),
             React.createElement(Text, { dimColor: true },
                 " (",
                 sessions.length,
@@ -55,7 +56,7 @@ export const SessionBrowser = ({ sessions, onSelect, onDelete, }) => {
                     React.createElement(Text, { dimColor: true }, " "),
                     React.createElement(Text, null, session.taskSummary.slice(0, 40)),
                     React.createElement(Text, { dimColor: true }, " "),
-                    React.createElement(Text, { color: "green" }, formatCost(session.cost)),
+                    React.createElement(Text, { color: zen.success }, formatCost(session.cost)),
                     React.createElement(Text, { dimColor: true },
                         ' ',
                         session.messageCount,
@@ -63,7 +64,7 @@ export const SessionBrowser = ({ sessions, onSelect, onDelete, }) => {
                         session.agentCount,
                         "agents")),
                 isSelected && isConfirming && (React.createElement(Box, { marginLeft: 4 },
-                    React.createElement(Text, { color: "red" }, "Press Enter to delete, Esc to cancel")))));
+                    React.createElement(Text, { color: zen.error }, "Press Enter to delete, Esc to cancel")))));
         }),
         React.createElement(Box, { marginTop: 1 },
             React.createElement(Text, { dimColor: true }, "[\u2191\u2193] navigate  [Enter] select  [d] delete"))));

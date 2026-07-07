@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Box, Text } from 'ink';
+import { zen } from '../theme.js';
 const BACKSPACE_CHARS = new Set(['\x7f', '\x08', '\b']);
 export const Input = ({ onSubmit, autocomplete, placeholder = 'Type a message or /help for commands...', disabled = false, }) => {
     const [value, setValue] = useState('');
@@ -81,9 +82,9 @@ export const Input = ({ onSubmit, autocomplete, placeholder = 'Type a message or
     return (React.createElement(Box, { borderStyle: "round", borderColor: isCommand ? 'yellow' : 'blue', paddingLeft: 1, paddingRight: 1 },
         React.createElement(Text, null, '> '),
         isCommand ? (React.createElement(Box, null,
-            React.createElement(Text, { color: "yellow" }, value.split(/\s/)[0]),
-            React.createElement(Text, { color: "white" }, value.slice(value.split(/\s/)[0].length)))) : (React.createElement(Text, null, value || React.createElement(Text, { dimColor: true }, placeholder))),
-        !disabled && React.createElement(Text, { color: "blue" }, "\u258A"),
+            React.createElement(Text, { color: zen.warning }, value.split(/\s/)[0]),
+            React.createElement(Text, { color: zen.fg }, value.slice(value.split(/\s/)[0].length)))) : (React.createElement(Text, null, value || React.createElement(Text, { dimColor: true }, placeholder))),
+        !disabled && React.createElement(Text, { color: zen.info }, "\u258A"),
         disabled && React.createElement(Text, { dimColor: true }, " (disabled)")));
 };
 //# sourceMappingURL=input.js.map

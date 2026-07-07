@@ -4,7 +4,7 @@ import type { Mode } from '@chimera/core';
 import type { Agent, CostData, ToolActivity } from '../types.js';
 import Spinner from 'ink-spinner';
 import { statusSymbols, budgetColor, formatTime } from './tui-utils.js';
-import { zen } from '../theme.js';
+import { zen, MODE_META } from '../theme.js';
 
 // ── Mini cost bar (10 chars wide) ───────────────────────────────────────
 
@@ -79,7 +79,7 @@ export const StatusBar: React.FC<StatusBarProps> = ({
         <Text bold color={zen.info}>{projectName} </Text>
         <Text dimColor>v0.0.1</Text>
         <Text> </Text>
-        <Text color={zen.accent} bold>{mode}</Text>
+        <Text color={zen.accent} bold>{MODE_META[mode]?.icon ?? '?'} {mode}</Text>
       </Box>
 
       {/* Cost */}

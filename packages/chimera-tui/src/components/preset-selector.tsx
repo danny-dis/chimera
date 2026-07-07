@@ -1,55 +1,29 @@
 import React, { useState, useCallback } from 'react';
 import { Box, Text, useInput } from 'ink';
 import type { DeliberationMode } from '@chimera/core';
-import { zen } from '../theme.js';
+import { zen, PRESETS, PRESET_META } from '../theme.js';
 
 interface PresetSelectorProps {
-  currentPreset: DeliberationMode;
-  onPresetChange?: (preset: DeliberationMode) => void;
+  preset: DeliberationMode;
+  onSelect?: (preset: DeliberationMode) => void;
   focused?: boolean;
   compact?: boolean;
   contentWidth?: number;
 }
 
-const presets: DeliberationMode[] = ['auto', 'solo', 'duo', 'trio', 'hive', 'fusion', 'swarm'];
-
-const presetIcons: Record<DeliberationMode, string> = {
-  solo: '●',
-  duo: '◉',
-  trio: '◎',
-  merge: '⬡',
-  hive: '⬡',
-  fusion: '◆',
-  swarm: '🐝',
-  auto: '⚡',
-};
-
-const presetDescriptions: Record<DeliberationMode, string> = {
-  solo: 'Single agent',
-  duo: 'Two agents',
-  trio: 'Three agents',
-  merge: 'Merge multiple agent outputs',
-  hive: 'Decompose & parallel subtasks',
-  fusion: 'Multi-model fusion',
-  swarm: 'Autonomous swarm orchestration',
-  auto: 'Automatic selection',
-};
-
 export const PresetSelector: React.FC<PresetSelectorProps> = ({
-  currentPreset,
-  onPresetChange,
+  preset,
+  onSelect,
   focused = false,
   compact = false,
   contentWidth,
 }) => {
-  const [navIndex, setNavIndex] = useState(() => presets.indexOf(currentPreset));
+  const [navIndex, setNavIndex] = useState(() => Math.max(0, PRESETS.indexOf(preset)));
 
   const selectPreset = useCallback((index: number) => {
-    const preset = presets[index];
-    if (preset && onPresetChange) {
-      onPresetChange(preset);
-    }
-  }, [onPresetChange]);
+    const p = PRESETS[index];
+    if (p && onSelect) onSelect(p);
+  }, [onSelect]);
 
   useInput((_input, key) => {
     if (!focused) return;
@@ -65,7 +39,7 @@ export const PresetSelector: React.FC<PresetSelectorProps> = ({
 
     if (key.rightArrow) {
       setNavIndex((prev) => {
-        const next = Math.min(presets.length - 1, prev + 1);
+        const next = Math.min(PRESETS.length - 1, prev + 1);
         selectPreset(next);
         return next;
       });
@@ -80,42 +54,39 @@ export const PresetSelector: React.FC<PresetSelectorProps> = ({
 
   if (compact) {
     return (
-      <Box>
-        <Text bold color={focused ? 'magenta' : 'dimColor'}>
-          Preset{' '}
-        </Text>
-        {presets.map((preset) => (
-          <Box key={preset} marginRight={1}>
-            <Text
-              color={preset === currentPreset ? 'magenta' : zen.muted}
-              bold={preset === currentPreset}
-              underline={preset === currentPreset}
-            >
-              {presetIcons[preset]} {preset}
-            </Text>
-          </Box>
-        ))}
+      <Box flexWrap="wrap">
+        {PRESETS.map((p) => {
+          const sel = p === preset;
+          return (
+            <Box key={p} marginRight={1}>
+              <Text
+                color={sel ? zen.agent : zen.muted}
+                bold={sel}
+                underline={sel}
+              >
+                {PRESET_META[p].icon} {p}
+              </Text>
+            </Box>
+          );
+        })}
       </Box>
     );
   }
 
   return (
-    <Box flexDirection="column" borderStyle="single" borderColor="magenta" paddingX={1}>
-      <Text bold color="magenta">Preset</Text>
-      {presets.map((preset) => {
-        const isSelected = preset === currentPreset;
+    <Box flexDirection="column" borderStyle="single" borderColor={zen.agent} paddingX={1}>
+      <Text bold color={zen.agent}>Preset</Text>
+      {PRESETS.map((p) => {
+        const isSelected = p === preset;
         return (
-          <Box key={preset}>
-            <Text color={isSelected ? 'magenta' : zen.muted}>
+          <Box key={p}>
+            <Text color={isSelected ? zen.agent : zen.muted}>
               {isSelected ? '▸ ' : '  '}
             </Text>
-            <Text
-              bold={isSelected}
-              color={isSelected ? 'magenta' : zen.fg}
-            >
-              {presetIcons[preset]} {preset}
+            <Text bold={isSelected} color={isSelected ? zen.agent : zen.fg}>
+              {PRESET_META[p].icon} {p}
             </Text>
-            <Text dimColor>{(!contentWidth || contentWidth >= 35) ? ` — ${presetDescriptions[preset].slice(0, Math.max(0, contentWidth ? contentWidth - 12 : 30))}` : ''}</Text>
+            <Text dimColor>{(!contentWidth || contentWidth >= 35) ? ` — ${PRESET_META[p].description.slice(0, Math.max(0, contentWidth ? contentWidth - 12 : 30))}` : ''}</Text>
           </Box>
         );
       })}

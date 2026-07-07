@@ -23,7 +23,7 @@ const AgentRow = ({ agent, contentWidth }) => {
             showDetails && tokenStr && React.createElement(Text, { dimColor: true },
                 " ",
                 tokenStr),
-            agent.progress !== undefined && (React.createElement(Text, { color: "cyan" },
+            agent.progress !== undefined && (React.createElement(Text, { color: zen.accent },
                 " [",
                 Math.round(agent.progress * 100),
                 "%]"))),

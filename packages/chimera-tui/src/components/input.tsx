@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Box, Text } from 'ink';
+import { zen } from '../theme.js';
 
 interface InputProps {
   onSubmit: (text: string) => void;
@@ -111,13 +112,13 @@ export const Input: React.FC<InputProps> = ({
       <Text>{'> '}</Text>
       {isCommand ? (
         <Box>
-          <Text color="yellow">{value.split(/\s/)[0]}</Text>
-          <Text color="white">{value.slice(value.split(/\s/)[0].length)}</Text>
+          <Text color={zen.warning}>{value.split(/\s/)[0]}</Text>
+          <Text color={zen.fg}>{value.slice(value.split(/\s/)[0].length)}</Text>
         </Box>
       ) : (
         <Text>{value || <Text dimColor>{placeholder}</Text>}</Text>
       )}
-      {!disabled && <Text color="blue">▊</Text>}
+      {!disabled && <Text color={zen.info}>▊</Text>}
       {disabled && <Text dimColor> (disabled)</Text>}
     </Box>
   );

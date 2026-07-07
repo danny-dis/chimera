@@ -1,33 +1,13 @@
 import React, { useState, useCallback } from 'react';
 import { Box, Text, useInput } from 'ink';
-import { zen } from '../theme.js';
-const modes = ['auto', 'ask', 'plan', 'code', 'debug', 'review', 'oal'];
-const modeIcons = {
-    ask: '?',
-    plan: '◈',
-    code: '⚡',
-    debug: '◉',
-    review: '◎',
-    oal: '◆',
-    auto: '⟳',
-};
-const modeDescriptions = {
-    ask: 'Quick Q&A',
-    plan: 'Plan changes',
-    code: 'Write code',
-    debug: 'Debug issues',
-    review: 'Review code',
-    oal: 'OAL mode',
-    auto: 'Auto-select mode',
-};
-export const ModeSelector = ({ currentMode, onModeChange, focused = false, compact = false, contentWidth, }) => {
-    const [navIndex, setNavIndex] = useState(() => modes.indexOf(currentMode));
+import { zen, MODES, MODE_META } from '../theme.js';
+export const ModeSelector = ({ mode, onSelect, focused = false, compact = false, contentWidth, }) => {
+    const [navIndex, setNavIndex] = useState(() => Math.max(0, MODES.indexOf(mode)));
     const selectMode = useCallback((index) => {
-        const mode = modes[index];
-        if (mode && onModeChange) {
-            onModeChange(mode);
-        }
-    }, [onModeChange]);
+        const m = MODES[index];
+        if (m && onSelect)
+            onSelect(m);
+    }, [onSelect]);
     useInput((_input, key) => {
         if (!focused)
             return;
@@ -41,7 +21,7 @@ export const ModeSelector = ({ currentMode, onModeChange, focused = false, compa
         }
         if (key.rightArrow) {
             setNavIndex((prev) => {
-                const next = Math.min(modes.length - 1, prev + 1);
+                const next = Math.min(MODES.length - 1, prev + 1);
                 selectMode(next);
                 return next;
             });
@@ -53,27 +33,26 @@ export const ModeSelector = ({ currentMode, onModeChange, focused = false, compa
         }
     });
     if (compact) {
-        return (React.createElement(Box, null,
-            React.createElement(Text, { bold: true, color: focused ? zen.accent : 'dimColor' },
-                "Mode",
-                ' '),
-            modes.map((mode) => (React.createElement(Box, { key: mode, marginRight: 1 },
-                React.createElement(Text, { color: mode === currentMode ? zen.accent : zen.muted, bold: mode === currentMode, underline: mode === currentMode },
-                    modeIcons[mode],
+        return (React.createElement(Box, { flexWrap: "wrap" }, MODES.map((m) => {
+            const sel = m === mode;
+            return (React.createElement(Box, { key: m, marginRight: 1 },
+                React.createElement(Text, { color: sel ? zen.accent : zen.muted, bold: sel, underline: sel },
+                    MODE_META[m].icon,
                     " ",
-                    mode))))));
+                    m)));
+        })));
     }
     return (React.createElement(Box, { flexDirection: "column", borderStyle: "single", borderColor: zen.accent, paddingX: 1 },
         React.createElement(Text, { bold: true, color: zen.accent }, "Mode"),
-        modes.map((mode) => {
-            const isSelected = mode === currentMode;
-            return (React.createElement(Box, { key: mode },
+        MODES.map((m) => {
+            const isSelected = m === mode;
+            return (React.createElement(Box, { key: m },
                 React.createElement(Text, { color: isSelected ? zen.accent : zen.muted }, isSelected ? '▸ ' : '  '),
                 React.createElement(Text, { bold: isSelected, color: isSelected ? zen.accent : zen.fg },
-                    modeIcons[mode],
+                    MODE_META[m].icon,
                     " ",
-                    mode),
-                React.createElement(Text, { dimColor: true }, (!contentWidth || contentWidth >= 35) ? ` — ${modeDescriptions[mode].slice(0, Math.max(0, contentWidth ? contentWidth - 12 : 30))}` : '')));
+                    m),
+                React.createElement(Text, { dimColor: true }, (!contentWidth || contentWidth >= 35) ? ` — ${MODE_META[m].description.slice(0, Math.max(0, contentWidth ? contentWidth - 12 : 30))}` : '')));
         })));
 };
 //# sourceMappingURL=mode-selector.js.map

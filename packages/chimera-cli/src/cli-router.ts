@@ -4,8 +4,8 @@ import { resolve } from 'path';
 import { SessionOrchestrator, EventStream, LongTermMemory, CoordinatorEngine, runWorkflow } from '@chimera/core';
 import type { LLMProvider, OrchestratorResult, ToolExecutorInterface, ToolRegistryInterface, WorkflowDefinition } from '@chimera/core';
 import type { Mode, DeliberationMode } from '@chimera/core';
-import { ProviderFactory } from '@chimera/providers';
-import type { ModelProvider } from '@chimera/providers';
+import { ProviderFactory, RateLimitError, ProviderUnavailableError, ProviderError, ModelRegistry, BudgetEnforcer, RateLimiter, ProviderCostTracker } from '@chimera/providers';
+import type { ModelProvider, ModelEntry } from '@chimera/providers';
 import { CheckpointStore } from '@chimera/session';
 import { LearningEngine } from '@chimera/learning';
 import { ToolRegistry, ToolExecutor, allTools } from '@chimera/tools';
@@ -20,9 +20,11 @@ import { cleanupStaleWorktrees, removeWorktree } from '@chimera/isolation';
 // @chimera/tui depends on Ink, which is ESM with top-level await.
 // Loading it synchronously fails under Node ≥ 22 when this CJS module requires it.
 // We import it dynamically inside `startTui()` instead.
-import type { Message, Agent, CostData, EventLogEntry, TUIHandle } from '@chimera/tui';
+import type { Message, Agent, CostData, EventLogEntry, TUIHandle, DiffFile } from '@chimera/tui';
 import type { ToolActivity } from '@chimera/tui';
 import type { AgentRole } from '@chimera/core';
+import { createFallbackProvider } from './fallback-provider.js';
+import { runSetup } from './commands/setup.js';
 
 function adaptProvider(provider: ModelProvider): LLMProvider {
   return {
@@ -80,6 +82,93 @@ function adaptProvider(provider: ModelProvider): LLMProvider {
   };
 }
 
+/**
+ * Format a provider error into a user-actionable message.
+ * Instead of "Rate limit exceeded: HTTP 429", the user sees which provider
+ * failed, what it means, and what to do about it.
+ */
+function formatProviderError(err: unknown, providerName?: string): string {
+  if (err instanceof RateLimitError) {
+    const provider = err.provider ?? providerName ?? 'your provider';
+    const retryHint = err.retryAfter
+      ? ` Retry after ${err.retryAfter}s.`
+      : '';
+    return [
+      `Rate limit hit on ${provider}.`,
+      `This usually means you've exceeded the API's requests-per-minute limit.${retryHint}`,
+      `Tips:`,
+      `  - Wait a minute and try again`,
+      `  - Add more providers to .chimera/config.yaml for automatic failover`,
+      `  - Check your API key quota at the provider's dashboard`,
+    ].join('\n');
+  }
+  if (err instanceof ProviderUnavailableError) {
+    const provider = err.provider ?? providerName ?? 'your provider';
+    return [
+      `Provider unavailable: ${provider}.`,
+      `The service may be down, the model may be deprecated, or your API key may be invalid.`,
+      `Tips:`,
+      `  - Run \`chimera setup\` to reconfigure your providers`,
+      `  - Check the provider's status page`,
+      `  - Verify your API key is correct in .env`,
+    ].join('\n');
+  }
+  if (err instanceof ProviderError) {
+    const provider = err.provider ?? providerName ?? 'your provider';
+    const status = err.statusCode ? ` (HTTP ${err.statusCode})` : '';
+    return [
+      `Provider error from ${provider}${status}: ${err.message}`,
+      `Tips:`,
+      `  - Check your API key and model name in .chimera/config.yaml`,
+      `  - Run \`chimera setup\` to reconfigure`,
+    ].join('\n');
+  }
+  return err instanceof Error ? err.message : String(err);
+}
+
+/**
+ * Validate that at least one provider can be created successfully.
+ * Called on startup to fail fast with a clear message instead of discovering
+ * a missing API key mid-task.
+ */
+function validateStartupProviders(mapped: { writer?: ModelProvider; reviewer?: ModelProvider; challenger?: ModelProvider; fallback: ModelProvider[] }): void {
+  const real = mapped.fallback.filter((p) => p.getModel().provider !== 'mock');
+  if (real.length === 0 && mapped.fallback.length > 0) {
+    // Only mock providers — warn but don't block
+    console.log(
+      '  \u26a0 No real API keys found \u2014 using offline mock provider.',
+    );
+    console.log('  Run `chimera setup` to configure real providers.\n');
+  }
+  if (mapped.fallback.length === 0) {
+    console.error(
+      '\n\u2717 No providers available. Configure at least one provider:',
+    );
+    console.error('  - Run `chimera setup` for interactive configuration');
+    console.error('  - Or set ANTHROPIC_API_KEY, OPENAI_API_KEY, or GOOGLE_API_KEY in .env\n');
+    process.exit(1);
+  }
+}
+
+/**
+ * Fully-wired run context, produced by `buildRunContext()` and consumed by
+ * every entry point (one-shot run, REPL, TUI, resume, slash commands).
+ * The orchestrator is created with a live `ModelRegistry` plus active
+ * `BudgetEnforcer`/`RateLimiter` so the DeliberationEngine path is live.
+ */
+export interface RunContext {
+  orchestrator: SessionOrchestrator;
+  writer?: ModelProvider;
+  reviewer?: ModelProvider;
+  challenger?: ModelProvider;
+  registry: ModelRegistry;
+  costTracker: ProviderCostTracker;
+  budgetEnforcer: BudgetEnforcer;
+  rateLimiter: RateLimiter;
+  toolRegistry: ToolRegistry;
+  toolExecutor: ToolExecutor;
+}
+
 export class CliRouter {
   private program: Command;
   private verbose = false;
@@ -102,7 +191,15 @@ export class CliRouter {
     this.setupCommands();
   }
 
-  private async initOrchestrator(): Promise<SessionOrchestrator> {
+  /**
+   * Build a fully-wired run context: tools, resolved providers, a live
+   * `ModelRegistry`, active `BudgetEnforcer`/`RateLimiter`, and a
+   * `SessionOrchestrator` that receives all of them. Previously this method
+   * omitted `options.registry` and the enforcers, which left `_registry` null
+   * and silently disabled the entire DeliberationEngine
+   * (solo/duo/trio/fusion/hive/swarm/auto).
+   */
+  private async buildRunContext(): Promise<RunContext> {
     const eventStream = new EventStream();
 
     if (this.verbose) {
@@ -111,21 +208,107 @@ export class CliRouter {
       });
     }
 
-    // Wire up tool system
-    const registry = new ToolRegistry();
-    const executor = new ToolExecutor(
-      registry,
+    // Wire up tool system (kept intact — tools must still register).
+    const toolRegistry = new ToolRegistry();
+    const toolExecutor = new ToolExecutor(
+      toolRegistry,
       () => 'allow' as const, // Default: allow all tools
     );
     for (const tool of allTools) {
-      registry.register(tool as unknown as Parameters<typeof registry.register>[0]);
+      toolRegistry.register(tool as unknown as Parameters<typeof toolRegistry.register>[0]);
     }
 
-    return new SessionOrchestrator(
-      eventStream,
-      { registry: registry as unknown as ToolRegistryInterface, executor: executor as unknown as ToolExecutorInterface },
-      process.cwd(),
+    // Resolve providers (reuse existing resolution — never duplicate it).
+    const mapped = await this.getRoleMappedProviders();
+    let { writer, reviewer, challenger } = mapped;
+    if (!writer && !reviewer && !challenger) {
+      // No role mapping (e.g. only env-based mocks); derive from the fallback list.
+      writer = mapped.fallback[0];
+      reviewer = mapped.fallback[1] ?? mapped.fallback[0];
+      challenger = mapped.fallback[2] ?? mapped.fallback[1] ?? mapped.fallback[0];
+    }
+    const resolved = [writer, reviewer, challenger].filter(Boolean) as ModelProvider[];
+
+    // Build the registry from the resolved providers. Start off the hardcoded
+    // default models and skip async cache loading (offline-safe); then layer
+    // in live metadata from whatever providers are actually wired.
+    const registry = new ModelRegistry(undefined, { skipCacheLoading: true });
+    for (const p of resolved) {
+      const info = p.getModel();
+      const pricing = p.getPricing();
+      const modelEntry: ModelEntry = {
+        id: info.id || info.name,
+        name: info.name,
+        provider: info.provider,
+        contextWindow: info.contextWindow,
+        maxOutputTokens: info.maxOutputTokens,
+        pricing: {
+          inputPerMillion: pricing.inputPerMillion,
+          outputPerMillion: pricing.outputPerMillion,
+          cacheReadPerMillion: pricing.cacheReadPerMillion,
+          cacheWritePerMillion: pricing.cacheWritePerMillion,
+        },
+        capabilities: {
+          toolCalling: p.supportsToolCalling(),
+          structuredOutput: p.supportsStructuredOutput(),
+          vision: p.supportsVision(),
+          reasoning: p.supportsReasoning(),
+          parallelToolCalls: false,
+        },
+        degradationThreshold: 0.75,
+        tier: info.provider === 'mock' ? 'cheap' : 'frontier',
+      };
+      try {
+        registry.upsert(modelEntry);
+      } catch {
+        // A provider with an odd id/partial entry shouldn't break startup;
+        // the default hardcoded models already in the registry remain.
+      }
+    }
+
+    // Cost tracking + enforceable budgets from the resolved constraints.
+    const costTracker = new ProviderCostTracker(registry);
+    const budgetEnforcer = new BudgetEnforcer(
+      {
+        perTask: 10,
+        perSession: 20,
+        perDay: 50,
+        alertThresholds: [0.5, 0.75, 0.9],
+      },
+      costTracker,
     );
+    const rateLimiter = new RateLimiter({ rpm: 60, tpm: 1_000_000 });
+
+    const orchestrator = new SessionOrchestrator(
+      eventStream,
+      { registry: toolRegistry as unknown as ToolRegistryInterface, executor: toolExecutor as unknown as ToolExecutorInterface },
+      process.cwd(),
+      undefined,
+      {
+        registry,
+        budgetEnforcer,
+        rateLimiter,
+        memoryPersistence: this.memory,
+      },
+    );
+
+    return {
+      orchestrator,
+      writer,
+      reviewer,
+      challenger,
+      registry,
+      costTracker,
+      budgetEnforcer,
+      rateLimiter,
+      toolRegistry,
+      toolExecutor,
+    };
+  }
+
+  /** Thin backward-compatible accessor. Prefer `buildRunContext()`. */
+  private async initOrchestrator(): Promise<SessionOrchestrator> {
+    return (await this.buildRunContext()).orchestrator;
   }
 
   private buildProviderFromEntry(entry: ResolvedProvider): ModelProvider | null {
@@ -207,34 +390,74 @@ export class CliRouter {
       oal: 'Optimizing',
       auto: 'Auto-selecting',
     };
-
-    console.log(`\n⚙ Chimera [${mode}] — ${label[mode]}...\n`);
-
+  
+    console.log(`\n\u2699 Chimera [${mode}] \u2014 ${label[mode]}...\n`);
+  
     // Auto-generate config from env vars (fetches models from API if needed)
     if (!configExists()) {
       const generated = await autoGenerateConfig();
       if (generated) {
-        console.log(`  ✓ Auto-configured from environment (${generated.providers.length} providers)`);
+        console.log(`  \u2713 Auto-configured from environment (${generated.providers.length} providers)`);
       }
     }
-
+  
     const mapped = await this.getRoleMappedProviders();
-    const writer = adaptProvider(mapped.writer ?? mapped.fallback[0]);
-    const reviewer = adaptProvider(mapped.reviewer ?? mapped.writer ?? mapped.fallback[0]);
+  
+    // #6 — Validate providers on startup (fail fast)
+    validateStartupProviders(mapped);
+  
+    // #1 — Use FallbackChain when multiple providers are available.
+    // Instead of a single writer that dies on the first 429, the fallback
+    // chain tries each provider in order before giving up.
+    const allProviders = mapped.fallback;
+    const writer = allProviders.length > 1
+      ? createFallbackProvider(allProviders, (event) => {
+          if (event.type === 'fallback') {
+            console.log(`  \u26a0 ${event.from} failed (${event.error.message.slice(0, 60)}), falling back to ${event.to}...`);
+          }
+        })
+      : adaptProvider(allProviders[0]);
+    const reviewer = mapped.reviewer
+      ? adaptProvider(mapped.reviewer)
+      : (allProviders.length > 1 ? createFallbackProvider(allProviders) : adaptProvider(allProviders[0]));
     const challenger = mapped.challenger ? adaptProvider(mapped.challenger) : undefined;
-
+  
     const orchestrator = await this.initOrchestrator();
-
+  
+    // #4 — Tool execution visibility: stream tool activity to the terminal
+    // so the user sees what the agent is doing in real time.
+    orchestrator.getEventStream().subscribe('*', (event) => {
+      if (event.type === 'tool_call_requested') {
+        const call = (event as any).call as { tool?: string; args?: Record<string, unknown> } | undefined;
+        const toolName = call?.tool ?? 'unknown';
+        const argsPreview = call?.args
+          ? ' ' + JSON.stringify(call.args).slice(0, 80)
+          : '';
+        console.log(`  \u25b6 [tool] ${toolName}${argsPreview}`);
+      } else if (event.type === 'tool_call_result') {
+        const result = (event as any).result as { tool?: string; exitCode?: number } | undefined;
+        const status = result?.exitCode !== undefined && result.exitCode !== 0
+          ? `\u2717 exit ${result.exitCode}`
+          : '\u2713 ok';
+        console.log(`  \u25c0 [tool] ${result?.tool ?? 'unknown'} ${status}`);
+      } else if ((event as any).type === 'compaction_triggered') {
+        const e = event as any;
+        console.log(`  \u2a5d [compaction] freed ~${e.tokensSaved ?? '?'} tokens`);
+      }
+    });
+  
     try {
       const result = await orchestrator.execute({
         task,
         mode,
         providers: { writer, reviewer, ...(challenger ? { challenger } : {}) },
       });
-
+  
       this.printResult(result);
     } catch (err) {
-      console.error(`\n✗ Error: ${err instanceof Error ? err.message : String(err)}\n`);
+      // #3 — Better error messages for provider failures
+      const msg = formatProviderError(err);
+      console.error(`\n\u2717 Error:\n${msg}\n`);
       process.exit(1);
     }
   }
@@ -516,6 +739,18 @@ export class CliRouter {
       });
 
     this.program
+      .command('setup')
+      .description('Interactive setup for providers, API keys, and roles')
+      .action(async () => {
+        try {
+          await runSetup(process.cwd());
+        } catch (err) {
+          console.error(`\n\u2717 Setup failed: ${err instanceof Error ? err.message : String(err)}\n`);
+          process.exit(1);
+        }
+      });
+
+    this.program
       .command('cleanup')
       .description('Clean up stale worktrees')
       .option('-d, --dir <dir>', 'worktree directory to scan', '.chimera/worktrees')
@@ -596,8 +831,22 @@ export class CliRouter {
     }
 
     const mapped = await this.getRoleMappedProviders();
-    const writer = adaptProvider(mapped.writer ?? mapped.fallback[0]);
-    const reviewer = adaptProvider(mapped.reviewer ?? mapped.writer ?? mapped.fallback[0]);
+
+    // #6 — Validate providers before launching TUI
+    validateStartupProviders(mapped);
+
+    // #1 — Use FallbackChain in TUI mode too
+    const allProvidersTui = mapped.fallback;
+    const writer = allProvidersTui.length > 1
+      ? createFallbackProvider(allProvidersTui, (event) => {
+          if (event.type === 'fallback') {
+            console.log(`  \u26a0 ${event.from} failed, falling back to ${event.to}...`);
+          }
+        })
+      : adaptProvider(allProvidersTui[0]);
+    const reviewer = mapped.reviewer
+      ? adaptProvider(mapped.reviewer)
+      : (allProvidersTui.length > 1 ? createFallbackProvider(allProvidersTui) : adaptProvider(allProvidersTui[0]));
     const challenger = mapped.challenger ? adaptProvider(mapped.challenger) : undefined;
     const orchestrator = await this.initOrchestrator();
     const sessionId = this.sessionStore.generateSessionId();
@@ -609,6 +858,79 @@ export class CliRouter {
     let currentMode: Mode = initialMode;
     let currentPreset: DeliberationMode = 'solo';
     let activeTool: ToolActivity | undefined;
+    let currentDiffFiles: DiffFile[] = [];
+    const conversationHistory: Array<{ role: string; content: string }> = [];
+
+    /** Derive aggregate token usage from the live agent list. */
+    const computeTokenUsage = (): { input: number; output: number; total: number } => {
+      const input = currentAgents.reduce((s, a) => s + a.tokenUsage.input, 0);
+      const output = currentAgents.reduce((s, a) => s + a.tokenUsage.output, 0);
+      return { input, output, total: input + output };
+    };
+
+    /**
+     * Collect proposed changes for the DiffViewer. Reads `git diff` for the
+     * paths referenced by a `patch_proposed` event (falls back to the full
+     * working tree when no files are named). Safe: never throws — a missing
+     * repo or git failure simply yields an empty list.
+     */
+    const collectDiffFiles = (files?: string[]): DiffFile[] => {
+      try {
+        const { execSync } = require('node:child_process') as typeof import('node:child_process');
+        const targets = files && files.length > 0 ? files.join(' ') : '.';
+        const raw = execSync(`git diff --no-color ${targets}`, { cwd: workspaceRoot, encoding: 'utf8' });
+        if (!raw.trim()) return [];
+        return parseGitDiff(raw);
+      } catch {
+        return [];
+      }
+    };
+
+    /** Parse `git diff` output into structured DiffFile hunks. */
+    const parseGitDiff = (raw: string): DiffFile[] => {
+      const files: DiffFile[] = [];
+      const fileChunks = raw.split(/^(?=diff --git )/m);
+      for (const chunk of fileChunks) {
+        const header = chunk.match(/^diff --git a\/(.+?) b\/(.+?)\n/);
+        if (!header) continue;
+        const path = header[2];
+        const hunks: DiffFile['hunks'] = [];
+        let additions = 0;
+        let deletions = 0;
+        const lines = chunk.split('\n');
+        let cur: DiffFile['hunks'][number] | null = null;
+        let oldLine = 0;
+        let newLine = 0;
+        for (let i = 0; i < lines.length; i++) {
+          const line = lines[i];
+          const hunkHeader = line.match(/^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/);
+          if (hunkHeader) {
+            if (cur) hunks.push(cur);
+            oldLine = Number(hunkHeader[1]);
+            newLine = Number(hunkHeader[2]);
+            cur = { oldStart: oldLine, oldLines: 0, newStart: newLine, newLines: 0, lines: [] };
+            continue;
+          }
+          if (!cur) continue;
+          if (line.startsWith('+') && !line.startsWith('+++')) {
+            additions++;
+            cur.newLines++;
+            cur.lines.push({ type: 'addition', content: line.slice(1), newLineNum: newLine++ });
+          } else if (line.startsWith('-') && !line.startsWith('---')) {
+            deletions++;
+            cur.oldLines++;
+            cur.lines.push({ type: 'deletion', content: line.slice(1), oldLineNum: oldLine++ });
+          } else if (line.startsWith(' ') || line.startsWith('\\')) {
+            cur.oldLines++;
+            cur.newLines++;
+            cur.lines.push({ type: 'context', content: line.slice(1), oldLineNum: oldLine++, newLineNum: newLine++ });
+          }
+        }
+        if (cur) hunks.push(cur);
+        if (hunks.length > 0) files.push({ path, additions, deletions, hunks });
+      }
+      return files;
+    };
 
     /** Build cost data from agent token usage. */
     const buildLiveCostData = (): CostData => {
@@ -656,6 +978,8 @@ export class CliRouter {
       messages: currentMessages,
       agents: currentAgents,
       costData: currentCostData,
+      tokenUsage: computeTokenUsage(),
+      diffFiles: currentDiffFiles,
       events: currentEvents,
       sessions: await loadSessions(),
       sessionId,
@@ -672,7 +996,7 @@ export class CliRouter {
           content: text,
           timestamp: Date.now()
         }];
-        tui.update({ messages: currentMessages, agents: currentAgents, activeTool: undefined });
+        tui.update({ messages: currentMessages, agents: currentAgents, tokenUsage: computeTokenUsage(), diffFiles: currentDiffFiles, activeTool: undefined });
 
         try {
           // TODO: Phase 2 — wire up WorkflowDispatcher for background execution
@@ -681,6 +1005,7 @@ export class CliRouter {
             mode: currentMode,
             providers: { writer, reviewer, ...(challenger ? { challenger } : {}) },
             preset: currentPreset,
+            conversationHistory,
           });
 
           // If the deliberation produced empty output (degraded provider),
@@ -714,14 +1039,27 @@ export class CliRouter {
           // (deliberation_result / final_response). Just sync state.
           tui.update({ messages: currentMessages });
 
+          // Accumulate conversation history for context in subsequent turns
+          const lastAssistantMsg = currentMessages[currentMessages.length - 1];
+          if (lastAssistantMsg?.role === 'assistant' && lastAssistantMsg.content) {
+            conversationHistory.push({ role: 'user', content: text });
+            conversationHistory.push({ role: 'assistant', content: lastAssistantMsg.content.slice(0, 2000) });
+            // Cap history at 10 turns (20 messages) to prevent context overflow
+            if (conversationHistory.length > 20) {
+              conversationHistory.splice(0, conversationHistory.length - 20);
+            }
+          }
+
           // Refresh cost and sessions after task completes
           currentCostData = buildLiveCostData();
           tui.update({
             costData: currentCostData,
+            tokenUsage: computeTokenUsage(),
+            diffFiles: currentDiffFiles,
             sessions: await loadSessions(),
           });
         } catch (err) {
-          const errorMsg = err instanceof Error ? err.message : String(err);
+          const errorMsg = formatProviderError(err);
 
           // Show the error as an assistant message so the user sees it in chat
           currentMessages = [...currentMessages, {
@@ -807,6 +1145,10 @@ export class CliRouter {
         currentAgents = currentAgents.map(a =>
           a.id === event.agentId ? { ...a, status: 'completed' as const } : a
         );
+      } else if (event.type === 'patch_proposed') {
+        // Surface proposed changes in the DiffViewer (/diff, Ctrl+D).
+        const files = (event as any).files as string[] | undefined;
+        currentDiffFiles = collectDiffFiles(files);
       }
 
       // ── Workflow dispatch lifecycle ────────────────────────────────
@@ -929,9 +1271,18 @@ export class CliRouter {
         }
 
         if (lastMsg && lastMsg.role === 'assistant') {
+          // Preserve analysis from deliberation_result if content is the same
+          // (avoids overwriting analysis with undefined when both events fire)
+          const contentChanged = content !== lastMsg.content;
           currentMessages = [
             ...currentMessages.slice(0, -1),
-            { ...lastMsg, content, timestamp: Date.now() }
+            {
+              ...lastMsg,
+              content,
+              // Only clear analysis if content actually changed and event has no analysis
+              analysis: contentChanged ? (lastMsg.analysis ?? undefined) : lastMsg.analysis,
+              timestamp: Date.now(),
+            }
           ];
         } else {
           currentMessages = [...currentMessages, {
@@ -951,6 +1302,8 @@ export class CliRouter {
         agents: currentAgents,
         messages: currentMessages,
         costData: currentCostData,
+        tokenUsage: computeTokenUsage(),
+        diffFiles: currentDiffFiles,
         activeTool,
       });
     });
@@ -985,11 +1338,15 @@ export class CliRouter {
     if (!configExists()) {
       const generated = await autoGenerateConfig();
       if (generated) {
-        console.log(`  ✓ Auto-configured from environment (${generated.providers.length} providers)`);
+        console.log(`  \u2713 Auto-configured from environment (${generated.providers.length} providers)`);
       }
     }
 
-    console.log('\n  Chimera — interactive mode');
+    // #6 — Validate providers before entering REPL
+    const preflightMapped = await this.getRoleMappedProviders();
+    validateStartupProviders(preflightMapped);
+
+    console.log('\n  Chimera \u2014 interactive mode');
     console.log('  Type your task, or /help for commands.\n');
 
     let currentMode: Mode = 'code';
@@ -1120,7 +1477,8 @@ export class CliRouter {
           });
         }
       } catch (err) {
-        console.error(`\n✗ Error: ${err instanceof Error ? err.message : String(err)}\n`);
+        const msg = formatProviderError(err);
+        console.error(`\n\u2717 Error:\n${msg}\n`);
       }
 
       rl.prompt();

@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useCallback } from 'react';
 import { Box, Text } from 'ink';
 import type { Message, ToolCallIndicator } from '../types.js';
 import { Viewport } from './viewport.js';
@@ -10,6 +10,7 @@ interface ChatProps {
   messages: Message[];
   focused?: boolean;
   height?: number;
+  width?: number;
 }
 
 const ToolCallBadge: React.FC<{ indicator: ToolCallIndicator }> = ({ indicator }) => {
@@ -32,6 +33,14 @@ const ToolCallBadge: React.FC<{ indicator: ToolCallIndicator }> = ({ indicator }
 
 const AnalysisSection: React.FC<{ analysis: Message['analysis'] }> = ({ analysis }) => {
   if (!analysis) return null;
+
+  // Hide analysis for straightforward tasks where the score adds visual noise
+  // (e.g. simple conversational questions). Show when there are real conflicts,
+  // unique insights, or the agent was genuinely uncertain.
+  const hasConflicts = analysis.conflicts.length > 0;
+  const hasInsights = analysis.uniqueInsights.length > 0;
+  const isTrivial = !hasConflicts && !hasInsights && analysis.confidence >= 0.7;
+  if (isTrivial) return null;
 
   const summaryParts: string[] = [];
   if (analysis.consensus.length > 0) {
@@ -63,6 +72,45 @@ const AnalysisSection: React.FC<{ analysis: Message['analysis'] }> = ({ analysis
   );
 };
 
+/**
+ * Estimate how many terminal rows a message will occupy.
+ *
+ * Layout per message:
+ *   Line 1: "▸ You: HH:MM:SS" header
+ *   Line 2+: content (word-wrapped to fitWidth)
+ *   Optional: streaming cursor, tool call badges, analysis section
+ *   Margin: 1 row between messages (non-system only)
+ */
+function estimateMessageHeight(message: Message, fitWidth: number): number {
+  let rows = 1; // header line (role + timestamp)
+
+  // Content area: subtract marginLeft=2 from the available width.
+  const contentWidth = Math.max(1, fitWidth - 4);
+  const content = message.content ?? '';
+  // Count explicit newlines + estimate wrapping per line.
+  const lines = content.split('\n');
+  for (const line of lines) {
+    rows += Math.max(1, Math.ceil(line.length / contentWidth));
+  }
+
+  // Streaming cursor adds 1 row while active.
+  if (message.streaming) rows += 1;
+
+  // Tool call badges: 1 row each.
+  if (message.toolCalls) rows += message.toolCalls.length;
+
+  // Analysis section: header (1) + optional thought (1-2).
+  if (message.analysis) {
+    rows += 1; // analysis header
+    if (message.analysis.thought) rows += 1;
+  }
+
+  // Margin between messages (non-system).
+  if (message.role !== 'system') rows += 1;
+
+  return rows;
+}
+
 const MessageBubble: React.FC<{ message: Message; isSelected: boolean }> = ({ message, isSelected }) => {
   const prefix =
     message.role === 'user' ? 'You' :
@@ -86,8 +134,6 @@ const MessageBubble: React.FC<{ message: Message; isSelected: boolean }> = ({ me
         <Text dimColor> {new Date(message.timestamp).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false })}</Text>
       </Box>
       <Box marginLeft={2} flexDirection="column" width="100%" flexShrink={1}>
-        {/* Render assistant/user messages through the markdown renderer.
-            System messages are plain text (command output). */}
         {isSystem ? (
           <Text dimColor>{message.content}</Text>
         ) : (
@@ -103,7 +149,12 @@ const MessageBubble: React.FC<{ message: Message; isSelected: boolean }> = ({ me
   );
 };
 
-export const Chat: React.FC<ChatProps> = ({ messages, focused = false, height = 20 }) => {
+export const Chat: React.FC<ChatProps> = ({ messages, focused = false, height = 20, width = 80 }) => {
+  const getItemHeight = useCallback(
+    (msg: Message) => estimateMessageHeight(msg, width),
+    [width],
+  );
+
   return (
     <Box flexDirection="column" height={height} overflow="hidden">
       {messages.length === 0 && (
@@ -117,6 +168,7 @@ export const Chat: React.FC<ChatProps> = ({ messages, focused = false, height = 
         items={messages}
         height={height}
         focused={focused}
+        getItemHeight={getItemHeight}
         renderItem={(msg, _index, isSelected) => (
           <MessageBubble message={msg} isSelected={isSelected} />
         )}

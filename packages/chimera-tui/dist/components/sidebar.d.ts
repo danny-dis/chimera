@@ -1,10 +1,9 @@
 import React from 'react';
-import type { Mode, DeliberationMode } from '@chimera/core';
 import type { Agent, CostData } from '../types.js';
 interface SidebarProps {
     sessionId: string;
-    mode: Mode;
-    preset: DeliberationMode;
+    mode: import('@chimera/core').Mode;
+    preset: import('@chimera/core').DeliberationMode;
     agents: Agent[];
     costData: CostData;
     tokenUsage?: {
@@ -15,8 +14,8 @@ interface SidebarProps {
     workingDir?: string;
     instructions?: string[];
     contentWidth?: number;
-    onModeChange?: (mode: Mode) => void;
-    onPresetChange?: (preset: DeliberationMode) => void;
+    onModeChange?: (mode: import('@chimera/core').Mode) => void;
+    onPresetChange?: (preset: import('@chimera/core').DeliberationMode) => void;
 }
 export declare const Sidebar: React.FC<SidebarProps>;
 export {};

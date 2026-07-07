@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { Box, Text, useInput } from 'ink';
 import type { Mode, DeliberationMode } from '@chimera/core';
 import { Chat } from './components/chat.js';
@@ -10,6 +10,7 @@ import { StatusBar } from './components/status-bar.js';
 import { SessionBrowser } from './components/session-browser.js';
 import { DiffViewer } from './components/diff-viewer.js';
 import { useLayout } from './hooks/use-layout.js';
+import { zen } from './theme.js';
 import { useFocus } from './hooks/use-focus.js';
 import { runCommand, autocompleteCommand } from './commands/commands.js';
 import type { CommandContext } from './commands/commands.js';
@@ -44,7 +45,7 @@ export const TUI: React.FC<TUIProps> = ({
   const [events, setEvents] = useState<EventLogEntry[]>(initialEvents);
   const [mode, setMode] = useState<Mode>(initialMode);
   const [preset, setPreset] = useState<DeliberationMode>(initialPreset);
-  const [sidebarVisible, setSidebarVisible] = useState(false);
+  const [sidebarVisible, setSidebarVisible] = useState(true);
   const [activeOverlay, setActiveOverlay] = useState<Overlay>(null);
   const [commandHistory, setCommandHistory] = useState<string[]>([]);
 
@@ -135,9 +136,23 @@ export const TUI: React.FC<TUIProps> = ({
     onPresetChange?.(newPreset);
   }, [onPresetChange]);
 
+  // Derive token usage from agents when the host doesn't supply it.
+  const derivedTokenUsage = useMemo<{ input: number; output: number; total: number }>(() => {
+    if (tokenUsage) return tokenUsage;
+    const input = agents.reduce((s, a) => s + a.tokenUsage.input, 0);
+    const output = agents.reduce((s, a) => s + a.tokenUsage.output, 0);
+    return { input, output, total: input + output };
+  }, [tokenUsage, agents]);
+
   useInput((input, key) => {
     if (key.ctrl && input === 'b') {
       setSidebarVisible((prev) => !prev);
+      return;
+    }
+    if (key.ctrl && input === 'd') {
+      if (diffFiles.length > 0) {
+        setActiveOverlay((prev) => (prev === 'diff' ? null : 'diff'));
+      }
       return;
     }
     if (key.escape) {
@@ -155,7 +170,7 @@ export const TUI: React.FC<TUIProps> = ({
   if (!layout.isMinSize) {
     return (
       <Box flexDirection="column" alignItems="center" justifyContent="center" height={layout.height}>
-        <Text bold color="cyan">CHIMERA</Text>
+        <Text bold color={zen.accent}>CHIMERA</Text>
         <Box marginTop={1}>
           <Text dimColor>Terminal too small. Resize to at least 80x24.</Text>
         </Box>
@@ -198,12 +213,12 @@ export const TUI: React.FC<TUIProps> = ({
           ) : activeOverlay === 'agents' ? (
             <AgentDashboard agents={agents} />
           ) : activeOverlay === 'events' ? (
-            <Box flexGrow={1} borderStyle="round" borderColor="gray">
+            <Box flexGrow={1} borderStyle="round" borderColor={zen.border}>
               <EventLog events={events} height={chatHeight} />
             </Box>
           ) : (
-            <Box flexGrow={1} borderStyle="round" borderColor="gray" paddingX={1}>
-              <Chat messages={messages} focused={focus.isFocused(1)} height={chatHeight} />
+            <Box flexGrow={1} borderStyle="round" borderColor={zen.border} paddingX={1}>
+              <Chat messages={messages} focused={focus.isFocused(1)} height={chatHeight} width={layout.chatWidth} />
             </Box>
           )}
           <Box marginTop={1} height={inputHeight}>
@@ -213,18 +228,27 @@ export const TUI: React.FC<TUIProps> = ({
               disabled={activeOverlay !== null}
             />
           </Box>
+          {messages.length === 0 && activeOverlay === null && (
+            <Box marginTop={1}>
+              <Text dimColor>
+                Tip: type a task, run <Text color={zen.accent}>/help</Text> for commands,
+                {' '}<Text color={zen.accent}>Ctrl+B</Text> toggles the sidebar,
+                {' '}<Text color={zen.accent}>/agents</Text> <Text color={zen.accent}>/events</Text> <Text color={zen.accent}>/diff</Text> for details.
+              </Text>
+            </Box>
+          )}
         </Box>
 
         {/* Sidebar (conditional) */}
         {sidebarVisible && (
-          <Box flexDirection="column" width={layout.sidebarWidth} marginLeft={1} borderStyle="single" borderColor="gray">
+          <Box flexDirection="column" width={layout.sidebarWidth} marginLeft={1} borderStyle="single" borderColor={zen.border}>
             <Sidebar
               sessionId={sessionId}
               mode={mode}
               preset={preset}
               agents={agents}
               costData={costData}
-              tokenUsage={tokenUsage}
+              tokenUsage={derivedTokenUsage}
               workingDir={workingDir}
               instructions={instructions}
               contentWidth={layout.sidebarContentWidth}
@@ -236,8 +260,12 @@ export const TUI: React.FC<TUIProps> = ({
       </Box>
 
       {/* Footer */}
-      <Box height={footerHeight} justifyContent="space-between" borderStyle="single" borderColor="gray" paddingX={1}>
-        <Text dimColor>Ctrl+B Sidebar | Ctrl+C Exit</Text>
+      <Box height={footerHeight} justifyContent="space-between" borderStyle="single" borderColor={zen.border} paddingX={1}>
+        <Text dimColor>
+          <Text color={zen.accent}>Ctrl+B</Text> Sidebar · <Text color={zen.accent}>Tab</Text> Focus ·
+          <Text color={zen.accent}>/help</Text> · <Text color={zen.accent}>/agents</Text> <Text color={zen.accent}>/events</Text> <Text color={zen.accent}>/diff</Text> ·
+          <Text color={zen.accent}>Esc</Text> Close · <Text color={zen.accent}>Ctrl+C</Text> Exit
+        </Text>
         <Text dimColor>Session: {sessionId}</Text>
       </Box>
     </Box>

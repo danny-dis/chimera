@@ -1,8 +1,8 @@
 import React from 'react';
 import type { Mode } from '@chimera/core';
 interface ModeSelectorProps {
-    currentMode: Mode;
-    onModeChange?: (mode: Mode) => void;
+    mode: Mode;
+    onSelect?: (mode: Mode) => void;
     focused?: boolean;
     compact?: boolean;
     contentWidth?: number;

@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Box, Text } from 'ink';
 import Spinner from 'ink-spinner';
 import { statusSymbols, budgetColor, formatTime } from './tui-utils.js';
-import { zen } from '../theme.js';
+import { zen, MODE_META } from '../theme.js';
 // ── Mini cost bar (10 chars wide) ───────────────────────────────────────
 const MiniCostBar = ({ used, total, width = 10, }) => {
     if (total <= 0)
@@ -40,7 +40,10 @@ export const StatusBar = ({ mode, costData, agents, activeTool, sidebarVisible =
                 " "),
             React.createElement(Text, { dimColor: true }, "v0.0.1"),
             React.createElement(Text, null, " "),
-            React.createElement(Text, { color: zen.accent, bold: true }, mode)),
+            React.createElement(Text, { color: zen.accent, bold: true },
+                MODE_META[mode]?.icon ?? '?',
+                " ",
+                mode)),
         React.createElement(Box, { marginRight: 1 },
             React.createElement(Text, { color: costColor, bold: true },
                 "$",

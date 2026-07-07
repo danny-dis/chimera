@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Box, Text, useInput } from 'ink';
 import type { Session } from '../types.js';
+import { zen } from '../theme.js';
 import { formatCost, formatDateTime } from './tui-utils.js';
 
 interface SessionBrowserProps {
@@ -54,9 +55,9 @@ export const SessionBrowser: React.FC<SessionBrowserProps> = ({
   });
 
   return (
-    <Box flexDirection="column" borderStyle="double" borderColor="magenta" paddingX={1}>
+    <Box flexDirection="column" borderStyle="double" borderColor={zen.agent} paddingX={1}>
       <Box marginBottom={1}>
-        <Text bold color="magenta">
+        <Text bold color={zen.agent}>
           Sessions
         </Text>
         <Text dimColor> ({sessions.length})</Text>
@@ -76,7 +77,7 @@ export const SessionBrowser: React.FC<SessionBrowserProps> = ({
               <Text dimColor> </Text>
               <Text>{session.taskSummary.slice(0, 40)}</Text>
               <Text dimColor> </Text>
-              <Text color="green">{formatCost(session.cost)}</Text>
+              <Text color={zen.success}>{formatCost(session.cost)}</Text>
               <Text dimColor>
                 {' '}
                 {session.messageCount}msg {session.agentCount}agents
@@ -84,7 +85,7 @@ export const SessionBrowser: React.FC<SessionBrowserProps> = ({
             </Box>
             {isSelected && isConfirming && (
               <Box marginLeft={4}>
-                <Text color="red">Press Enter to delete, Esc to cancel</Text>
+                <Text color={zen.error}>Press Enter to delete, Esc to cancel</Text>
               </Box>
             )}
           </Box>

@@ -78,7 +78,7 @@ export const DiffViewer: React.FC<DiffViewerProps> = ({ files }) => {
   });
 
   return (
-    <Box flexDirection="column" borderStyle="double" borderColor="red" paddingX={1}>
+    <Box flexDirection="column" borderStyle="double" borderColor={zen.error} paddingX={1}>
       <Box marginBottom={1}>
         <Text bold color={zen.error}>
           Diff Viewer

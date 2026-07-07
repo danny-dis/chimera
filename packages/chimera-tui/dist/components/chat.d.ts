@@ -4,6 +4,7 @@ interface ChatProps {
     messages: Message[];
     focused?: boolean;
     height?: number;
+    width?: number;
 }
 export declare const Chat: React.FC<ChatProps>;
 export {};

@@ -124,12 +124,12 @@ export const EventLog: React.FC<EventLogProps> = ({
     <Box
       flexDirection="column"
       borderStyle="round"
-      borderColor={focused ? 'cyan' : 'gray'}
+      borderColor={focused ? zen.accent : zen.border}
       paddingX={1}
       height={height + 4}
     >
       <Box marginBottom={0}>
-        <Text bold color={focused ? 'cyan' : 'white'}>
+        <Text bold color={focused ? zen.accent : zen.fg}>
           {contentWidth && contentWidth < 25 ? 'Events' : 'Event Log'}
         </Text>
         <Text dimColor>
@@ -163,7 +163,7 @@ export const EventLog: React.FC<EventLogProps> = ({
               </Box>
             );
           }
-          const color = eventTypeColors[event.type] ?? 'white';
+          const color = eventTypeColors[event.type] ?? zen.fg;
           const isCollapsed = collapsed.has(event.type);
           const summary = renderEventSummary(event);
           const isNarrow = contentWidth !== undefined && contentWidth < 30;

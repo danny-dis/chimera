@@ -1,35 +1,13 @@
 import React, { useState, useCallback } from 'react';
 import { Box, Text, useInput } from 'ink';
-import { zen } from '../theme.js';
-const presets = ['auto', 'solo', 'duo', 'trio', 'hive', 'fusion', 'swarm'];
-const presetIcons = {
-    solo: '●',
-    duo: '◉',
-    trio: '◎',
-    merge: '⬡',
-    hive: '⬡',
-    fusion: '◆',
-    swarm: '🐝',
-    auto: '⚡',
-};
-const presetDescriptions = {
-    solo: 'Single agent',
-    duo: 'Two agents',
-    trio: 'Three agents',
-    merge: 'Merge multiple agent outputs',
-    hive: 'Decompose & parallel subtasks',
-    fusion: 'Multi-model fusion',
-    swarm: 'Autonomous swarm orchestration',
-    auto: 'Automatic selection',
-};
-export const PresetSelector = ({ currentPreset, onPresetChange, focused = false, compact = false, contentWidth, }) => {
-    const [navIndex, setNavIndex] = useState(() => presets.indexOf(currentPreset));
+import { zen, PRESETS, PRESET_META } from '../theme.js';
+export const PresetSelector = ({ preset, onSelect, focused = false, compact = false, contentWidth, }) => {
+    const [navIndex, setNavIndex] = useState(() => Math.max(0, PRESETS.indexOf(preset)));
     const selectPreset = useCallback((index) => {
-        const preset = presets[index];
-        if (preset && onPresetChange) {
-            onPresetChange(preset);
-        }
-    }, [onPresetChange]);
+        const p = PRESETS[index];
+        if (p && onSelect)
+            onSelect(p);
+    }, [onSelect]);
     useInput((_input, key) => {
         if (!focused)
             return;
@@ -43,7 +21,7 @@ export const PresetSelector = ({ currentPreset, onPresetChange, focused = false,
         }
         if (key.rightArrow) {
             setNavIndex((prev) => {
-                const next = Math.min(presets.length - 1, prev + 1);
+                const next = Math.min(PRESETS.length - 1, prev + 1);
                 selectPreset(next);
                 return next;
             });
@@ -55,27 +33,26 @@ export const PresetSelector = ({ currentPreset, onPresetChange, focused = false,
         }
     });
     if (compact) {
-        return (React.createElement(Box, null,
-            React.createElement(Text, { bold: true, color: focused ? 'magenta' : 'dimColor' },
-                "Preset",
-                ' '),
-            presets.map((preset) => (React.createElement(Box, { key: preset, marginRight: 1 },
-                React.createElement(Text, { color: preset === currentPreset ? 'magenta' : zen.muted, bold: preset === currentPreset, underline: preset === currentPreset },
-                    presetIcons[preset],
+        return (React.createElement(Box, { flexWrap: "wrap" }, PRESETS.map((p) => {
+            const sel = p === preset;
+            return (React.createElement(Box, { key: p, marginRight: 1 },
+                React.createElement(Text, { color: sel ? zen.agent : zen.muted, bold: sel, underline: sel },
+                    PRESET_META[p].icon,
                     " ",
-                    preset))))));
+                    p)));
+        })));
     }
-    return (React.createElement(Box, { flexDirection: "column", borderStyle: "single", borderColor: "magenta", paddingX: 1 },
-        React.createElement(Text, { bold: true, color: "magenta" }, "Preset"),
-        presets.map((preset) => {
-            const isSelected = preset === currentPreset;
-            return (React.createElement(Box, { key: preset },
-                React.createElement(Text, { color: isSelected ? 'magenta' : zen.muted }, isSelected ? '▸ ' : '  '),
-                React.createElement(Text, { bold: isSelected, color: isSelected ? 'magenta' : zen.fg },
-                    presetIcons[preset],
+    return (React.createElement(Box, { flexDirection: "column", borderStyle: "single", borderColor: zen.agent, paddingX: 1 },
+        React.createElement(Text, { bold: true, color: zen.agent }, "Preset"),
+        PRESETS.map((p) => {
+            const isSelected = p === preset;
+            return (React.createElement(Box, { key: p },
+                React.createElement(Text, { color: isSelected ? zen.agent : zen.muted }, isSelected ? '▸ ' : '  '),
+                React.createElement(Text, { bold: isSelected, color: isSelected ? zen.agent : zen.fg },
+                    PRESET_META[p].icon,
                     " ",
-                    preset),
-                React.createElement(Text, { dimColor: true }, (!contentWidth || contentWidth >= 35) ? ` — ${presetDescriptions[preset].slice(0, Math.max(0, contentWidth ? contentWidth - 12 : 30))}` : '')));
+                    p),
+                React.createElement(Text, { dimColor: true }, (!contentWidth || contentWidth >= 35) ? ` — ${PRESET_META[p].description.slice(0, Math.max(0, contentWidth ? contentWidth - 12 : 30))}` : '')));
         })));
 };
 //# sourceMappingURL=preset-selector.js.map

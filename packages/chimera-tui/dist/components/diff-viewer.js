@@ -50,7 +50,7 @@ export const DiffViewer = ({ files }) => {
             return;
         }
     });
-    return (React.createElement(Box, { flexDirection: "column", borderStyle: "double", borderColor: "red", paddingX: 1 },
+    return (React.createElement(Box, { flexDirection: "column", borderStyle: "double", borderColor: zen.error, paddingX: 1 },
         React.createElement(Box, { marginBottom: 1 },
             React.createElement(Text, { bold: true, color: zen.error }, "Diff Viewer"),
             React.createElement(Text, { dimColor: true },
