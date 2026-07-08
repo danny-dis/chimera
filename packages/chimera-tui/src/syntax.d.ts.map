@@ -1,0 +1,1 @@
+{"version":3,"file":"syntax.d.ts","sourceRoot":"","sources":["syntax.ts"],"names":[],"mappings":"AAAA,KAAK,KAAK,GAAG,MAAM,CAAC;AAEpB,MAAM,WAAW,WAAW;IAC1B,KAAK,EAAE,MAAM,CAAC;IACd,KAAK,EAAE,KAAK,CAAC;CACd;AAgGD,wBAAgB,YAAY,CAAC,IAAI,EAAE,MAAM,EAAE,IAAI,EAAE,MAAM,GAAG,WAAW,EAAE,CA2CtE"}

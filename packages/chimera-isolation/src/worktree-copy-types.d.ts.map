@@ -1,0 +1,1 @@
+{"version":3,"file":"worktree-copy-types.d.ts","sourceRoot":"","sources":["worktree-copy-types.ts"],"names":[],"mappings":"AAAA;;;;GAIG;AAEH,MAAM,WAAW,aAAa;IAC5B,MAAM,EAAE,MAAM,CAAC;IACf,WAAW,EAAE,MAAM,CAAC;CACrB;AAED;;;;;;GAMG;AACH,MAAM,WAAW,uBAAuB;IACtC,MAAM,EAAE,aAAa,EAAE,CAAC;IACxB,OAAO,EAAE,aAAa,EAAE,CAAC;IACzB,MAAM,EAAE,aAAa,EAAE,CAAC;CACzB"}
