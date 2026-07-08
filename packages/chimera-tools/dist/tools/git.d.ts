@@ -192,5 +192,88 @@ declare const GitBranchReturnsSchema: z.ZodObject<{
     deleted?: boolean;
 }>;
 export declare const gitBranchTool: ToolDefinition<typeof GitBranchParamsSchema, typeof GitBranchReturnsSchema>;
+declare const GitInitReturnsSchema: z.ZodObject<{
+    initialized: z.ZodBoolean;
+    path: z.ZodString;
+}, "strip", z.ZodTypeAny, {
+    path?: string;
+    initialized?: boolean;
+}, {
+    path?: string;
+    initialized?: boolean;
+}>;
+export declare const gitInitTool: ToolDefinition<z.ZodObject<{}>, typeof GitInitReturnsSchema>;
+declare const GitAddParamsSchema: z.ZodObject<{
+    files: z.ZodArray<z.ZodString, "many">;
+}, "strip", z.ZodTypeAny, {
+    files?: string[];
+}, {
+    files?: string[];
+}>;
+declare const GitAddReturnsSchema: z.ZodObject<{
+    added: z.ZodArray<z.ZodString, "many">;
+    count: z.ZodNumber;
+}, "strip", z.ZodTypeAny, {
+    count?: number;
+    added?: string[];
+}, {
+    count?: number;
+    added?: string[];
+}>;
+export declare const gitAddTool: ToolDefinition<typeof GitAddParamsSchema, typeof GitAddReturnsSchema>;
+declare const GitCommitParamsSchema: z.ZodObject<{
+    message: z.ZodString;
+    authorName: z.ZodOptional<z.ZodString>;
+    authorEmail: z.ZodOptional<z.ZodString>;
+}, "strip", z.ZodTypeAny, {
+    message?: string;
+    authorName?: string;
+    authorEmail?: string;
+}, {
+    message?: string;
+    authorName?: string;
+    authorEmail?: string;
+}>;
+declare const GitCommitReturnsSchema: z.ZodObject<{
+    committed: z.ZodBoolean;
+    hash: z.ZodOptional<z.ZodString>;
+    message: z.ZodString;
+}, "strip", z.ZodTypeAny, {
+    message?: string;
+    hash?: string;
+    committed?: boolean;
+}, {
+    message?: string;
+    hash?: string;
+    committed?: boolean;
+}>;
+export declare const gitCommitTool: ToolDefinition<typeof GitCommitParamsSchema, typeof GitCommitReturnsSchema>;
+declare const GitPushParamsSchema: z.ZodObject<{
+    remote: z.ZodString;
+    branch: z.ZodString;
+    setUpstream: z.ZodDefault<z.ZodBoolean>;
+}, "strip", z.ZodTypeAny, {
+    branch?: string;
+    remote?: string;
+    setUpstream?: boolean;
+}, {
+    branch?: string;
+    remote?: string;
+    setUpstream?: boolean;
+}>;
+declare const GitPushReturnsSchema: z.ZodObject<{
+    pushed: z.ZodBoolean;
+    remote: z.ZodString;
+    branch: z.ZodString;
+}, "strip", z.ZodTypeAny, {
+    branch?: string;
+    remote?: string;
+    pushed?: boolean;
+}, {
+    branch?: string;
+    remote?: string;
+    pushed?: boolean;
+}>;
+export declare const gitPushTool: ToolDefinition<typeof GitPushParamsSchema, typeof GitPushReturnsSchema>;
 export {};
 //# sourceMappingURL=git.d.ts.map

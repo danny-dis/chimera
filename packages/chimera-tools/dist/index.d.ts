@@ -6,7 +6,7 @@ export { readFileTool, writeFileTool, listDirectoryTool } from './tools/filesyst
 export { type MediaBlock, MediaBlockSchema } from './tools/media-types.js';
 export { searchFilesTool, globFilesTool } from './tools/search.js';
 export { runShellCommandTool } from './tools/shell.js';
-export { gitStatusTool, gitDiffTool, gitLogTool, gitBranchTool } from './tools/git.js';
+export { gitStatusTool, gitDiffTool, gitLogTool, gitBranchTool, gitInitTool, gitAddTool, gitCommitTool, gitPushTool } from './tools/git.js';
 export { applyPatchTool, editBlockTool, searchReplaceTool } from './tools/edit.js';
 export { webFetchTool, webSearchTool } from './tools/web.js';
 export { todoWriteTool, todoReadTool, questionTool } from './tools/todo.js';
@@ -517,6 +517,78 @@ export declare const allTools: readonly [import("./tool-schema.js").ToolDefiniti
     created?: boolean;
     branch?: string;
     deleted?: boolean;
+}>>, import("./tool-schema.js").ToolDefinition<import("zod").ZodObject<{}, import("zod").UnknownKeysParam, import("zod").ZodTypeAny, {}, {}>, import("zod").ZodObject<{
+    initialized: import("zod").ZodBoolean;
+    path: import("zod").ZodString;
+}, "strip", import("zod").ZodTypeAny, {
+    path?: string;
+    initialized?: boolean;
+}, {
+    path?: string;
+    initialized?: boolean;
+}>>, import("./tool-schema.js").ToolDefinition<import("zod").ZodObject<{
+    files: import("zod").ZodArray<import("zod").ZodString, "many">;
+}, "strip", import("zod").ZodTypeAny, {
+    files?: string[];
+}, {
+    files?: string[];
+}>, import("zod").ZodObject<{
+    added: import("zod").ZodArray<import("zod").ZodString, "many">;
+    count: import("zod").ZodNumber;
+}, "strip", import("zod").ZodTypeAny, {
+    count?: number;
+    added?: string[];
+}, {
+    count?: number;
+    added?: string[];
+}>>, import("./tool-schema.js").ToolDefinition<import("zod").ZodObject<{
+    message: import("zod").ZodString;
+    authorName: import("zod").ZodOptional<import("zod").ZodString>;
+    authorEmail: import("zod").ZodOptional<import("zod").ZodString>;
+}, "strip", import("zod").ZodTypeAny, {
+    message?: string;
+    authorName?: string;
+    authorEmail?: string;
+}, {
+    message?: string;
+    authorName?: string;
+    authorEmail?: string;
+}>, import("zod").ZodObject<{
+    committed: import("zod").ZodBoolean;
+    hash: import("zod").ZodOptional<import("zod").ZodString>;
+    message: import("zod").ZodString;
+}, "strip", import("zod").ZodTypeAny, {
+    message?: string;
+    hash?: string;
+    committed?: boolean;
+}, {
+    message?: string;
+    hash?: string;
+    committed?: boolean;
+}>>, import("./tool-schema.js").ToolDefinition<import("zod").ZodObject<{
+    remote: import("zod").ZodString;
+    branch: import("zod").ZodString;
+    setUpstream: import("zod").ZodDefault<import("zod").ZodBoolean>;
+}, "strip", import("zod").ZodTypeAny, {
+    branch?: string;
+    remote?: string;
+    setUpstream?: boolean;
+}, {
+    branch?: string;
+    remote?: string;
+    setUpstream?: boolean;
+}>, import("zod").ZodObject<{
+    pushed: import("zod").ZodBoolean;
+    remote: import("zod").ZodString;
+    branch: import("zod").ZodString;
+}, "strip", import("zod").ZodTypeAny, {
+    branch?: string;
+    remote?: string;
+    pushed?: boolean;
+}, {
+    branch?: string;
+    remote?: string;
+    pushed?: boolean;
 }>>, import("./tool-schema.js").ToolDefinition<import("zod").ZodObject<{
     patch: import("zod").ZodString;
     path: import("zod").ZodOptional<import("zod").ZodString>;

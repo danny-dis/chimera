@@ -332,3 +332,198 @@ export const gitBranchTool: ToolDefinition<typeof GitBranchParamsSchema, typeof 
     }
   },
 };
+
+// ── Safety helpers for write tools ──────────────────────────────────────────
+
+import fs from 'fs';
+
+/**
+ * Walk UP from the workspace root looking for an existing `.git`. Used by the
+ * write tools to refuse operations that would resolve into a repo the user did
+ * not intend (e.g. a stray `.git` in a parent home directory). Returns the
+ * offending directory or null when the workspace is clear.
+ */
+function findParentGitDir(start: string): string | null {
+  let dir = path.resolve(start);
+  // Guard against infinite loop at filesystem root.
+  while (true) {
+    if (fs.existsSync(path.join(dir, '.git'))) return dir;
+    const parent = path.dirname(dir);
+    if (parent === dir) break;
+    dir = parent;
+  }
+  return null;
+}
+
+// ── git_init ────────────────────────────────────────────────────────────────
+
+const GitInitReturnsSchema = z.object({
+  initialized: z.boolean(),
+  path: z.string(),
+});
+
+export const gitInitTool: ToolDefinition<z.ZodObject<{}>, typeof GitInitReturnsSchema> = {
+  name: 'git_init',
+  description:
+    'Initialize a git repository in the current workspace. Refuses if a repo already ' +
+    'exists in the workspace, and refuses if a .git is found in any parent directory ' +
+    '(which would otherwise capture files outside the workspace).',
+  parameters: z.object({}),
+  returns: GitInitReturnsSchema,
+  category: 'git',
+  permissionLevel: 'write',
+  execute: async (_params, context: ToolContext) => {
+    const root = context.workspaceRoot;
+
+    if (fs.existsSync(path.join(root, '.git'))) {
+      throw new Error('A git repository already exists in the workspace; refusing to re-init.');
+    }
+
+    const parentRepo = findParentGitDir(path.dirname(root));
+    if (parentRepo) {
+      throw new Error(
+        `Refusing: a .git exists in parent directory "${parentRepo}". Initializing here ` +
+          'would create a nested repo that may capture files outside the workspace. ' +
+          'Move the project or remove the parent repo first.',
+      );
+    }
+
+    const result = await runGit(['init'], context);
+    if (result.exitCode !== 0) {
+      throw new Error(`Failed to init repository: ${result.stderr}`);
+    }
+    return { initialized: true, path: root };
+  },
+};
+
+// ── git_add ─────────────────────────────────────────────────────────────────
+
+const GitAddParamsSchema = z.object({
+  // Explicit list of files/paths to stage. Never accepts '.' or '-A'.
+  files: z.array(z.string()).min(1, 'At least one file must be specified'),
+});
+
+const GitAddReturnsSchema = z.object({
+  added: z.array(z.string()),
+  count: z.number(),
+});
+
+export const gitAddTool: ToolDefinition<typeof GitAddParamsSchema, typeof GitAddReturnsSchema> = {
+  name: 'git_add',
+  description:
+    "Stage specific files for commit. REQUIRES an explicit list of file paths — '.' and " +
+    "'-A' are rejected on purpose (the harness mandates staging only intended files, never " +
+    'the whole tree). Paths are resolved relative to the workspace root.',
+  parameters: GitAddParamsSchema,
+  returns: GitAddReturnsSchema,
+  category: 'git',
+  permissionLevel: 'write',
+  execute: async (params, context: ToolContext) => {
+    const rejected = params.files.filter((f) => f === '.' || f === '-A' || f === '--all');
+    if (rejected.length > 0) {
+      throw new Error(
+        "Refusing to stage '.' or '-A'. Pass an explicit list of file paths to stage.",
+      );
+    }
+
+    const added: string[] = [];
+    for (const f of params.files) {
+      const rel = f.replace(/\\/g, '/');
+      const result = await runGit(['add', '--', rel], context);
+      if (result.exitCode !== 0) {
+        throw new Error(`Failed to add "${rel}": ${result.stderr}`);
+      }
+      added.push(rel);
+    }
+    return { added, count: added.length };
+  },
+};
+
+// ── git_commit ──────────────────────────────────────────────────────────────
+
+const GitCommitParamsSchema = z.object({
+  message: z.string().min(1, 'Commit message is required'),
+  // Optional author override; falls back to repo/global git config when omitted.
+  authorName: z.string().optional(),
+  authorEmail: z.string().optional(),
+});
+
+const GitCommitReturnsSchema = z.object({
+  committed: z.boolean(),
+  hash: z.string().optional(),
+  message: z.string(),
+});
+
+export const gitCommitTool: ToolDefinition<typeof GitCommitParamsSchema, typeof GitCommitReturnsSchema> = {
+  name: 'git_commit',
+  description:
+    'Create a commit from the currently staged files. Requires a message and refuses to ' +
+    'run with nothing staged (to avoid committing unintended changes). Author name/email ' +
+    'may be supplied; otherwise git uses the repo or global config.',
+  parameters: GitCommitParamsSchema,
+  returns: GitCommitReturnsSchema,
+  category: 'git',
+  permissionLevel: 'write',
+  execute: async (params, context: ToolContext) => {
+    // Refuse if nothing is staged.
+    const stagedCheck = await runGit(['diff', '--cached', '--name-only'], context);
+    if (!stagedCheck.stdout.trim()) {
+      throw new Error(
+        'Nothing staged to commit. Call git_add with explicit files first.',
+      );
+    }
+
+    const args = ['commit', '-m', params.message];
+    if (params.authorName && params.authorEmail) {
+      args.push('--author', `${params.authorName} <${params.authorEmail}>`);
+    }
+    const result = await runGit(args, context);
+    if (result.exitCode !== 0) {
+      throw new Error(`Commit failed: ${result.stderr || result.stdout}`);
+    }
+
+    const hashResult = await runGit(['rev-parse', 'HEAD'], context);
+    return {
+      committed: true,
+      hash: hashResult.stdout.trim() || undefined,
+      message: params.message,
+    };
+  },
+};
+
+// ── git_push ────────────────────────────────────────────────────────────────
+
+const GitPushParamsSchema = z.object({
+  remote: z.string().min(1, 'Remote name is required (e.g. "origin")'),
+  branch: z.string().min(1, 'Branch name is required'),
+  setUpstream: z.boolean().default(false),
+});
+
+const GitPushReturnsSchema = z.object({
+  pushed: z.boolean(),
+  remote: z.string(),
+  branch: z.string(),
+});
+
+export const gitPushTool: ToolDefinition<typeof GitPushParamsSchema, typeof GitPushReturnsSchema> = {
+  name: 'git_push',
+  description:
+    'Push the current branch to a remote. Requires explicit remote and branch names ' +
+    '(never assumes "origin"). Mark setUpstream to set tracking. Destructive/network ' +
+    'operation gated at the "dangerous" permission level.',
+  parameters: GitPushParamsSchema,
+  returns: GitPushReturnsSchema,
+  category: 'git',
+  permissionLevel: 'dangerous',
+  execute: async (params, context: ToolContext) => {
+    const args = ['push'];
+    if (params.setUpstream) args.push('-u');
+    args.push(params.remote, params.branch);
+
+    const result = await runGit(args, context);
+    if (result.exitCode !== 0) {
+      throw new Error(`Push failed: ${result.stderr || result.stdout}`);
+    }
+    return { pushed: true, remote: params.remote, branch: params.branch };
+  },
+};

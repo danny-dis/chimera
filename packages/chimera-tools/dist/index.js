@@ -1,8 +1,8 @@
 "use strict";
 // @chimera/tools — Tool registry and core tools
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.createPolicyStackFromConfig = exports.PolicyStack = exports.PathRestrictionEngine = exports.CommandPolicy = exports.PermissionEngine = exports.allTools = exports.McpManager = exports.McpClient = exports.lspTool = exports.createWorkflowTool = exports.createSkillTool = exports.skillLoadTool = exports.TaskStatusSchema = exports.TaskSchema = exports.taskUpdateTool = exports.taskListTool = exports.taskCreateTool = exports.questionTool = exports.todoReadTool = exports.todoWriteTool = exports.webSearchTool = exports.webFetchTool = exports.searchReplaceTool = exports.editBlockTool = exports.applyPatchTool = exports.gitBranchTool = exports.gitLogTool = exports.gitDiffTool = exports.gitStatusTool = exports.runShellCommandTool = exports.globFilesTool = exports.searchFilesTool = exports.MediaBlockSchema = exports.listDirectoryTool = exports.writeFileTool = exports.readFileTool = exports.ToolExecutor = exports.ToolRegistry = exports.buildTool = exports.TOOL_DEFAULTS = exports.IGNORED_DIRS = exports.MAX_SHELL_TIMEOUT = exports.DEFAULT_SHELL_TIMEOUT = exports.MAX_OUTPUT_SIZE = exports.MAX_FILE_SIZE = exports.GitCommitSchema = exports.GitFileStatusSchema = exports.SearchMatchSchema = exports.FileEntrySchema = exports.PathSchema = void 0;
-exports.SecretDetector = exports.EnvironmentFilter = exports.PTYExecutor = exports.Sandbox = exports.createBuiltinPolicy = exports.getBuiltinPolicyNames = exports.networkPolicy = exports.destructiveCommandsPolicy = exports.maxToolCallsPolicy = exports.costBudgetPolicy = exports.trustedProjectPolicy = exports.workspaceWritePolicy = exports.readOnlyPolicy = exports.askOnOsTools = void 0;
+exports.PermissionEngine = exports.allTools = exports.McpManager = exports.McpClient = exports.lspTool = exports.createWorkflowTool = exports.createSkillTool = exports.skillLoadTool = exports.TaskStatusSchema = exports.TaskSchema = exports.taskUpdateTool = exports.taskListTool = exports.taskCreateTool = exports.questionTool = exports.todoReadTool = exports.todoWriteTool = exports.webSearchTool = exports.webFetchTool = exports.searchReplaceTool = exports.editBlockTool = exports.applyPatchTool = exports.gitPushTool = exports.gitCommitTool = exports.gitAddTool = exports.gitInitTool = exports.gitBranchTool = exports.gitLogTool = exports.gitDiffTool = exports.gitStatusTool = exports.runShellCommandTool = exports.globFilesTool = exports.searchFilesTool = exports.MediaBlockSchema = exports.listDirectoryTool = exports.writeFileTool = exports.readFileTool = exports.ToolExecutor = exports.ToolRegistry = exports.buildTool = exports.TOOL_DEFAULTS = exports.IGNORED_DIRS = exports.MAX_SHELL_TIMEOUT = exports.DEFAULT_SHELL_TIMEOUT = exports.MAX_OUTPUT_SIZE = exports.MAX_FILE_SIZE = exports.GitCommitSchema = exports.GitFileStatusSchema = exports.SearchMatchSchema = exports.FileEntrySchema = exports.PathSchema = void 0;
+exports.SecretDetector = exports.EnvironmentFilter = exports.PTYExecutor = exports.Sandbox = exports.createBuiltinPolicy = exports.getBuiltinPolicyNames = exports.networkPolicy = exports.destructiveCommandsPolicy = exports.maxToolCallsPolicy = exports.costBudgetPolicy = exports.trustedProjectPolicy = exports.workspaceWritePolicy = exports.readOnlyPolicy = exports.askOnOsTools = exports.createPolicyStackFromConfig = exports.PolicyStack = exports.PathRestrictionEngine = exports.CommandPolicy = void 0;
 // Schema and types
 var tool_schema_js_1 = require("./tool-schema.js");
 Object.defineProperty(exports, "PathSchema", { enumerable: true, get: function () { return tool_schema_js_1.PathSchema; } });
@@ -45,6 +45,10 @@ Object.defineProperty(exports, "gitStatusTool", { enumerable: true, get: functio
 Object.defineProperty(exports, "gitDiffTool", { enumerable: true, get: function () { return git_js_1.gitDiffTool; } });
 Object.defineProperty(exports, "gitLogTool", { enumerable: true, get: function () { return git_js_1.gitLogTool; } });
 Object.defineProperty(exports, "gitBranchTool", { enumerable: true, get: function () { return git_js_1.gitBranchTool; } });
+Object.defineProperty(exports, "gitInitTool", { enumerable: true, get: function () { return git_js_1.gitInitTool; } });
+Object.defineProperty(exports, "gitAddTool", { enumerable: true, get: function () { return git_js_1.gitAddTool; } });
+Object.defineProperty(exports, "gitCommitTool", { enumerable: true, get: function () { return git_js_1.gitCommitTool; } });
+Object.defineProperty(exports, "gitPushTool", { enumerable: true, get: function () { return git_js_1.gitPushTool; } });
 // Edit tools
 var edit_js_1 = require("./tools/edit.js");
 Object.defineProperty(exports, "applyPatchTool", { enumerable: true, get: function () { return edit_js_1.applyPatchTool; } });
@@ -100,6 +104,10 @@ exports.allTools = [
     git_js_2.gitDiffTool,
     git_js_2.gitLogTool,
     git_js_2.gitBranchTool,
+    git_js_2.gitInitTool,
+    git_js_2.gitAddTool,
+    git_js_2.gitCommitTool,
+    git_js_2.gitPushTool,
     edit_js_2.applyPatchTool,
     edit_js_2.editBlockTool,
     edit_js_2.searchReplaceTool,

@@ -1,4 +1,5 @@
 import { EventStream } from '../event-stream.js';
+import { existsSync, readdirSync, statSync } from 'fs';
 import type { ModelRegistry, ModelEntry } from '@chimera/providers';
 import { zodToJsonSchema } from '../zod-json.js';
 import type { CostTracker } from '../cost-tracker.js';
@@ -226,14 +227,35 @@ export class SoloExecutor {
           currentToolCalls = [];
         }
       }
-      // Harness-level guard: the task clearly wants files created (a code
-      // scaffold / creation task) but the model only researched or summarized
-      // and never wrote anything. Force one explicit write turn so small
-      // models that stop after research still produce the deliverable.
-      if (wroteFileCount === 0 && this.toolExecutor && this.workspaceRoot && round > 0) {
-        const wantsFiles = /\b(create|scaffold|write|generate|build|implement|make)\b/i.test(task) ||
-          /write_file|Cargo\.toml|src\/|\.rs|\.ts/i.test(task);
-        if (wantsFiles) {
+      // Harness-level guard (ground-truth on disk, not tool-call counts).
+      // Small models sometimes write ONE file then dump the rest as markdown
+      // in their final message — wroteFileCount would be >0 and the old guard
+      // stayed silent, leaving a broken project. Here we count ACTUAL source
+      // files on disk and, for any task that wants creation, keep forcing
+      // write turns until enough real files exist (or we hit a retry cap).
+      const wantsFiles = /\b(create|scaffold|write|generate|build|implement|make|port|add)\b/i.test(task) ||
+        /write_file|Cargo\.toml|src\/|\.rs|\.ts|\.toml|\.json|\.md/i.test(task);
+      const FORCE_MIN_FILES = 3; // a multi-file scaffold must land ≥ this many source files
+      if (wantsFiles && this.toolExecutor && this.workspaceRoot && round > 0) {
+        const countSourceFiles = (dir: string): number => {
+          if (!existsSync(dir)) return 0;
+          let n = 0;
+          for (const entry of readdirSync(dir)) {
+            if (entry === 'target' || entry === 'node_modules' || entry === '.git' ||
+                entry === '.chimera' || entry.startsWith('.')) continue;
+            const full = `${dir}/${entry}`;
+            try {
+              if (statSync(full).isDirectory()) n += countSourceFiles(full);
+              else if (/\.(rs|ts|toml|json|md|ya?ml|lock)$/.test(entry)) n++;
+            } catch { /* ignore unreadable */ }
+          }
+          return n;
+        };
+        let realFiles = countSourceFiles(this.workspaceRoot);
+        let forceAttempts = 0;
+        const MAX_FORCE = 3;
+        while (realFiles < FORCE_MIN_FILES && forceAttempts < MAX_FORCE) {
+          forceAttempts++;
           try {
             const forceProvider = providerFactory(config.model);
             const forced = await this.forceWriteTurn(forceProvider, config, lastContent, task);
@@ -242,22 +264,21 @@ export class SoloExecutor {
             const forcedCost = this.computeCost(config.model, forced.inputTokens, forced.outputTokens);
             totalCostUsd += forcedCost;
             this.recordSpend(config.model, forcedCost);
-            if (forced.toolCalls) {
+            if (forced.toolCalls && forced.toolCalls.length > 0) {
+              // Re-count write_file calls for accurate reporting.
               for (const tc of forced.toolCalls) {
                 if (tc.name === 'write_file') wroteFileCount++;
               }
-              // Execute any write_file calls the forced turn emitted.
-              if (wroteFileCount > 0) {
-                await runToolCalls({
-                  toolCalls: forced.toolCalls,
-                  toolExecutor: this.toolExecutor,
-                  toolRegistry: this.toolRegistry,
-                  eventStream: this.eventStream,
-                  workspaceRoot: this.workspaceRoot,
-                  sessionId: `solo-${config.model}`,
-                });
-              }
+              await runToolCalls({
+                toolCalls: forced.toolCalls,
+                toolExecutor: this.toolExecutor,
+                toolRegistry: this.toolRegistry,
+                eventStream: this.eventStream,
+                workspaceRoot: this.workspaceRoot,
+                sessionId: `solo-${config.model}`,
+              });
             }
+            realFiles = countSourceFiles(this.workspaceRoot);
           } catch {
             /* best-effort; do not crash the run */
           }

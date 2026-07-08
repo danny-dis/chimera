@@ -3,7 +3,7 @@ import { promises as fs } from 'fs';
 import os from 'os';
 import path from 'path';
 import { execa } from 'execa';
-import { gitStatusTool, gitDiffTool, gitLogTool, gitBranchTool } from '../tools/git.js';
+import { gitStatusTool, gitDiffTool, gitLogTool, gitBranchTool, gitInitTool, gitAddTool, gitCommitTool } from '../tools/git.js';
 import type { ToolContext } from '../tool-schema.js';
 import { EventStream } from '@chimera/core';
 
@@ -188,6 +188,45 @@ describe('Git Tools', () => {
       await expect(
         gitBranchTool.execute({ action: 'create' }, makeContext()),
       ).rejects.toThrow('Branch name is required');
+    });
+  });
+
+  describe('git write tools (init/add/commit)', () => {
+    it('git_add rejects "." and "-A"', async () => {
+      await expect(
+        gitAddTool.execute({ files: ['.'] }, makeContext()),
+      ).rejects.toThrow(/Refusing to stage/);
+      await expect(
+        gitAddTool.execute({ files: ['-A'] }, makeContext()),
+      ).rejects.toThrow(/Refusing to stage/);
+    });
+
+    it('git_commit refuses when nothing is staged', async () => {
+      await expect(
+        gitCommitTool.execute({ message: 'x' }, makeContext()),
+      ).rejects.toThrow(/Nothing staged/);
+    });
+
+    it('stages explicit files and commits', async () => {
+      await fs.writeFile(path.join(workspaceRoot, 'a.txt'), 'a');
+      await fs.writeFile(path.join(workspaceRoot, 'b.txt'), 'b');
+
+      const addRes = await gitAddTool.execute({ files: ['a.txt', 'b.txt'] }, makeContext());
+      expect(addRes.count).toBe(2);
+
+      const commitRes = await gitCommitTool.execute(
+        { message: 'add a and b', authorName: 'Chimera', authorEmail: 'chimera@localhost' },
+        makeContext(),
+      );
+      expect(commitRes.committed).toBe(true);
+      expect(commitRes.hash).toBeDefined();
+
+      const log = await gitLogTool.execute({}, makeContext());
+      expect(log.commits[0].message).toBe('add a and b');
+    });
+
+    it('git_init refuses when a repo already exists', async () => {
+      await expect(gitInitTool.execute({}, makeContext())).rejects.toThrow(/already exists/);
     });
   });
 });

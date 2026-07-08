@@ -45,7 +45,7 @@ export { searchFilesTool, globFilesTool } from './tools/search.js';
 export { runShellCommandTool } from './tools/shell.js';
 
 // Git tools
-export { gitStatusTool, gitDiffTool, gitLogTool, gitBranchTool } from './tools/git.js';
+export { gitStatusTool, gitDiffTool, gitLogTool, gitBranchTool, gitInitTool, gitAddTool, gitCommitTool, gitPushTool } from './tools/git.js';
 
 // Edit tools
 export { applyPatchTool, editBlockTool, searchReplaceTool } from './tools/edit.js';
@@ -74,7 +74,7 @@ export type { McpServerConfig } from './mcp-client.js';
 import { readFileTool, writeFileTool, listDirectoryTool } from './tools/filesystem.js';
 import { searchFilesTool, globFilesTool } from './tools/search.js';
 import { runShellCommandTool } from './tools/shell.js';
-import { gitStatusTool, gitDiffTool, gitLogTool, gitBranchTool } from './tools/git.js';
+import { gitStatusTool, gitDiffTool, gitLogTool, gitBranchTool, gitInitTool, gitAddTool, gitCommitTool, gitPushTool } from './tools/git.js';
 import { applyPatchTool, editBlockTool, searchReplaceTool } from './tools/edit.js';
 import { webFetchTool, webSearchTool } from './tools/web.js';
 import { todoWriteTool, todoReadTool, questionTool } from './tools/todo.js';
@@ -93,6 +93,10 @@ export const allTools = [
   gitDiffTool,
   gitLogTool,
   gitBranchTool,
+  gitInitTool,
+  gitAddTool,
+  gitCommitTool,
+  gitPushTool,
   applyPatchTool,
   editBlockTool,
   searchReplaceTool,
