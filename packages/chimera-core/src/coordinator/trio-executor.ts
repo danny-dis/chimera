@@ -1,5 +1,5 @@
 import { EventStream } from '../event-stream.js';
-import type { LLMProvider } from '../session-orchestrator.js';
+import type { LLMProvider, ToolExecutorInterface, ToolRegistryInterface } from '../session-orchestrator.js';
 import type { ModelRegistry, ModelEntry } from '@chimera/providers';
 import type { CostTracker } from '../cost-tracker.js';
 import type { WorktreeIsolation, WorktreeInfo } from '../agent/worktree-isolation.js';
@@ -7,7 +7,8 @@ import { ResponseSynthesizer, type SynthesisInput } from '../response-synthesize
 import { buildMessages } from '../prompts.js';
 import { sanitizeWriterOutput, sanitizeReviewerOutput } from './output-sanitizer.js';
 import { TaskRouter } from '../task-router.js';
-import type { Mode } from '../types/agent.js';
+import { runToolCalls } from './tool-execution-helper.js';
+import type { Mode, ToolCall } from '../types/agent.js';
 import type {
   TrioConfig,
   TrioContext,
@@ -37,6 +38,12 @@ interface TrioExecutorDeps {
    * is true. The executor will not instantiate this itself.
    */
   worktreeIsolation?: WorktreeIsolation;
+  /** Optional workspace root — required to execute edit tools. */
+  workspaceRoot?: string;
+  /** Optional tool executor — when present the writer becomes tool-capable. */
+  toolExecutor?: ToolExecutorInterface;
+  /** Optional tool registry — supplies tool definitions to the writer. */
+  toolRegistry?: ToolRegistryInterface;
 }
 
 /**
@@ -67,12 +74,18 @@ export class TrioExecutor {
   private registry: ModelRegistry;
   private costTracker: CostTracker | undefined;
   private worktreeIsolation: WorktreeIsolation | undefined;
+  private workspaceRoot?: string;
+  private toolExecutor?: ToolExecutorInterface;
+  private toolRegistry?: ToolRegistryInterface;
 
   constructor(deps: TrioExecutorDeps) {
     this.eventStream = deps.eventStream;
     this.registry = deps.registry;
     this.costTracker = deps.costTracker;
     this.worktreeIsolation = deps.worktreeIsolation;
+    this.workspaceRoot = deps.workspaceRoot;
+    this.toolExecutor = deps.toolExecutor;
+    this.toolRegistry = deps.toolRegistry;
   }
 
   /**
@@ -135,23 +148,77 @@ export class TrioExecutor {
     const draftStart = Date.now();
     let draftStage: TrioStageResult;
     try {
+      let inputTokensForDraft = 0;
+      let outputTokensForDraft = 0;
       const draftProvider = providerFactory(config.writer);
+      const toolDefs = this.toolRegistry
+        ? this.toolRegistry.getAll().map((t) => ({
+            name: t.name,
+            description: t.description,
+            parameters: (t.parameters?.toJSON?.() ?? {}) as Record<string, unknown>,
+          }))
+        : undefined;
       const draftResult = await draftProvider.complete(
-        [{ role: 'user', content: this.buildDraftPrompt(task) }],
-        { temperature: config.temperature, maxTokens: config.maxCompletionTokens }
+        [{ role: 'user', content: this.buildDraftPrompt(task, config.context) }],
+        { temperature: config.temperature, maxTokens: config.maxCompletionTokens, ...(config.reasoning !== undefined ? { reasoning: config.reasoning } : {}), ...(toolDefs ? { tools: toolDefs } : {}) }
       );
       const inputTokens = draftResult.usage?.inputTokens ?? 0;
       const outputTokens = draftResult.usage?.outputTokens ?? 0;
+      let draftContent = sanitizeWriterOutput(draftResult.content);
+
+      // ── Writer tool execution round-trip ─────────────────────────────
+      // Writer is the only stage that edits files. If it emitted tool calls
+      // and a tool executor is available, execute them and feed the results
+      // back into the writer for one follow-up turn. No infinite loop.
+      const draftToolCalls: ToolCall[] | undefined = draftResult.toolCalls;
+      if (draftToolCalls && draftToolCalls.length > 0 && this.toolExecutor && this.workspaceRoot) {
+        const toolResults = await runToolCalls({
+          toolCalls: draftToolCalls,
+          toolExecutor: this.toolExecutor,
+          toolRegistry: this.toolRegistry,
+          eventStream: this.eventStream,
+          workspaceRoot: this.workspaceRoot,
+          sessionId: `trio-${config.writer}`,
+        });
+
+        const followUp = await draftProvider.complete(
+          [
+            { role: 'user' as const, content: this.buildDraftPrompt(task, config.context) },
+            {
+              role: 'assistant' as const,
+              content: draftResult.content,
+              tool_calls: draftToolCalls.map((tc) => ({ id: tc.id, name: tc.name, arguments: tc.arguments })),
+            } as unknown as { role: 'assistant'; content: string; tool_calls: Array<{ id: string; name: string; arguments: Record<string, unknown> }> },
+            ...toolResults.map((tr) => ({
+              role: 'tool' as const,
+              content: JSON.stringify(tr.result.result),
+              tool_call_id: tr.result.toolCallId,
+            })),
+            { role: 'user' as const, content: 'Continue. Incorporate the tool results and finish the task.' },
+          ],
+          { temperature: config.temperature, maxTokens: config.maxCompletionTokens, ...(config.reasoning !== undefined ? { reasoning: config.reasoning } : {}) }
+        );
+        const fuInput = followUp.usage?.inputTokens ?? 0;
+        const fuOutput = followUp.usage?.outputTokens ?? 0;
+        draftContent = sanitizeWriterOutput(followUp.content);
+        // Fold follow-up token usage into the draft stage counts.
+        inputTokensForDraft = inputTokens + fuInput;
+        outputTokensForDraft = outputTokens + fuOutput;
+      } else {
+        inputTokensForDraft = inputTokens;
+        outputTokensForDraft = outputTokens;
+      }
+
       draftStage = {
         modelId: config.writer,
         role: 'writer',
-        content: sanitizeWriterOutput(draftResult.content),
-        inputTokens,
-        outputTokens,
+        content: draftContent,
+        inputTokens: inputTokensForDraft,
+        outputTokens: outputTokensForDraft,
         durationMs: Date.now() - draftStart,
       };
-      totalTokens += inputTokens + outputTokens;
-      const cost = this.computeCost(config.writer, inputTokens, outputTokens);
+      totalTokens += inputTokensForDraft + outputTokensForDraft;
+      const cost = this.computeCost(config.writer, inputTokensForDraft, outputTokensForDraft);
       totalCostUsd += cost;
       this.recordSpend(config.writer, cost);
     } catch (err) {
@@ -185,16 +252,16 @@ export class TrioExecutor {
 
     if (useParallel) {
       // ── Parallel path: reviewer + challenger run concurrently ──────
-      const reviewPrompt = this.buildReviewPrompt(task, draftStage.content + linterFeedback);
+      const reviewPrompt = this.buildReviewPrompt(task, draftStage.content + linterFeedback, config.context);
       // Challenger sees only the draft (not the review) in parallel mode
-      const challengePrompt = this.buildChallengePrompt(task, draftStage.content, '');
+      const challengePrompt = this.buildChallengePrompt(task, draftStage.content, '', config.context);
 
       const runReview = async (): Promise<TrioStageResult> => {
         const start = Date.now();
         const provider = providerFactory(config.reviewer);
         const result = await provider.complete(
           [{ role: 'user', content: reviewPrompt }],
-          { temperature: config.temperature, maxTokens: config.maxCompletionTokens }
+          { temperature: config.temperature, maxTokens: config.maxCompletionTokens, ...(config.reasoning !== undefined ? { reasoning: config.reasoning } : {}) }
         );
         const inputTokens = result.usage?.inputTokens ?? 0;
         const outputTokens = result.usage?.outputTokens ?? 0;
@@ -214,7 +281,7 @@ export class TrioExecutor {
         const provider = providerFactory(config.challenger!);
         const result = await provider.complete(
           [{ role: 'user', content: challengePrompt }],
-          { temperature: config.temperature, maxTokens: config.maxCompletionTokens }
+          { temperature: config.temperature, maxTokens: config.maxCompletionTokens, ...(config.reasoning !== undefined ? { reasoning: config.reasoning } : {}) }
         );
         const inputTokens = result.usage?.inputTokens ?? 0;
         const outputTokens = result.usage?.outputTokens ?? 0;
@@ -277,8 +344,8 @@ export class TrioExecutor {
       try {
         const reviewProvider = providerFactory(config.reviewer);
         const reviewResult = await reviewProvider.complete(
-          [{ role: 'user', content: this.buildReviewPrompt(task, draftStage.content + linterFeedback) }],
-          { temperature: config.temperature, maxTokens: config.maxCompletionTokens }
+          [{ role: 'user', content: this.buildReviewPrompt(task, draftStage.content + linterFeedback, config.context) }],
+          { temperature: config.temperature, maxTokens: config.maxCompletionTokens, ...(config.reasoning !== undefined ? { reasoning: config.reasoning } : {}) }
         );
         const inputTokens = reviewResult.usage?.inputTokens ?? 0;
         const outputTokens = reviewResult.usage?.outputTokens ?? 0;
@@ -315,8 +382,8 @@ export class TrioExecutor {
         try {
           const challengeProvider = providerFactory(config.challenger);
           const challengeResult = await challengeProvider.complete(
-            [{ role: 'user', content: this.buildChallengePrompt(task, draftStage.content, reviewStage.content) }],
-            { temperature: config.temperature, maxTokens: config.maxCompletionTokens }
+            [{ role: 'user', content: this.buildChallengePrompt(task, draftStage.content, reviewStage.content, config.context) }],
+            { temperature: config.temperature, maxTokens: config.maxCompletionTokens, ...(config.reasoning !== undefined ? { reasoning: config.reasoning } : {}) }
           );
           const inputTokens = challengeResult.usage?.inputTokens ?? 0;
           const outputTokens = challengeResult.usage?.outputTokens ?? 0;
@@ -448,7 +515,7 @@ export class TrioExecutor {
       try {
         const result = await provider.complete(
           [{ role: 'user', content: prompt }],
-          { responseFormat: 'json_object', temperature: config.temperature, maxTokens: config.maxCompletionTokens }
+          { responseFormat: 'json_object', temperature: config.temperature, maxTokens: config.maxCompletionTokens, ...(config.reasoning !== undefined ? { reasoning: config.reasoning } : {}) }
         );
         const content = result.content;
         try {
@@ -526,30 +593,45 @@ export class TrioExecutor {
     return conflictFreeContents.map((i) => i.content.split('\n')[0].slice(0, 200));
   }
 
-  private buildDraftPrompt(task: string): string {
-    const base = `You are a code writer. Complete the following task:\n\n${task}`;
+  private buildDraftPrompt(task: string, context?: string): string {
     if (TaskRouter.isConversationalTask(task)) {
+      const contextBlock = context ? `\n\n[!] PROJECT CONTEXT [!]\n${context}` : '';
       return `You are a helpful assistant. Answer the following conversational question directly.\n` +
         `Do NOT produce code, file changes, or technical analysis unless specifically asked.\n` +
-        `Provide a clear, concise, factual answer.\n\n${task}`;
+        `Provide a clear, concise, factual answer.\n\n${task}${contextBlock}`;
     }
-    return base;
+    // Route the writer through the rich role prompt (AGENT_PROMPTS.writer +
+    // tool-calling guidance) so it actually acts instead of narrating prose.
+    // The leading marker keeps prompt-shape contracts (and test mocks that
+    // match on it) intact.
+    const roleMsg = buildMessages({
+      role: 'writer',
+      mode: 'code',
+      task,
+      context,
+      workspaceRoot: this.workspaceRoot,
+    })
+      .map((m) => `### ${m.role.toUpperCase()}\n${m.content}`)
+      .join('\n\n');
+    return `You are a code writer.\n\n${roleMsg}`;
   }
 
-  private buildReviewPrompt(task: string, draft: string): string {
+  private buildReviewPrompt(task: string, draft: string, context?: string): string {
+    const contextBlock = context ? `\n\n[!] PROJECT CONTEXT [!]\n${context}` : '';
     if (TaskRouter.isConversationalTask(task)) {
       return `[!] CONVERSATIONAL REVIEW [!]\n` +
         `This is a conversational/general question, NOT a code task.\n` +
         `Do NOT apply code-review criteria (race conditions, input validation, architectural coupling, etc.).\n` +
         `Evaluate ONLY: factual accuracy, completeness, and clarity.\n` +
         `Default to PASS unless the answer is factually incorrect.\n\n` +
-        `## Task\n${task}\n\n## Draft\n${draft}`;
+        `## Task\n${task}\n\n## Draft\n${draft}${contextBlock}`;
     }
-    return `You are a code reviewer. Review the following draft against the task.\n\n## Task\n${task}\n\n## Draft\n${draft}`;
+    return `You are a code reviewer. Review the following draft against the task.\n\n## Task\n${task}\n\n## Draft\n${draft}${contextBlock}`;
   }
 
-  private buildChallengePrompt(task: string, draft: string, review: string): string {
-    return `You are a challenger. Challenge the following draft and review.\n\n## Task\n${task}\n\n## Draft\n${draft}\n\n## Review\n${review}`;
+  private buildChallengePrompt(task: string, draft: string, review: string, context?: string): string {
+    const contextBlock = context ? `\n\n[!] PROJECT CONTEXT [!]\n${context}` : '';
+    return `You are a challenger. Challenge the following draft and review.\n\n## Task\n${task}\n\n## Draft\n${draft}\n\n## Review\n${review}${contextBlock}`;
   }
 
   private buildDraftMessages(task: string, mode: Mode): Array<{ role: string; content: string }> {

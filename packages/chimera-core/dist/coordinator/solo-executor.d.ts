@@ -1,6 +1,7 @@
 import { EventStream } from '../event-stream.js';
 import type { ModelRegistry } from '@chimera/providers';
 import type { CostTracker } from '../cost-tracker.js';
+import type { ToolExecutorInterface, ToolRegistryInterface } from '../session-orchestrator.js';
 import type { SoloConfig, SoloContext, SoloResult, SoloProviderFactory } from './solo-types.js';
 export type { SoloConfig, SoloContext, SoloResult, SoloProviderFactory, SoloAnalysis, } from './solo-types.js';
 interface SoloExecutorDeps {
@@ -9,6 +10,12 @@ interface SoloExecutorDeps {
     registry: ModelRegistry;
     /** Optional cost tracker. */
     costTracker?: CostTracker;
+    /** Optional workspace root — required to execute edit tools. */
+    workspaceRoot?: string;
+    /** Optional tool executor — when present the writer becomes tool-capable. */
+    toolExecutor?: ToolExecutorInterface;
+    /** Optional tool registry — supplies tool definitions to the LLM. */
+    toolRegistry?: ToolRegistryInterface;
 }
 /**
  * The simplest executor: one model answers one prompt.
@@ -33,6 +40,9 @@ export declare class SoloExecutor {
     private eventStream;
     private registry;
     private costTracker;
+    private workspaceRoot?;
+    private toolExecutor?;
+    private toolRegistry?;
     constructor(deps: SoloExecutorDeps);
     /**
      * Run a solo execution and return the final response as a string.
@@ -44,6 +54,17 @@ export declare class SoloExecutor {
      */
     executeWithAnalysis(task: string, config: SoloConfig, providerFactory: SoloProviderFactory, context?: SoloContext): Promise<SoloResult>;
     private callPeer;
+    /**
+     * Resolve tool definitions from the registry into the shape `provider.complete`
+     * expects. Returns `[]` when no registry is available.
+     */
+    private listToolDefs;
+    /**
+     * Feed tool results back to the writer for one follow-up turn. Mirrors the
+     * orchestrator's `buildToolResultMessages` contract: an assistant message
+     * carrying the tool_calls, followed by one `tool` message per call.
+     */
+    private followUpWithToolResults;
     private buildThinkPrompt;
     private buildDraftPrompt;
     private buildReviewPrompt;

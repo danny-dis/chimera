@@ -69,6 +69,9 @@ class DeliberationEngine {
             eventStream: this.deps.eventStream,
             registry: this.deps.registry,
             ...(this.deps.costTracker ? { costTracker: this.deps.costTracker } : {}),
+            ...(this.deps.workspaceRoot ? { workspaceRoot: this.deps.workspaceRoot } : {}),
+            ...(this.deps.toolExecutor ? { toolExecutor: this.deps.toolExecutor } : {}),
+            ...(this.deps.toolRegistry ? { toolRegistry: this.deps.toolRegistry } : {}),
         });
         const isConversational = task_router_js_1.TaskRouter.isConversationalTask(cfg.task);
         const soloConfig = {
@@ -83,6 +86,7 @@ class DeliberationEngine {
                 ? { reasoning: cfg.reasoning }
                 : {}),
             ...(cfg.eternalCoT !== undefined ? { eternalCoT: cfg.eternalCoT } : {}),
+            ...(cfg.selfVerify !== undefined ? { selfVerify: cfg.selfVerify } : {}),
             systemPrompt: prompts_js_1.CHIMERA_CORE_IDENTITY,
             isConversational,
         };
@@ -108,6 +112,9 @@ class DeliberationEngine {
             eventStream: this.deps.eventStream,
             registry: this.deps.registry,
             ...(this.deps.costTracker ? { costTracker: this.deps.costTracker } : {}),
+            ...(this.deps.workspaceRoot ? { workspaceRoot: this.deps.workspaceRoot } : {}),
+            ...(this.deps.toolExecutor ? { toolExecutor: this.deps.toolExecutor } : {}),
+            ...(this.deps.toolRegistry ? { toolRegistry: this.deps.toolRegistry } : {}),
         });
         const duoConfig = {
             modelA: cfg.modelA,
@@ -136,6 +143,9 @@ class DeliberationEngine {
             ...(this.deps.worktreeIsolation
                 ? { worktreeIsolation: this.deps.worktreeIsolation }
                 : {}),
+            ...(this.deps.workspaceRoot ? { workspaceRoot: this.deps.workspaceRoot } : {}),
+            ...(this.deps.toolExecutor ? { toolExecutor: this.deps.toolExecutor } : {}),
+            ...(this.deps.toolRegistry ? { toolRegistry: this.deps.toolRegistry } : {}),
         });
         const trioConfig = {
             writer: cfg.writer,

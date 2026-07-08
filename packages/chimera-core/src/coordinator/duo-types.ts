@@ -32,6 +32,8 @@ export interface DuoConfig {
   maxDepth?: number;
   /** Force the executor to run even when the request looks simple. */
   forceInvocation?: boolean;
+  /** Optional context (file contents, project info, etc.) injected into prompts. */
+  context?: string;
 }
 
 /**

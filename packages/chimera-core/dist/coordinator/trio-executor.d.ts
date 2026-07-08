@@ -1,4 +1,5 @@
 import { EventStream } from '../event-stream.js';
+import type { ToolExecutorInterface, ToolRegistryInterface } from '../session-orchestrator.js';
 import type { ModelRegistry } from '@chimera/providers';
 import type { CostTracker } from '../cost-tracker.js';
 import type { WorktreeIsolation } from '../agent/worktree-isolation.js';
@@ -15,6 +16,12 @@ interface TrioExecutorDeps {
      * is true. The executor will not instantiate this itself.
      */
     worktreeIsolation?: WorktreeIsolation;
+    /** Optional workspace root — required to execute edit tools. */
+    workspaceRoot?: string;
+    /** Optional tool executor — when present the writer becomes tool-capable. */
+    toolExecutor?: ToolExecutorInterface;
+    /** Optional tool registry — supplies tool definitions to the writer. */
+    toolRegistry?: ToolRegistryInterface;
 }
 /**
  * Multi-stage quality gate: writer → reviewer → [challenger] → synthesize.
@@ -44,6 +51,9 @@ export declare class TrioExecutor {
     private registry;
     private costTracker;
     private worktreeIsolation;
+    private workspaceRoot?;
+    private toolExecutor?;
+    private toolRegistry?;
     constructor(deps: TrioExecutorDeps);
     /**
      * Run a trio deliberation and return the final synthesized response

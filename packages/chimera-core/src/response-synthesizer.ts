@@ -85,7 +85,7 @@ export class ResponseSynthesizer {
     const overallConfidence = this.calculateOverallConfidence(inputs, conflicts);
     const unifiedResponse = this.buildUnifiedResponse(inputs, conflicts);
 
-    this.emitEvents(conflicts, inputs);
+    this.emitEvents(conflicts, inputs, unifiedResponse);
 
     return {
       unifiedResponse,
@@ -287,7 +287,7 @@ export class ResponseSynthesizer {
     try { this.eventStream?.append(event as Parameters<EventStream['append']>[0]); } catch { /* ignore */ }
   }
 
-  private emitEvents(conflicts: Conflict[], inputs: SynthesisInput[]): void {
+  private emitEvents(conflicts: Conflict[], inputs: SynthesisInput[], output?: string): void {
     if (!this.eventStream) return;
     for (const conflict of conflicts) {
       if (conflict.resolvedBy === 'user_escalation') {
@@ -304,6 +304,7 @@ export class ResponseSynthesizer {
       status: conflicts.some((c) => c.resolvedBy === 'user_escalation') ? 'needs_user' : 'done',
       cost: 0,
       agentCount: inputs.length,
+      output,
     });
   }
 }

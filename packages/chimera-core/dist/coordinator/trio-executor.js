@@ -5,6 +5,7 @@ const response_synthesizer_js_1 = require("../response-synthesizer.js");
 const prompts_js_1 = require("../prompts.js");
 const output_sanitizer_js_1 = require("./output-sanitizer.js");
 const task_router_js_1 = require("../task-router.js");
+const tool_execution_helper_js_1 = require("./tool-execution-helper.js");
 /**
  * Multi-stage quality gate: writer → reviewer → [challenger] → synthesize.
  *
@@ -33,11 +34,17 @@ class TrioExecutor {
     registry;
     costTracker;
     worktreeIsolation;
+    workspaceRoot;
+    toolExecutor;
+    toolRegistry;
     constructor(deps) {
         this.eventStream = deps.eventStream;
         this.registry = deps.registry;
         this.costTracker = deps.costTracker;
         this.worktreeIsolation = deps.worktreeIsolation;
+        this.workspaceRoot = deps.workspaceRoot;
+        this.toolExecutor = deps.toolExecutor;
+        this.toolRegistry = deps.toolRegistry;
     }
     /**
      * Run a trio deliberation and return the final synthesized response
@@ -84,20 +91,69 @@ class TrioExecutor {
         const draftStart = Date.now();
         let draftStage;
         try {
+            let inputTokensForDraft = 0;
+            let outputTokensForDraft = 0;
             const draftProvider = providerFactory(config.writer);
-            const draftResult = await draftProvider.complete([{ role: 'user', content: this.buildDraftPrompt(task) }], { temperature: config.temperature, maxTokens: config.maxCompletionTokens });
+            const toolDefs = this.toolRegistry
+                ? this.toolRegistry.getAll().map((t) => ({
+                    name: t.name,
+                    description: t.description,
+                    parameters: (t.parameters?.toJSON?.() ?? {}),
+                }))
+                : undefined;
+            const draftResult = await draftProvider.complete([{ role: 'user', content: this.buildDraftPrompt(task, config.context) }], { temperature: config.temperature, maxTokens: config.maxCompletionTokens, ...(config.reasoning !== undefined ? { reasoning: config.reasoning } : {}), ...(toolDefs ? { tools: toolDefs } : {}) });
             const inputTokens = draftResult.usage?.inputTokens ?? 0;
             const outputTokens = draftResult.usage?.outputTokens ?? 0;
+            let draftContent = (0, output_sanitizer_js_1.sanitizeWriterOutput)(draftResult.content);
+            // ── Writer tool execution round-trip ─────────────────────────────
+            // Writer is the only stage that edits files. If it emitted tool calls
+            // and a tool executor is available, execute them and feed the results
+            // back into the writer for one follow-up turn. No infinite loop.
+            const draftToolCalls = draftResult.toolCalls;
+            if (draftToolCalls && draftToolCalls.length > 0 && this.toolExecutor && this.workspaceRoot) {
+                const toolResults = await (0, tool_execution_helper_js_1.runToolCalls)({
+                    toolCalls: draftToolCalls,
+                    toolExecutor: this.toolExecutor,
+                    toolRegistry: this.toolRegistry,
+                    eventStream: this.eventStream,
+                    workspaceRoot: this.workspaceRoot,
+                    sessionId: `trio-${config.writer}`,
+                });
+                const followUp = await draftProvider.complete([
+                    { role: 'user', content: this.buildDraftPrompt(task, config.context) },
+                    {
+                        role: 'assistant',
+                        content: draftResult.content,
+                        tool_calls: draftToolCalls.map((tc) => ({ id: tc.id, name: tc.name, arguments: tc.arguments })),
+                    },
+                    ...toolResults.map((tr) => ({
+                        role: 'tool',
+                        content: JSON.stringify(tr.result.result),
+                        tool_call_id: tr.result.toolCallId,
+                    })),
+                    { role: 'user', content: 'Continue. Incorporate the tool results and finish the task.' },
+                ], { temperature: config.temperature, maxTokens: config.maxCompletionTokens, ...(config.reasoning !== undefined ? { reasoning: config.reasoning } : {}) });
+                const fuInput = followUp.usage?.inputTokens ?? 0;
+                const fuOutput = followUp.usage?.outputTokens ?? 0;
+                draftContent = (0, output_sanitizer_js_1.sanitizeWriterOutput)(followUp.content);
+                // Fold follow-up token usage into the draft stage counts.
+                inputTokensForDraft = inputTokens + fuInput;
+                outputTokensForDraft = outputTokens + fuOutput;
+            }
+            else {
+                inputTokensForDraft = inputTokens;
+                outputTokensForDraft = outputTokens;
+            }
             draftStage = {
                 modelId: config.writer,
                 role: 'writer',
-                content: (0, output_sanitizer_js_1.sanitizeWriterOutput)(draftResult.content),
-                inputTokens,
-                outputTokens,
+                content: draftContent,
+                inputTokens: inputTokensForDraft,
+                outputTokens: outputTokensForDraft,
                 durationMs: Date.now() - draftStart,
             };
-            totalTokens += inputTokens + outputTokens;
-            const cost = this.computeCost(config.writer, inputTokens, outputTokens);
+            totalTokens += inputTokensForDraft + outputTokensForDraft;
+            const cost = this.computeCost(config.writer, inputTokensForDraft, outputTokensForDraft);
             totalCostUsd += cost;
             this.recordSpend(config.writer, cost);
         }
@@ -124,13 +180,13 @@ class TrioExecutor {
         const useParallel = config.parallel !== false && !!config.challenger;
         if (useParallel) {
             // ── Parallel path: reviewer + challenger run concurrently ──────
-            const reviewPrompt = this.buildReviewPrompt(task, draftStage.content + linterFeedback);
+            const reviewPrompt = this.buildReviewPrompt(task, draftStage.content + linterFeedback, config.context);
             // Challenger sees only the draft (not the review) in parallel mode
-            const challengePrompt = this.buildChallengePrompt(task, draftStage.content, '');
+            const challengePrompt = this.buildChallengePrompt(task, draftStage.content, '', config.context);
             const runReview = async () => {
                 const start = Date.now();
                 const provider = providerFactory(config.reviewer);
-                const result = await provider.complete([{ role: 'user', content: reviewPrompt }], { temperature: config.temperature, maxTokens: config.maxCompletionTokens });
+                const result = await provider.complete([{ role: 'user', content: reviewPrompt }], { temperature: config.temperature, maxTokens: config.maxCompletionTokens, ...(config.reasoning !== undefined ? { reasoning: config.reasoning } : {}) });
                 const inputTokens = result.usage?.inputTokens ?? 0;
                 const outputTokens = result.usage?.outputTokens ?? 0;
                 return {
@@ -146,7 +202,7 @@ class TrioExecutor {
             const runChallenge = async () => {
                 const start = Date.now();
                 const provider = providerFactory(config.challenger);
-                const result = await provider.complete([{ role: 'user', content: challengePrompt }], { temperature: config.temperature, maxTokens: config.maxCompletionTokens });
+                const result = await provider.complete([{ role: 'user', content: challengePrompt }], { temperature: config.temperature, maxTokens: config.maxCompletionTokens, ...(config.reasoning !== undefined ? { reasoning: config.reasoning } : {}) });
                 const inputTokens = result.usage?.inputTokens ?? 0;
                 const outputTokens = result.usage?.outputTokens ?? 0;
                 return {
@@ -200,7 +256,7 @@ class TrioExecutor {
             const reviewStart = Date.now();
             try {
                 const reviewProvider = providerFactory(config.reviewer);
-                const reviewResult = await reviewProvider.complete([{ role: 'user', content: this.buildReviewPrompt(task, draftStage.content + linterFeedback) }], { temperature: config.temperature, maxTokens: config.maxCompletionTokens });
+                const reviewResult = await reviewProvider.complete([{ role: 'user', content: this.buildReviewPrompt(task, draftStage.content + linterFeedback, config.context) }], { temperature: config.temperature, maxTokens: config.maxCompletionTokens, ...(config.reasoning !== undefined ? { reasoning: config.reasoning } : {}) });
                 const inputTokens = reviewResult.usage?.inputTokens ?? 0;
                 const outputTokens = reviewResult.usage?.outputTokens ?? 0;
                 const issues = this.tryExtractIssues(reviewResult.content);
@@ -231,7 +287,7 @@ class TrioExecutor {
                 const challengeStart = Date.now();
                 try {
                     const challengeProvider = providerFactory(config.challenger);
-                    const challengeResult = await challengeProvider.complete([{ role: 'user', content: this.buildChallengePrompt(task, draftStage.content, reviewStage.content) }], { temperature: config.temperature, maxTokens: config.maxCompletionTokens });
+                    const challengeResult = await challengeProvider.complete([{ role: 'user', content: this.buildChallengePrompt(task, draftStage.content, reviewStage.content, config.context) }], { temperature: config.temperature, maxTokens: config.maxCompletionTokens, ...(config.reasoning !== undefined ? { reasoning: config.reasoning } : {}) });
                     const inputTokens = challengeResult.usage?.inputTokens ?? 0;
                     const outputTokens = challengeResult.usage?.outputTokens ?? 0;
                     const challenges = this.tryExtractChallenges(challengeResult.content);
@@ -343,7 +399,7 @@ class TrioExecutor {
                 continue;
             }
             try {
-                const result = await provider.complete([{ role: 'user', content: prompt }], { responseFormat: 'json_object', temperature: config.temperature, maxTokens: config.maxCompletionTokens });
+                const result = await provider.complete([{ role: 'user', content: prompt }], { responseFormat: 'json_object', temperature: config.temperature, maxTokens: config.maxCompletionTokens, ...(config.reasoning !== undefined ? { reasoning: config.reasoning } : {}) });
                 const content = result.content;
                 try {
                     const parsed = JSON.parse(content);
@@ -411,28 +467,43 @@ class TrioExecutor {
         const conflictFreeContents = inputs.filter((i) => !conflictedAgentIds.has(i.agentId));
         return conflictFreeContents.map((i) => i.content.split('\n')[0].slice(0, 200));
     }
-    buildDraftPrompt(task) {
-        const base = `You are a code writer. Complete the following task:\n\n${task}`;
+    buildDraftPrompt(task, context) {
         if (task_router_js_1.TaskRouter.isConversationalTask(task)) {
+            const contextBlock = context ? `\n\n[!] PROJECT CONTEXT [!]\n${context}` : '';
             return `You are a helpful assistant. Answer the following conversational question directly.\n` +
                 `Do NOT produce code, file changes, or technical analysis unless specifically asked.\n` +
-                `Provide a clear, concise, factual answer.\n\n${task}`;
+                `Provide a clear, concise, factual answer.\n\n${task}${contextBlock}`;
         }
-        return base;
+        // Route the writer through the rich role prompt (AGENT_PROMPTS.writer +
+        // tool-calling guidance) so it actually acts instead of narrating prose.
+        // The leading marker keeps prompt-shape contracts (and test mocks that
+        // match on it) intact.
+        const roleMsg = (0, prompts_js_1.buildMessages)({
+            role: 'writer',
+            mode: 'code',
+            task,
+            context,
+            workspaceRoot: this.workspaceRoot,
+        })
+            .map((m) => `### ${m.role.toUpperCase()}\n${m.content}`)
+            .join('\n\n');
+        return `You are a code writer.\n\n${roleMsg}`;
     }
-    buildReviewPrompt(task, draft) {
+    buildReviewPrompt(task, draft, context) {
+        const contextBlock = context ? `\n\n[!] PROJECT CONTEXT [!]\n${context}` : '';
         if (task_router_js_1.TaskRouter.isConversationalTask(task)) {
             return `[!] CONVERSATIONAL REVIEW [!]\n` +
                 `This is a conversational/general question, NOT a code task.\n` +
                 `Do NOT apply code-review criteria (race conditions, input validation, architectural coupling, etc.).\n` +
                 `Evaluate ONLY: factual accuracy, completeness, and clarity.\n` +
                 `Default to PASS unless the answer is factually incorrect.\n\n` +
-                `## Task\n${task}\n\n## Draft\n${draft}`;
+                `## Task\n${task}\n\n## Draft\n${draft}${contextBlock}`;
         }
-        return `You are a code reviewer. Review the following draft against the task.\n\n## Task\n${task}\n\n## Draft\n${draft}`;
+        return `You are a code reviewer. Review the following draft against the task.\n\n## Task\n${task}\n\n## Draft\n${draft}${contextBlock}`;
     }
-    buildChallengePrompt(task, draft, review) {
-        return `You are a challenger. Challenge the following draft and review.\n\n## Task\n${task}\n\n## Draft\n${draft}\n\n## Review\n${review}`;
+    buildChallengePrompt(task, draft, review, context) {
+        const contextBlock = context ? `\n\n[!] PROJECT CONTEXT [!]\n${context}` : '';
+        return `You are a challenger. Challenge the following draft and review.\n\n## Task\n${task}\n\n## Draft\n${draft}\n\n## Review\n${review}${contextBlock}`;
     }
     buildDraftMessages(task, mode) {
         const messages = (0, prompts_js_1.buildMessages)({ role: 'writer', mode, task });

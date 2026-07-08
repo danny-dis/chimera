@@ -61,6 +61,8 @@ export interface SoloDeliberationConfig extends DeliberationConfigBase {
   model: string;
   /** If true, always run the thinker step before writing. */
   eternalCoT?: boolean;
+  /** If false, skip self-verification (default true). */
+  selfVerify?: boolean;
 }
 
 export interface DuoDeliberationConfig extends DeliberationConfigBase {
@@ -193,4 +195,12 @@ export interface DeliberationEngineDeps {
   taskRouter?: import('../../task-router.js').TaskRouter;
   /** Optional recursion context — internal use. */
   context?: { depth?: number };
+  /**
+   * Tool executor + registry. When provided, the deliberation executors
+   * (solo/trio writer) become tool-capable: tool calls emitted by the LLM
+   * are executed against the workspace instead of being ignored.
+   */
+  workspaceRoot?: string;
+  toolExecutor?: import('../../session-orchestrator.js').ToolExecutorInterface;
+  toolRegistry?: import('../../session-orchestrator.js').ToolRegistryInterface;
 }

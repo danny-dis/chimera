@@ -40,6 +40,8 @@ export interface SoloConfig {
   systemPrompt?: string;
   /** Whether the task is conversational (informational questions, not code tasks). */
   isConversational?: boolean;
+  /** Optional context (file contents, project info, etc.) injected into prompts. */
+  context?: string;
 }
 
 /**

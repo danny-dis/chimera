@@ -77,7 +77,6 @@ declare const AgentToolSchema: z.ZodObject<{
 }, "strip", z.ZodTypeAny, {
     type?: "agent";
     description?: string;
-    prompt?: string;
     tools?: Record<string, {
         type?: "function";
         description?: string;
@@ -87,10 +86,10 @@ declare const AgentToolSchema: z.ZodObject<{
         description?: string;
         url?: string;
     } | "inherit">;
+    prompt?: string;
 }, {
     type?: "agent";
     description?: string;
-    prompt?: string;
     tools?: Record<string, {
         type?: "function";
         description?: string;
@@ -100,6 +99,7 @@ declare const AgentToolSchema: z.ZodObject<{
         description?: string;
         url?: string;
     } | "inherit">;
+    prompt?: string;
 }>;
 declare const ToolSchema: z.ZodUnion<[z.ZodObject<{
     type: z.ZodLiteral<"function">;
@@ -157,7 +157,6 @@ declare const ToolSchema: z.ZodUnion<[z.ZodObject<{
 }, "strip", z.ZodTypeAny, {
     type?: "agent";
     description?: string;
-    prompt?: string;
     tools?: Record<string, {
         type?: "function";
         description?: string;
@@ -167,10 +166,10 @@ declare const ToolSchema: z.ZodUnion<[z.ZodObject<{
         description?: string;
         url?: string;
     } | "inherit">;
+    prompt?: string;
 }, {
     type?: "agent";
     description?: string;
-    prompt?: string;
     tools?: Record<string, {
         type?: "function";
         description?: string;
@@ -180,6 +179,7 @@ declare const ToolSchema: z.ZodUnion<[z.ZodObject<{
         description?: string;
         url?: string;
     } | "inherit">;
+    prompt?: string;
 }>]>;
 declare const ExecutorSchema: z.ZodObject<{
     provider: z.ZodString;
@@ -267,7 +267,6 @@ export declare const AgentYamlSchema: z.ZodObject<{
     }, "strip", z.ZodTypeAny, {
         type?: "agent";
         description?: string;
-        prompt?: string;
         tools?: Record<string, {
             type?: "function";
             description?: string;
@@ -277,10 +276,10 @@ export declare const AgentYamlSchema: z.ZodObject<{
             description?: string;
             url?: string;
         } | "inherit">;
+        prompt?: string;
     }, {
         type?: "agent";
         description?: string;
-        prompt?: string;
         tools?: Record<string, {
             type?: "function";
             description?: string;
@@ -290,6 +289,7 @@ export declare const AgentYamlSchema: z.ZodObject<{
             description?: string;
             url?: string;
         } | "inherit">;
+        prompt?: string;
     }>]>]>>>;
     role: z.ZodOptional<z.ZodEnum<["writer", "reviewer", "challenger", "synthesizer", "planner", "researcher", "summarizer"]>>;
     constraints: z.ZodOptional<z.ZodObject<{
@@ -327,7 +327,6 @@ export declare const AgentYamlSchema: z.ZodObject<{
     role?: "challenger" | "writer" | "reviewer" | "synthesizer" | "planner" | "researcher" | "summarizer";
     name?: string;
     metadata?: Record<string, unknown>;
-    prompt?: string;
     tools?: Record<string, {
         type?: "function";
         description?: string;
@@ -339,7 +338,6 @@ export declare const AgentYamlSchema: z.ZodObject<{
     } | "inherit" | {
         type?: "agent";
         description?: string;
-        prompt?: string;
         tools?: Record<string, {
             type?: "function";
             description?: string;
@@ -349,7 +347,9 @@ export declare const AgentYamlSchema: z.ZodObject<{
             description?: string;
             url?: string;
         } | "inherit">;
+        prompt?: string;
     }>;
+    prompt?: string;
     executor?: {
         provider?: string;
         model?: string;
@@ -371,7 +371,6 @@ export declare const AgentYamlSchema: z.ZodObject<{
     role?: "challenger" | "writer" | "reviewer" | "synthesizer" | "planner" | "researcher" | "summarizer";
     name?: string;
     metadata?: Record<string, unknown>;
-    prompt?: string;
     tools?: Record<string, {
         type?: "function";
         description?: string;
@@ -383,7 +382,6 @@ export declare const AgentYamlSchema: z.ZodObject<{
     } | "inherit" | {
         type?: "agent";
         description?: string;
-        prompt?: string;
         tools?: Record<string, {
             type?: "function";
             description?: string;
@@ -393,7 +391,9 @@ export declare const AgentYamlSchema: z.ZodObject<{
             description?: string;
             url?: string;
         } | "inherit">;
+        prompt?: string;
     }>;
+    prompt?: string;
     executor?: {
         provider?: string;
         model?: string;

@@ -11,8 +11,8 @@ export { bootstrap } from './bootstrap.js';
 export type { BootstrapResult } from './bootstrap.js';
 
 // Memory
-export { LongTermMemory, VectorStore, LocalEmbeddingProvider, AgentMemory } from './memory/index.js';
-export type { LongTermMemoryConfig } from './memory/index.js';
+export { LongTermMemory, VectorStore, LocalEmbeddingProvider, AgentMemory, MemoryPersistence } from './memory/index.js';
+export type { LongTermMemoryConfig, MemoryPersistenceConfig } from './memory/index.js';
 export type { MemoryItem, MemoryMetadata, MemoryQuery, MemoryResult, EmbeddingProvider } from './memory/index.js';
 export type { AgentMemoryItem, AgentMemoryType, AgentMemoryQuery, AgentMemorySnapshot } from './memory/index.js';
 

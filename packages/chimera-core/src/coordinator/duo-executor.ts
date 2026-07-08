@@ -1,5 +1,5 @@
 import { EventStream } from '../event-stream.js';
-import type { LLMProvider } from '../session-orchestrator.js';
+import type { LLMProvider, ToolExecutorInterface, ToolRegistryInterface } from '../session-orchestrator.js';
 import type { ModelRegistry, ModelEntry } from '@chimera/providers';
 import type { CostTracker } from '../cost-tracker.js';
 import { ResponseSynthesizer, type SynthesisInput } from '../response-synthesizer.js';
@@ -29,6 +29,12 @@ interface DuoExecutorDeps {
   registry: ModelRegistry;
   /** Optional cost tracker. */
   costTracker?: CostTracker;
+  /** Optional workspace root — unused by duo (no tools), accepted for uniformity. */
+  workspaceRoot?: string;
+  /** Optional tool executor — unused by duo (two reviewers), accepted for uniformity. */
+  toolExecutor?: ToolExecutorInterface;
+  /** Optional tool registry — unused by duo, accepted for uniformity. */
+  toolRegistry?: ToolRegistryInterface;
 }
 
 /**
@@ -253,12 +259,12 @@ export class DuoExecutor {
     const start = Date.now();
     const provider: LLMProvider = providerFactory(modelId);
     const prompt = role === 'writer'
-      ? this.buildPeerPrompt(role, task)
-      : this.buildReviewPrompt(task, draft!);
+      ? this.buildPeerPrompt(role, task, config.context)
+      : this.buildReviewPrompt(task, draft!, config.context);
 
     const r = await provider.complete(
       [{ role: 'user', content: prompt }],
-      { temperature: config.temperature, maxTokens: config.maxCompletionTokens }
+      { temperature: config.temperature, maxTokens: config.maxCompletionTokens, ...(config.reasoning !== undefined ? { reasoning: config.reasoning } : {}) }
     );
     return {
       content: r.content,
@@ -274,25 +280,27 @@ export class DuoExecutor {
     return conflictFreeContents.map((i) => i.content.split('\n')[0].slice(0, 200));
   }
 
-  private buildPeerPrompt(role: 'writer' | 'reviewer', task: string): string {
+  private buildPeerPrompt(role: 'writer' | 'reviewer', task: string, context?: string): string {
+    const contextBlock = context ? `\n\n[!] PROJECT CONTEXT [!]\n${context}` : '';
     if (TaskRouter.isConversationalTask(task)) {
       return `You are a helpful assistant. Answer the following conversational question directly.\n` +
         `Do NOT produce code, file changes, or technical analysis unless specifically asked.\n` +
-        `Provide a clear, concise, factual answer.\n\nTASK: ${task}\n\nANSWER:`;
+        `Provide a clear, concise, factual answer.\n\nTASK: ${task}${contextBlock}\n\nANSWER:`;
     }
-    return `You are the ${role}. Provide a complete answer to the following task. Be specific and concrete.\n\nTASK: ${task}\n\nANSWER:`;
+    return `You are the ${role}. Provide a complete answer to the following task. Be specific and concrete.\n\nTASK: ${task}${contextBlock}\n\nANSWER:`;
   }
 
-  private buildReviewPrompt(task: string, draft: string): string {
+  private buildReviewPrompt(task: string, draft: string, context?: string): string {
+    const contextBlock = context ? `\n\n[!] PROJECT CONTEXT [!]\n${context}` : '';
     if (TaskRouter.isConversationalTask(task)) {
       return `[!] CONVERSATIONAL REVIEW [!]\n` +
         `This is a conversational/general question, NOT a code task.\n` +
         `Do NOT apply code-review criteria.\n` +
         `Evaluate ONLY: factual accuracy, completeness, and clarity.\n` +
         `Default to PASS unless the answer is factually incorrect.\n\n` +
-        `TASK: ${task}\n\nDRAFT:\n${draft}\n\nIMPROVED ANSWER:`;
+        `TASK: ${task}${contextBlock}\n\nDRAFT:\n${draft}\n\nIMPROVED ANSWER:`;
     }
-    return `You are the reviewer. Read the following draft answer to the task and identify any issues, hallucinations, or missing parts. Provide an improved version of the answer.\n\nTASK: ${task}\n\nDRAFT:\n${draft}\n\nIMPROVED ANSWER:`;
+    return `You are the reviewer. Read the following draft answer to the task and identify any issues, hallucinations, or missing parts. Provide an improved version of the answer.\n\nTASK: ${task}${contextBlock}\n\nDRAFT:\n${draft}\n\nIMPROVED ANSWER:`;
   }
 
   private runLinter(content: string): { success: boolean; errors: string[] } {

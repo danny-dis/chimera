@@ -1,4 +1,5 @@
 import { EventStream } from '../event-stream.js';
+import type { ToolExecutorInterface, ToolRegistryInterface } from '../session-orchestrator.js';
 import type { ModelRegistry } from '@chimera/providers';
 import type { CostTracker } from '../cost-tracker.js';
 import type { DuoConfig, DuoContext, DuoResult, DuoProviderFactory } from './duo-types.js';
@@ -9,6 +10,12 @@ interface DuoExecutorDeps {
     registry: ModelRegistry;
     /** Optional cost tracker. */
     costTracker?: CostTracker;
+    /** Optional workspace root — unused by duo (no tools), accepted for uniformity. */
+    workspaceRoot?: string;
+    /** Optional tool executor — unused by duo (two reviewers), accepted for uniformity. */
+    toolExecutor?: ToolExecutorInterface;
+    /** Optional tool registry — unused by duo, accepted for uniformity. */
+    toolRegistry?: ToolRegistryInterface;
 }
 /**
  * Two-model sequential deliberation with **deterministic** synthesis.

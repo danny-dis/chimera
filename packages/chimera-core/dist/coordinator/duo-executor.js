@@ -177,9 +177,9 @@ class DuoExecutor {
         const start = Date.now();
         const provider = providerFactory(modelId);
         const prompt = role === 'writer'
-            ? this.buildPeerPrompt(role, task)
-            : this.buildReviewPrompt(task, draft);
-        const r = await provider.complete([{ role: 'user', content: prompt }], { temperature: config.temperature, maxTokens: config.maxCompletionTokens });
+            ? this.buildPeerPrompt(role, task, config.context)
+            : this.buildReviewPrompt(task, draft, config.context);
+        const r = await provider.complete([{ role: 'user', content: prompt }], { temperature: config.temperature, maxTokens: config.maxCompletionTokens, ...(config.reasoning !== undefined ? { reasoning: config.reasoning } : {}) });
         return {
             content: r.content,
             inputTokens: r.usage?.inputTokens ?? 0,
@@ -192,24 +192,26 @@ class DuoExecutor {
         const conflictFreeContents = inputs.filter((i) => !conflictedAgentIds.has(i.agentId));
         return conflictFreeContents.map((i) => i.content.split('\n')[0].slice(0, 200));
     }
-    buildPeerPrompt(role, task) {
+    buildPeerPrompt(role, task, context) {
+        const contextBlock = context ? `\n\n[!] PROJECT CONTEXT [!]\n${context}` : '';
         if (task_router_js_1.TaskRouter.isConversationalTask(task)) {
             return `You are a helpful assistant. Answer the following conversational question directly.\n` +
                 `Do NOT produce code, file changes, or technical analysis unless specifically asked.\n` +
-                `Provide a clear, concise, factual answer.\n\nTASK: ${task}\n\nANSWER:`;
+                `Provide a clear, concise, factual answer.\n\nTASK: ${task}${contextBlock}\n\nANSWER:`;
         }
-        return `You are the ${role}. Provide a complete answer to the following task. Be specific and concrete.\n\nTASK: ${task}\n\nANSWER:`;
+        return `You are the ${role}. Provide a complete answer to the following task. Be specific and concrete.\n\nTASK: ${task}${contextBlock}\n\nANSWER:`;
     }
-    buildReviewPrompt(task, draft) {
+    buildReviewPrompt(task, draft, context) {
+        const contextBlock = context ? `\n\n[!] PROJECT CONTEXT [!]\n${context}` : '';
         if (task_router_js_1.TaskRouter.isConversationalTask(task)) {
             return `[!] CONVERSATIONAL REVIEW [!]\n` +
                 `This is a conversational/general question, NOT a code task.\n` +
                 `Do NOT apply code-review criteria.\n` +
                 `Evaluate ONLY: factual accuracy, completeness, and clarity.\n` +
                 `Default to PASS unless the answer is factually incorrect.\n\n` +
-                `TASK: ${task}\n\nDRAFT:\n${draft}\n\nIMPROVED ANSWER:`;
+                `TASK: ${task}${contextBlock}\n\nDRAFT:\n${draft}\n\nIMPROVED ANSWER:`;
         }
-        return `You are the reviewer. Read the following draft answer to the task and identify any issues, hallucinations, or missing parts. Provide an improved version of the answer.\n\nTASK: ${task}\n\nDRAFT:\n${draft}\n\nIMPROVED ANSWER:`;
+        return `You are the reviewer. Read the following draft answer to the task and identify any issues, hallucinations, or missing parts. Provide an improved version of the answer.\n\nTASK: ${task}${contextBlock}\n\nDRAFT:\n${draft}\n\nIMPROVED ANSWER:`;
     }
     runLinter(content) {
         const errors = [];

@@ -68,6 +68,8 @@ export interface TrioConfig {
    * this severity trigger a re-draft. Default: 'high'.
    */
   revisionSeverityThreshold?: 'high' | 'med' | 'low';
+  /** Optional context (file contents, project info, etc.) injected into prompts. */
+  context?: string;
 }
 
 /**

@@ -2,7 +2,6 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.SubAgentSpawner = void 0;
 const async_semaphore_js_1 = require("../agent/async-semaphore.js");
-const event_stream_js_1 = require("../event-stream.js");
 const DEFAULT_LAUNCH_STAGGER_MS = 100;
 const DEFAULT_BASE_BACKOFF_MS = 1000;
 const DEFAULT_MAX_BACKOFF_MS = 30_000;
@@ -26,7 +25,7 @@ class SubAgentSpawner {
     maxBackoffMs;
     maxRetries;
     constructor(eventStreamOrConfig, config, concurrencyEngine, backoffConfig) {
-        if (eventStreamOrConfig instanceof event_stream_js_1.EventStream) {
+        if (eventStreamOrConfig && typeof eventStreamOrConfig.append === 'function') {
             this.eventStream = eventStreamOrConfig;
             this.config = { ...DEFAULT_CONFIG, ...config };
         }

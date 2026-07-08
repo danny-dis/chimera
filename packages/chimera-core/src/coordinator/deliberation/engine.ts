@@ -113,6 +113,9 @@ export class DeliberationEngine {
       eventStream: this.deps.eventStream,
       registry: this.deps.registry,
       ...(this.deps.costTracker ? { costTracker: this.deps.costTracker } : {}),
+      ...(this.deps.workspaceRoot ? { workspaceRoot: this.deps.workspaceRoot } : {}),
+      ...(this.deps.toolExecutor ? { toolExecutor: this.deps.toolExecutor } : {}),
+      ...(this.deps.toolRegistry ? { toolRegistry: this.deps.toolRegistry } : {}),
     });
 
     const isConversational = TaskRouter.isConversationalTask(cfg.task);
@@ -129,6 +132,7 @@ export class DeliberationEngine {
         ? { reasoning: cfg.reasoning as { effort?: 'low' | 'medium' | 'high'; maxTokens?: number } }
         : {}),
       ...(cfg.eternalCoT !== undefined ? { eternalCoT: cfg.eternalCoT } : {}),
+      ...(cfg.selfVerify !== undefined ? { selfVerify: cfg.selfVerify } : {}),
       systemPrompt: CHIMERA_CORE_IDENTITY,
       isConversational,
     };
@@ -164,6 +168,9 @@ export class DeliberationEngine {
       eventStream: this.deps.eventStream,
       registry: this.deps.registry,
       ...(this.deps.costTracker ? { costTracker: this.deps.costTracker } : {}),
+      ...(this.deps.workspaceRoot ? { workspaceRoot: this.deps.workspaceRoot } : {}),
+      ...(this.deps.toolExecutor ? { toolExecutor: this.deps.toolExecutor } : {}),
+      ...(this.deps.toolRegistry ? { toolRegistry: this.deps.toolRegistry } : {}),
     });
 
     const duoConfig: DuoConfig = {
@@ -202,6 +209,9 @@ export class DeliberationEngine {
       ...(this.deps.worktreeIsolation
         ? { worktreeIsolation: this.deps.worktreeIsolation }
         : {}),
+      ...(this.deps.workspaceRoot ? { workspaceRoot: this.deps.workspaceRoot } : {}),
+      ...(this.deps.toolExecutor ? { toolExecutor: this.deps.toolExecutor } : {}),
+      ...(this.deps.toolRegistry ? { toolRegistry: this.deps.toolRegistry } : {}),
     });
 
     const trioConfig: TrioConfig = {

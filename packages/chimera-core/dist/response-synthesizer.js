@@ -53,7 +53,7 @@ class ResponseSynthesizer {
         const needsUserEscalation = conflicts.some((c) => c.resolvedBy === 'user_escalation');
         const overallConfidence = this.calculateOverallConfidence(inputs, conflicts);
         const unifiedResponse = this.buildUnifiedResponse(inputs, conflicts);
-        this.emitEvents(conflicts, inputs);
+        this.emitEvents(conflicts, inputs, unifiedResponse);
         return {
             unifiedResponse,
             conflicts,
@@ -244,7 +244,7 @@ class ResponseSynthesizer {
         }
         catch { /* ignore */ }
     }
-    emitEvents(conflicts, inputs) {
+    emitEvents(conflicts, inputs, output) {
         if (!this.eventStream)
             return;
         for (const conflict of conflicts) {
@@ -262,6 +262,7 @@ class ResponseSynthesizer {
             status: conflicts.some((c) => c.resolvedBy === 'user_escalation') ? 'needs_user' : 'done',
             cost: 0,
             agentCount: inputs.length,
+            output,
         });
     }
 }

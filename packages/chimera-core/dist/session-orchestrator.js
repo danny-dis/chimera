@@ -28,6 +28,7 @@ const VALID_MODE_PRESET_COMBOS = {
 const context_1 = require("@chimera/context");
 const context_2 = require("@chimera/context");
 const instruction_discovery_js_1 = require("./instruction-discovery.js");
+const project_detection_js_1 = require("./project-detection.js");
 const engine_js_1 = require("./coordinator/deliberation/engine.js");
 const model_capabilities_js_1 = require("./coordinator/model-capabilities.js");
 let agentCounter = 0;
@@ -299,6 +300,13 @@ class SessionOrchestrator {
             if (instructionContext) {
                 memoryContext += instructionContext + '\n\n---\n\n';
             }
+            // Auto-detect project metadata when no instructions exist
+            if (!memoryContext) {
+                const projectContext = (0, project_detection_js_1.detectProjectContext)(this._workspaceRoot);
+                if (projectContext) {
+                    memoryContext = `[Project metadata — auto-detected]\n${projectContext}\n\n---\n\n`;
+                }
+            }
             if (this.contextEngine) {
                 try {
                     await this.contextEngine.indexRepo();
@@ -390,10 +398,14 @@ class SessionOrchestrator {
                 task,
                 timestamp: Date.now(),
             });
+            // --- Conversational fast path: bypass full pipeline for simple questions ---
+            if (task_router_js_1.TaskRouter.isConversationalTask(task)) {
+                return this.executeConversational(task, providers, costCap, memoryContext, conversationHistory, executeSignal);
+            }
             // --- Delegate to DeliberationEngine (primary path) ---
             if (this._registry) {
                 try {
-                    const delibResult = await this.executeWithDeliberation(task, resolvedMode, providers, costCap, preset, complexity);
+                    const delibResult = await this.executeWithDeliberation(task, resolvedMode, providers, costCap, preset, complexity, memoryContext, conversationHistory);
                     return this.deliberationToOrchestratorResult(delibResult, task, resolvedMode);
                 }
                 catch (err) {
@@ -411,7 +423,7 @@ class SessionOrchestrator {
             this.transition({ status: 'drafting', task, agentId: writerId });
             this.agentMesh.registerAgent(this.buildAgentConfig(writerId, 'writer', costCap));
             const toolDefs = this.buildToolDefinitions();
-            const writerMessages = this.buildWriterPrompt(task, resolvedMode, conversationHistory);
+            const writerMessages = this.buildWriterPrompt(task, resolvedMode, conversationHistory, memoryContext);
             const budgetCheck = this.checkBudget(8192);
             if (budgetCheck && budgetCheck.action === 'stop') {
                 this.eventStream.append({
@@ -483,6 +495,27 @@ class SessionOrchestrator {
                         writerMessages.push({ role: 'system', content: `## Context Handoff\n${serialized}` });
                     }
                 }
+                // #5 — Proactive compaction: even if relay racing didn't trigger a
+                // handoff, compact the message history when estimated tokens exceed
+                // 80% of the context window. This prevents silent context degradation
+                // on long tool loops where relay racing thresholds aren't hit.
+                const estimatedTokens = this._writerMessages.reduce((sum, m) => sum + m.content.length, 0) / 4;
+                const CONTEXT_WINDOW = 200_000;
+                const COMPACTION_THRESHOLD = 0.80;
+                if (estimatedTokens > CONTEXT_WINDOW * COMPACTION_THRESHOLD) {
+                    const compacted = (0, context_2.runCompactionPipeline)(this._writerMessages);
+                    const saved = compacted.totalTokensSaved;
+                    if (saved > 0) {
+                        this._writerMessages = compacted.messages;
+                        this.eventStream.append({
+                            type: 'compaction_triggered',
+                            reason: 'proactive_token_threshold',
+                            estimatedTokensBefore: Math.round(estimatedTokens),
+                            tokensSaved: saved,
+                            stages: compacted.stages.map((s) => ({ stage: s.stage, saved: s.tokensSaved })),
+                        });
+                    }
+                }
                 const iterBudget = this.checkBudget(8192);
                 if (iterBudget && iterBudget.action === 'stop')
                     break;
@@ -531,7 +564,7 @@ class SessionOrchestrator {
                 return this.finalize('done', outputs, totalCost, task, resolvedMode);
             }
             await this.enforceRateLimit(8192);
-            const reviewerMessages = this.buildReviewerPrompt(task, draftContent, resolvedMode, conversationHistory);
+            const reviewerMessages = this.buildReviewerPrompt(task, draftContent, resolvedMode, conversationHistory, memoryContext);
             const reviewResult = await providers.reviewer.complete(reviewerMessages, {
                 temperature: 0.2,
                 maxTokens: 4096,
@@ -581,7 +614,7 @@ class SessionOrchestrator {
                     return this.finalize('needs_user', outputs, totalCost, task, resolvedMode);
                 }
                 await this.enforceRateLimit(8192);
-                const challengerMessages = this.buildChallengerPrompt(task, draftContent, reviewResult.content, conversationHistory);
+                const challengerMessages = this.buildChallengerPrompt(task, draftContent, reviewResult.content, conversationHistory, memoryContext);
                 const challengeResult = await providers.challenger.complete(challengerMessages, {
                     temperature: 0.5,
                     maxTokens: 4096,
@@ -634,7 +667,64 @@ class SessionOrchestrator {
             ac.abort('execute-finished');
         }
     }
-    async executeWithDeliberation(task, mode, providers, costCap = 10, preset, complexity) {
+    /**
+     * Conversational fast path: single LLM call with plain text output.
+     * Bypasses the full multi-agent pipeline (no reviewer, no challenger,
+     * no JSON schema) for simple questions like "who are you?", "what can you do?",
+     * "where do you need tuning?", etc.
+     */
+    async executeConversational(task, providers, costCap, context, conversationHistory, signal) {
+        const startTime = Date.now();
+        const agentId = nextAgentId();
+        this.transition({ status: 'drafting', task, agentId });
+        const messages = (0, prompts_js_1.buildConversationalMessages)(task, context, this._workspaceRoot, conversationHistory);
+        try {
+            const result = await providers.writer.complete(messages, {
+                temperature: 0.7,
+                maxTokens: 2048,
+                responseFormat: 'text',
+                signal,
+            });
+            const cost = this.estimateCost(result.usage, providers.writer);
+            this.costTracker.recordSpend('writer', cost);
+            const output = result.content.trim();
+            const duration = Date.now() - startTime;
+            this.eventStream.append({
+                type: 'final_response',
+                status: 'done',
+                cost,
+                agentCount: 1,
+                output,
+            });
+            this.transition({ status: 'complete', result: task, cost });
+            return {
+                status: 'done',
+                output,
+                cost,
+                agentCount: 1,
+                events: [...this.eventStream.getAll()],
+            };
+        }
+        catch (err) {
+            const message = err instanceof Error ? err.message : String(err);
+            this.transition({ status: 'error', error: message });
+            this.eventStream.append({
+                type: 'final_response',
+                status: 'blocked',
+                cost: 0,
+                agentCount: 0,
+                output: `Error: ${message}`,
+            });
+            return {
+                status: 'error',
+                output: `Error: ${message}`,
+                cost: 0,
+                agentCount: 0,
+                events: [...this.eventStream.getAll()],
+            };
+        }
+    }
+    async executeWithDeliberation(task, mode, providers, costCap = 10, preset, complexity, context, conversationHistory) {
         if (!this._registry) {
             throw new Error('ModelRegistry required for deliberation — pass options.registry');
         }
@@ -643,8 +733,10 @@ class SessionOrchestrator {
             registry: this._registry,
             costTracker: this.costTracker,
             providerFactory: this.buildProviderFactory(providers),
+            toolExecutor: this.toolExecutor,
+            toolRegistry: this.toolRegistry,
         });
-        const config = this.buildDeliberationConfig(task, mode, providers, costCap, preset, complexity);
+        const config = this.buildDeliberationConfig(task, mode, providers, costCap, preset, complexity, context, conversationHistory);
         return engine.run(config);
     }
     buildProviderFactory(providers) {
@@ -682,30 +774,62 @@ class SessionOrchestrator {
                 return 'solo';
         }
     }
-    buildDeliberationConfig(task, mode, providers, costCap, preset, complexity) {
+    buildDeliberationConfig(task, mode, providers, costCap, preset, complexity, context, conversationHistory) {
         const delibMode = preset ?? this.mapModeToDeliberationMode(mode, complexity);
-        const base = { task, budgetUsd: costCap, temperature: 0.7, maxCompletionTokens: 4096 };
+        // Append conversation history to context so the model has full conversational awareness
+        let fullContext = context ?? '';
+        if (conversationHistory && conversationHistory.length > 0) {
+            const MAX_HISTORY_TURNS = 10;
+            const MAX_HISTORY_CHARS = 32000;
+            let historyMessages = conversationHistory.slice(-MAX_HISTORY_TURNS * 2);
+            let totalChars = historyMessages.reduce((sum, m) => sum + m.content.length, 0);
+            while (totalChars > MAX_HISTORY_CHARS && historyMessages.length > 2) {
+                const removed = historyMessages.shift();
+                totalChars -= removed.content.length;
+            }
+            const historyBlock = [
+                '',
+                '--- PREVIOUS CONVERSATION CONTEXT ---',
+                'Use this context to understand what the user has been discussing.',
+                'Do NOT repeat information already provided. Build on previous answers.',
+                ...historyMessages.map(m => `[${m.role === 'user' ? 'User' : 'Assistant'}]: ${m.content.slice(0, 500)}`),
+                '--- END PREVIOUS CONVERSATION ---',
+                '',
+            ].join('\n');
+            fullContext = fullContext ? `${fullContext}\n${historyBlock}` : historyBlock;
+        }
+        const base = { task, context: fullContext, budgetUsd: costCap, temperature: 0.7, maxCompletionTokens: 4096 };
+        const getModelIds = () => this._registry
+            ? this._registry
+                .getAll()
+                .filter((m) => !m.deprecated)
+                .map((m) => m.id)
+            : ['default'];
         // Override to fusion when task explicitly requests multi-model deliberation
         if (delibMode !== 'fusion' && !preset) {
             const lower = task.toLowerCase();
             const fusionKeywords = ['compare', 'debate', 'perspectives', 'alternatives', 'tradeoffs', 'consensus'];
             if (fusionKeywords.some((k) => lower.includes(k))) {
-                return { ...base, mode: 'fusion', analysisModels: ['default'], judgeModel: 'default' };
+                return { ...base, mode: 'fusion', analysisModels: getModelIds().slice(0, 3), judgeModel: getModelIds().slice(-1)[0] ?? 'default' };
             }
         }
         switch (delibMode) {
             case 'solo':
-                return { ...base, mode: 'solo', model: 'default' };
-            case 'duo':
-                return { ...base, mode: 'duo', modelA: 'default', modelB: 'default' };
-            case 'trio':
+                return { ...base, mode: 'solo', model: getModelIds()[0] ?? 'default' };
+            case 'duo': {
+                const ids = getModelIds();
+                return { ...base, mode: 'duo', modelA: ids[0] ?? 'default', modelB: ids[1] ?? ids[0] ?? 'default' };
+            }
+            case 'trio': {
+                const ids = getModelIds();
                 return {
                     ...base,
                     mode: 'trio',
-                    writer: 'default',
-                    reviewer: 'default',
-                    ...(providers.challenger ? { challenger: 'default' } : {}),
+                    writer: ids[0] ?? 'default',
+                    reviewer: ids[1] ?? ids[0] ?? 'default',
+                    ...(providers.challenger ? { challenger: ids[2] ?? ids[0] ?? 'default' } : {}),
                 };
+            }
             case 'fusion': {
                 const modelIds = this._registry
                     ? this._registry.getAll()
@@ -737,6 +861,19 @@ class SessionOrchestrator {
     }
     deliberationToOrchestratorResult(delib, task, mode) {
         const status = delib.degraded ? 'error' : delib.analysis.confidence < 0.3 ? 'needs_user' : 'done';
+        const agentCountForMode = (m) => {
+            switch (m) {
+                case 'solo': return 1;
+                case 'duo': return 2;
+                case 'trio': return 3;
+                case 'merge': return 2;
+                case 'fusion': return 4; // panel (up to 3) + judge
+                case 'hive': return 6;
+                case 'swarm': return 50;
+                case 'auto': return delib.autoSelection ? agentCountForMode(delib.autoSelection.selectedPreset) : 1;
+            }
+        };
+        const agentCount = agentCountForMode(delib.mode);
         this.transition({ status: 'complete', result: delib.output, cost: delib.totalCostUsd });
         this.eventStream.append({
             type: 'deliberation_result',
@@ -748,7 +885,7 @@ class SessionOrchestrator {
             type: 'final_response',
             status: status === 'error' ? 'blocked' : status,
             cost: delib.totalCostUsd,
-            agentCount: 1,
+            agentCount,
             output: delib.output,
         });
         if (this.memory && status === 'done') {
@@ -759,9 +896,13 @@ class SessionOrchestrator {
                 source: 'user',
                 tags: [mode, 'task-result'],
             }).catch((err) => {
+                const message = `Failed to persist task result to memory: ${err instanceof Error ? err.message : String(err)}`;
+                // Non-fatal: memory loss must not crash the task. Surface a visible
+                // warning in addition to the event stream so the failure isn't silent.
+                console.warn(`[chimera] ${message}`);
                 this.eventStream?.append({
                     type: 'error',
-                    message: `Failed to persist task result to memory: ${err instanceof Error ? err.message : String(err)}`,
+                    message,
                 });
             });
         }
@@ -778,7 +919,7 @@ class SessionOrchestrator {
             status,
             output: delib.output,
             cost: delib.totalCostUsd,
-            agentCount: 1,
+            agentCount,
             events: [...this.eventStream.getAll()],
         };
     }
@@ -816,10 +957,13 @@ class SessionOrchestrator {
                 source: 'user',
                 tags: [mode, 'task-result'],
             }).catch((err) => {
-                // Memory write is best-effort; log but don't block orchestrator
+                const message = `Failed to persist task result to memory: ${err instanceof Error ? err.message : String(err)}`;
+                // Memory write is best-effort; non-fatal so it doesn't block the
+                // orchestrator, but the failure must be visible rather than silent.
+                console.warn(`[chimera] ${message}`);
                 this.eventStream?.append({
                     type: 'error',
-                    message: `Failed to persist task result to memory: ${err instanceof Error ? err.message : String(err)}`,
+                    message,
                 });
             });
         }
@@ -1192,23 +1336,34 @@ class SessionOrchestrator {
             return false;
         return true;
     }
-    buildWriterPrompt(task, mode, conversationHistory) {
-        const messages = (0, prompts_js_1.buildMessages)({ role: 'writer', mode, task, workspaceRoot: this._workspaceRoot, cacheControl: DEFAULT_CACHE_CONTROL });
-        const outputInstructions = [
-            'Respond with valid JSON matching this schema:',
-            '{"thought": string, "response": string, "confidence": number 0-1, "filesChanged": string[], "issues": string[], "rationale": string}',
-            'The "thought" field must contain your comprehensive Chain-of-Thought reasoning.',
-            'The "response" field contains your main output — this is what the user sees.',
-            'The "confidence" field is how confident you are (0 = guessing, 1 = certain).',
-            'The "filesChanged" field lists any files referenced or modified.',
-            'The "rationale" field explains why you chose this approach.',
-            '',
-            'CRITICAL: For conversational questions (e.g., "what can you do?", "who are you?", "how do I use X?"),',
-            'answer directly in the "response" field. Do NOT put analysis, meta-reasoning, or internal',
-            'assessment of other agents in the response field. The response field is the user-facing answer.',
-            'Analysis like "The original writer draft was empty..." or "The reviewer identified..." belongs',
-            'in "thought" only, NEVER in "response".',
-        ].join('\n');
+    buildWriterPrompt(task, mode, conversationHistory, context) {
+        const messages = (0, prompts_js_1.buildMessages)({ role: 'writer', mode, task, context, workspaceRoot: this._workspaceRoot, cacheControl: DEFAULT_CACHE_CONTROL });
+        const isConversational = task_router_js_1.TaskRouter.isConversationalTask(task);
+        const outputInstructions = isConversational
+            ? [
+                'Answer the following question directly and naturally.',
+                'No structured output needed — just give a clear, helpful answer.',
+                'If the user message contains typos, misspellings, or casual shorthand, infer their intent',
+                'and answer accordingly. Never respond with "I didn\'t understand" — give your best answer.',
+            ].join('\n')
+            : [
+                'Respond with valid JSON matching this schema:',
+                '{"thought": string, "response": string, "confidence": number 0-1, "filesChanged": string[], "issues": string[], "rationale": string}',
+                'The "thought" field must contain your comprehensive Chain-of-Thought reasoning.',
+                'The "response" field contains your main output — this is what the user sees.',
+                'The "confidence" field is how confident you are (0 = guessing, 1 = certain).',
+                'The "filesChanged" field lists any files referenced or modified.',
+                'The "rationale" field explains why you chose this approach.',
+                '',
+                'CRITICAL: For conversational questions (e.g., "what can you do?", "who are you?", "how do I use X?"),',
+                'answer directly in the "response" field. Do NOT put analysis, meta-reasoning, or internal',
+                'assessment of other agents in the response field. The response field is the user-facing answer.',
+                'Analysis like "The original writer draft was empty..." or "The reviewer identified..." belongs',
+                'in "thought" only, NEVER in "response".',
+                '',
+                'If the user message contains typos, misspellings, or casual shorthand, infer their intent',
+                'and answer accordingly. Never respond with "I didn\'t understand" — give your best answer.',
+            ].join('\n');
         messages.splice(1, 0, { role: 'system', content: outputInstructions });
         // Insert conversation history between output instructions and current task
         if (conversationHistory && conversationHistory.length > 0) {
@@ -1233,7 +1388,7 @@ class SessionOrchestrator {
         }
         return messages;
     }
-    buildReviewerPrompt(task, draft, mode, conversationHistory) {
+    buildReviewerPrompt(task, draft, mode, conversationHistory, context) {
         const messages = (0, prompts_js_1.buildMessages)({
             role: 'reviewer',
             mode,
@@ -1243,6 +1398,7 @@ class SessionOrchestrator {
                 '',
                 'Evaluate the draft against the task. Return structured JSON.',
             ].join('\n'),
+            context,
             workspaceRoot: this._workspaceRoot,
             cacheControl: DEFAULT_CACHE_CONTROL,
         });
@@ -1252,7 +1408,7 @@ class SessionOrchestrator {
             'The "thought" field must contain your detailed reasoning and adversarial critique.',
         ];
         if (task_router_js_1.TaskRouter.isConversationalTask(task)) {
-            outputInstructions.push('', 'IMPORTANT: This is a conversational/general question, not a code task.', 'Do NOT apply code-review criteria. Evaluate only: accuracy, completeness, clarity.', 'Default to PASS unless the answer is factually incorrect.');
+            outputInstructions.push('', 'IMPORTANT: This is a conversational/general question, not a code task.', 'Do NOT apply code-review criteria. Evaluate only: accuracy, completeness, clarity.', 'Default to PASS unless the answer is factually incorrect.', '', 'CRITICAL: Do NOT produce a meta-analysis like "Review findings:" or "Reviewer verdict:". instead,', 'return the improved version of the answer directly in the "thought" field with verdict: "PASS".', 'The user should see the answer, not your review process.');
         }
         messages.splice(1, 0, { role: 'system', content: outputInstructions.join('\n') });
         if (conversationHistory && conversationHistory.length > 0) {
@@ -1275,7 +1431,7 @@ class SessionOrchestrator {
         }
         return messages;
     }
-    buildChallengerPrompt(task, draft, review, conversationHistory) {
+    buildChallengerPrompt(task, draft, review, conversationHistory, context) {
         const messages = (0, prompts_js_1.buildMessages)({
             role: 'challenger',
             mode: 'review', // Use review mode for challenging
@@ -1286,6 +1442,7 @@ class SessionOrchestrator {
                 '',
                 'Critique both the draft and the review. Propose alternatives if needed. Return structured JSON.',
             ].join('\n'),
+            context,
             workspaceRoot: this._workspaceRoot,
             cacheControl: DEFAULT_CACHE_CONTROL,
         });

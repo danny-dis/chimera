@@ -119,7 +119,7 @@ export class FusionExecutor {
 
         const res = await provider.complete(
           [{ role: 'user', content: finalTask }],
-          { temperature: config.temperature, maxTokens: config.maxCompletionTokens }
+          { temperature: config.temperature, maxTokens: config.maxCompletionTokens, ...(config.reasoning !== undefined ? { reasoning: config.reasoning } : {}) }
         );
         return {
           modelId,
@@ -178,7 +178,7 @@ export class FusionExecutor {
 
                 const res = await provider.complete(
                     [{ role: 'user', content: rebuttalPrompt }],
-                    { temperature: config.temperature, maxTokens: config.maxCompletionTokens }
+                    { temperature: config.temperature, maxTokens: config.maxCompletionTokens, ...(config.reasoning !== undefined ? { reasoning: config.reasoning } : {}) }
                 );
 
                 return {
@@ -227,7 +227,7 @@ export class FusionExecutor {
         const judgeProvider = providerFactory(judgeModel);
         const judgeRes = await judgeProvider.complete(
           [{ role: 'user', content: prompt }],
-          { responseFormat: 'json_object', temperature: config.temperature, maxTokens: config.maxCompletionTokens }
+          { responseFormat: 'json_object', temperature: config.temperature, maxTokens: config.maxCompletionTokens, ...(config.reasoning !== undefined ? { reasoning: config.reasoning } : {}) }
         );
 
         let parsed: Record<string, unknown>;

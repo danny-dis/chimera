@@ -38,7 +38,8 @@ describe('SessionOrchestrator', () => {
     });
 
     it('creates an EventStream by default', () => {
-      expect(orchestrator.getEventStream()).toBeInstanceOf(EventStream);
+      expect(orchestrator.getEventStream()).toBeDefined();
+      expect(orchestrator.getEventStream()!.constructor.name).toBe('EventStream');
     });
 
     it('creates a CostTracker', () => {
@@ -132,13 +133,14 @@ describe('SessionOrchestrator', () => {
       const provider: LLMProvider = {
         async complete(messages) {
           allCaptured.push([...messages]);
-          const taskMsg = messages.find(m => m.content.includes('[!] TASK'));
-          const task = taskMsg?.content ?? '';
+          // Check all message content for task detection (conversational path
+          // doesn't use the [!] TASK prefix — the task is raw user text).
+          const allContent = messages.map(m => m.content).join('\n');
 
           // Extract what the LLM would "know" from context
-          const hasHistory = messages.some(m => m.content.includes('PREVIOUS CONVERSATION CONTEXT'));
+          const hasHistory = allContent.includes('PREVIOUS CONVERSATION CONTEXT');
 
-          if (task.includes('Explain the contents')) {
+          if (allContent.includes('Explain the contents')) {
             conversationHistory.push(
               { role: 'user', content: 'Explain the contents of this project' },
               { role: 'assistant', content: 'A.R.G.U.S. is an Automated Reconnaissance & Geographic Understanding System - a distributed intelligence platform for multi-source data fusion and 4D spatial-temporal analytics.' },
@@ -150,7 +152,7 @@ describe('SessionOrchestrator', () => {
           }
 
           // Second call: should have history
-          if (task.includes('What sources')) {
+          if (allContent.includes('What sources')) {
             expect(hasHistory).toBe(true);
             return {
               content: JSON.stringify({ response: 'It supports 141+ sources including AIS, ADS-B, Shodan, and social media.', confidence: 0.85, rationale: 'From the README.' }),

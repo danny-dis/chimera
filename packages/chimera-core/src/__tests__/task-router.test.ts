@@ -214,6 +214,16 @@ describe('TaskRouter', () => {
       expect(TaskRouter.isConversationalTask('retry')).toBe(true);
     });
 
+    it('detects casual and misspelled conversational patterns', () => {
+      expect(TaskRouter.isConversationalTask('how bout its mcp oxy ability')).toBe(true);
+      expect(TaskRouter.isConversationalTask("what's the project about")).toBe(true);
+      expect(TaskRouter.isConversationalTask('tell me hee08')).toBe(true);
+      expect(TaskRouter.isConversationalTask('what is dmr x')).toBe(true);
+      expect(TaskRouter.isConversationalTask('whats up')).toBe(true);
+      expect(TaskRouter.isConversationalTask('how does this work')).toBe(true);
+      expect(TaskRouter.isConversationalTask('can you tell me about the auth flow')).toBe(true);
+    });
+
     it('does not false-positive on code tasks', () => {
       expect(TaskRouter.isConversationalTask('fix this bug')).toBe(false);
       expect(TaskRouter.isConversationalTask('What is the answer?')).toBe(false);

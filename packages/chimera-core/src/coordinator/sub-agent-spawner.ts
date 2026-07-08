@@ -47,8 +47,8 @@ export class SubAgentSpawner {
     concurrencyEngine?: DynamicConcurrencyEngine,
     backoffConfig?: SpawnerBackoffConfig,
   ) {
-    if (eventStreamOrConfig instanceof EventStream) {
-      this.eventStream = eventStreamOrConfig;
+    if (eventStreamOrConfig && typeof (eventStreamOrConfig as EventStream).append === 'function') {
+      this.eventStream = eventStreamOrConfig as EventStream;
       this.config = { ...DEFAULT_CONFIG, ...config };
     } else {
       this.config = { ...DEFAULT_CONFIG, ...(eventStreamOrConfig as Partial<CoordinatorConfig>) };

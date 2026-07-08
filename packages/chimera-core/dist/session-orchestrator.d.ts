@@ -39,6 +39,11 @@ export interface LLMProvider {
             type: 'ephemeral';
             ttl?: '5m' | '1h';
         };
+        /** Native reasoning effort, forwarded to providers that support it. */
+        reasoning?: {
+            effort?: 'low' | 'medium' | 'high';
+            maxTokens?: number;
+        };
     }): Promise<{
         content: string;
         toolCalls?: ToolCall[];
@@ -258,11 +263,21 @@ export declare class SessionOrchestrator {
             content: string;
         }>;
     }): Promise<OrchestratorResult>;
+    /**
+     * Conversational fast path: single LLM call with plain text output.
+     * Bypasses the full multi-agent pipeline (no reviewer, no challenger,
+     * no JSON schema) for simple questions like "who are you?", "what can you do?",
+     * "where do you need tuning?", etc.
+     */
+    private executeConversational;
     executeWithDeliberation(task: string, mode: Mode, providers: {
         writer: LLMProvider;
         reviewer: LLMProvider;
         challenger?: LLMProvider;
-    }, costCap?: number, preset?: DeliberationMode, complexity?: ComplexityScore): Promise<DeliberationResult>;
+    }, costCap?: number, preset?: DeliberationMode, complexity?: ComplexityScore, context?: string, conversationHistory?: Array<{
+        role: string;
+        content: string;
+    }>): Promise<DeliberationResult>;
     private buildProviderFactory;
     private mapModeToDeliberationMode;
     private buildDeliberationConfig;
@@ -332,7 +347,7 @@ export declare class SessionOrchestrator {
     buildWriterPrompt(task: string, mode: Mode, conversationHistory?: Array<{
         role: string;
         content: string;
-    }>): Array<{
+    }>, context?: string): Array<{
         role: string;
         content: string;
     }>;

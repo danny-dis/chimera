@@ -133,14 +133,31 @@ Return: {"overall": <0-1>, "dimensions": {"codeVolume": <0-1>, ...}}`,
     const lower = task.toLowerCase().replace(/[,;!]+$/g, '').trim();
 
     const conversationalPatterns = [
+      // Greetings and simple commands
       /^(hello|hi|hey|howdy|greetings|sup|yo|retry|again|repeat)\b/,
+      // Standard question openers: who/what/where/when/why/how + auxiliary
       /^(who|what|where|when|why|how)\s+(are|r|is|do|does|did|can|could|would|should|will|shall)\b/,
-      /^(tell me about|tell me what|tell me how|tell me why|tell me if)\b/,
-      /^(describe|explain|summarize|study|analyze|analyse|examine|inspect|look at|look into|tell me)\b/,
+      // Casual question openers (how about, how bout, whats, whats up, etc.)
+      /^(how\s+(about|bout)|what'?s|what\s+does|what\s+do)\b/,
+      // "tell me" as a standalone opener (not just tell me about/what/how)
+      /^tell me\b/,
+      // Imperative information-seeking verbs
+      /^(describe|explain|summarize|study|analyze|analyse|examine|inspect|look at|look into)\b/,
+      // "what do you / what can you / what are you"
       /^(what do you|what can you|what are you)\b/,
+      // Polite request openers
       /^(can you|could you|would you)\b/,
+      // Thanks and help
       /^(thanks|thank you|please|help)\b/,
-      /^(is there|are there|does|do)\s+\w+\b/,
+      // Existential questions — only "does/are there" + word, NOT bare "do X" which is imperative
+      /^(is there|are there|does)\s+\w+\b/,
+      // Casual "how does X work" / "how do I" without strict auxiliary match
+      /^(how\s+(does|do|can|is|are|would|should)\b)/,
+      // "tell me about" / "tell me what" etc. (already covered by /^tell me\b above)
+      // "what is" / "what are" without strict auxiliary (e.g. "what is dmr x")
+      /^(what\s+(is|are|was|were|will|can|could|should|would)\b)/,
+      // "who built you" / "who are you" / "who made you"
+      /^(who\s+(built|made|created|developed|designed|owns|runs|manages)\b)/,
     ];
 
     const hasConversationalOpener = conversationalPatterns.some((p) => p.test(lower));
