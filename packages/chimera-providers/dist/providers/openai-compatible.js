@@ -162,7 +162,10 @@ class OpenAICompatibleProvider {
     timeoutMs;
     supportsResponseFormat;
     constructor(config) {
-        this.baseUrl = config.baseUrl.replace(/\/+$/, '');
+        // Strip a trailing slash AND a trailing "/v1" if present. Chimera always
+        // appends "/v1/chat/completions" itself, so a config base_url of
+        // "https://openrouter.ai/api/v1" would otherwise 404.
+        this.baseUrl = config.baseUrl.replace(/\/v1\/?$/, '').replace(/\/+$/, '');
         this.apiKey = config.apiKey;
         this.model = config.model;
         this.pricing = config.options?.pricing ?? DEFAULT_PRICING;
@@ -229,8 +232,6 @@ class OpenAICompatibleProvider {
             mapError(response.status, errorBody, this.modelInfo.provider);
         }
         const json = (await response.json());
-        console.error('[DBG hy3] req.tools=', JSON.stringify(body.tools?.map((t) => t?.function?.name)));
-        console.error('[DBG hy3] resp.choice0=', JSON.stringify(json.choices?.[0]));
         const result = parseCompletionResult(json);
         if (!result.content && (!result.toolCalls || result.toolCalls.length === 0)) {
             throw new errors_js_1.ProviderError(`Model "${this.model}" returned empty content with no tool calls. This may indicate a content filter, rate limit, or provider issue.`, this.modelInfo.provider);

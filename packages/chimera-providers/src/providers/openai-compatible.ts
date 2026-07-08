@@ -230,7 +230,10 @@ export class OpenAICompatibleProvider implements ModelProvider {
   private readonly supportsResponseFormat: boolean;
 
   constructor(config: OpenAICompatibleConfig) {
-    this.baseUrl = config.baseUrl.replace(/\/+$/, '');
+    // Strip a trailing slash AND a trailing "/v1" if present. Chimera always
+    // appends "/v1/chat/completions" itself, so a config base_url of
+    // "https://openrouter.ai/api/v1" would otherwise 404.
+    this.baseUrl = config.baseUrl.replace(/\/v1\/?$/, '').replace(/\/+$/, '');
     this.apiKey = config.apiKey;
     this.model = config.model;
     this.pricing = config.options?.pricing ?? DEFAULT_PRICING;
@@ -299,8 +302,6 @@ export class OpenAICompatibleProvider implements ModelProvider {
     }
 
     const json = (await response.json()) as Record<string, unknown>;
-    console.error('[DBG hy3] req.tools=', JSON.stringify((body.tools as unknown[])?.map((t: any) => t?.function?.name)));
-    console.error('[DBG hy3] resp.choice0=', JSON.stringify((json.choices as any[])?.[0]));
     const result = parseCompletionResult(json);
     if (!result.content && (!result.toolCalls || result.toolCalls.length === 0)) {
       throw new ProviderError(
