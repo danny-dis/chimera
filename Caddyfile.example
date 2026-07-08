@@ -1,0 +1,57 @@
+# =============================================================================
+# Caddy reverse proxy for Chimera (adapted from coleam00/Archon, MIT)
+#
+# IMPORTANT — Chimera service model:
+#   packages/chimera-daemon is a *stdio* JSON-RPC 2.0 server (stdin/stdout).
+#   It does NOT open an HTTP/TCP listener on its own. To expose it behind
+#   Caddy you must run a small bridge in front of the daemon that accepts
+#   WebSocket/TCP connections and forwards them to the daemon's stdio
+#   (e.g. a process that spawns `node .../chimera-daemon/dist/index.js` and
+#   pipes a WebSocket ↔ stdin/stdout). That bridge listens on
+#   CHIMERA_DAEMON_PORT below; Caddy proxies to it.
+#
+#   Until such a bridge exists, the container itself is self-contained
+#   (IDE/editor extensions talk to the daemon over stdio on the host).
+#   This Caddyfile is provided so the hosted path is one `docker compose
+#   --profile cloud up -d` away once the bridge is wired up.
+#
+# TLS: Caddy obtains and renews Let's Encrypt certificates automatically.
+# Set DOMAIN (and point its DNS A record at this host) in deploy/.env.
+# =============================================================================
+
+{$DOMAIN:localhost} {
+	# ── Optional: Basic auth (browser popup) ──────────────────────────────
+	# Generate a hash:
+	#   docker run caddy caddy hash-password --plaintext 'YOUR_PASSWORD'
+	# Then set in deploy/.env (escape $ as $$):
+	#   CADDY_BASIC_AUTH=basicauth @protected { admin $$2a$$14$$<hash> }
+	@protected not path /health
+	{$CADDY_BASIC_AUTH:}
+
+	# ── Reverse proxy to the chimera daemon bridge ────────────────────────
+	# Replace CHIMERA_DAEMON_PORT with whatever port your stdio→TCP bridge
+	# listens on inside the compose network (default 4173).
+	handle /health {
+		reverse_proxy chimera:{$CHIMERA_DAEMON_PORT:4173}
+	}
+
+	handle {
+		reverse_proxy chimera:{$CHIMERA_DAEMON_PORT:4173}
+	}
+
+	# ── Security headers ──────────────────────────────────────────────────
+	header {
+		X-Content-Type-Options nosniff
+		X-Frame-Options DENY
+		Referrer-Policy strict-origin-when-cross-origin
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		-Server
+	}
+
+	encode gzip zstd
+
+	log {
+		output stdout
+		format console
+	}
+}

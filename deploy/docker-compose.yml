@@ -1,0 +1,79 @@
+# =============================================================================
+# Chimera — Docker Compose (adapted from coleam00/Archon, MIT)
+#
+# Usage:
+#   docker compose up -d                  # Chimera daemon only
+#   docker compose --profile cloud up -d  # Chimera + Caddy HTTPS reverse proxy
+#
+# Config:
+#   Chimera reads .chimera/config.yaml from its working dir. We mount the host
+#   directory ~/.chimera there so your provider config survives rebuilds.
+#   Override the host path with CHIMERA_HOME in deploy/.env if you like.
+#
+# Service model note:
+#   The chimera-daemon is a stdio JSON-RPC server, not an HTTP service. The
+#   `chimera` container runs it as its main process. The optional `caddy`
+#   profile expects a stdio→TCP bridge inside the container listening on
+#   CHIMERA_DAEMON_PORT (see ../Caddyfile.example). Without that bridge, run
+#   the daemon directly on the host instead.
+# =============================================================================
+
+services:
+  # -------------------------------------------------------------------------
+  # Chimera daemon (always runs)
+  # -------------------------------------------------------------------------
+  chimera:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    image: chimera
+    environment:
+      CHIMERA_HOME: /home/chimera
+      # Add your provider credentials here or via deploy/.env (env_file).
+    env_file:
+      - .env
+    volumes:
+      - ${CHIMERA_CONFIG_DIR:-${HOME}/.chimera}:/home/chimera/.chimera
+    networks:
+      - chimera-network
+    restart: unless-stopped
+    # No HTTP health endpoint exists (stdio daemon). Fall back to a pid check.
+    healthcheck:
+      test: ["CMD-SHELL", "pgrep -f chimera-daemon >/dev/null 2>&1 || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  # -------------------------------------------------------------------------
+  # Caddy reverse proxy with automatic HTTPS (optional: --profile cloud)
+  # Requires DOMAIN set in deploy/.env. See ../Caddyfile.example.
+  # Assumes a stdio→TCP bridge is exposed on CHIMERA_DAEMON_PORT.
+  # -------------------------------------------------------------------------
+  caddy:
+    image: caddy:2-alpine
+    profiles: ["cloud"]
+    restart: unless-stopped
+    env_file:
+      - .env
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ../Caddyfile.example:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    networks:
+      - chimera-network
+    depends_on:
+      chimera:
+        condition: service_healthy
+
+volumes:
+  caddy_data:
+  caddy_config:
+
+networks:
+  chimera-network:
+    driver: bridge

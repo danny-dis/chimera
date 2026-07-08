@@ -1,0 +1,124 @@
+#cloud-config
+# =============================================================================
+# Chimera — Cloud-Init Auto-Setup (adapted from coleam00/Archon, MIT)
+#
+# Paste into your VPS provider's "User Data" field (Ubuntu 22.04+, Debian 12+).
+# Works with any cloud-init provider (DigitalOcean, Hetzner, Linode, Vultr,
+# AWS EC2, Hostinger, etc.).
+#
+# What this does:
+#   1. Installs Docker + Docker Compose plugin
+#   2. Opens firewall ports (SSH, HTTP, HTTPS)
+#   3. Creates a 2GB swapfile (small VPS builds can OOM without it)
+#   4. Clones the chimera repo to /opt/chimera
+#   5. Builds the Docker image (~minutes) as a dedicated 'chimera' user
+#
+# After boot (~5-8 min), SSH in and start it:
+#   ssh chimera@your-server-ip
+#   cd /opt/chimera/deploy
+#   # edit .env with your provider credentials + DOMAIN
+#   docker compose --profile cloud up -d
+#
+# IMPORTANT: Point your domain's DNS A record at this server's IP before the
+# Caddy profile will obtain a TLS certificate.
+# =============================================================================
+
+package_update: true
+package_upgrade: true
+
+packages:
+  - curl
+  - git
+  - ufw
+
+users:
+  - default
+  - name: chimera
+    gecos: Chimera Service User
+    shell: /bin/bash
+    lock_passwd: true
+
+runcmd:
+  # --- Swap (helps small VPS avoid OOM during docker build) ---
+  - |
+    if [ ! -f /swapfile ]; then
+      fallocate -l 2G /swapfile || dd if=/dev/zero of=/swapfile bs=1M count=2048
+      chmod 600 /swapfile
+      mkswap /swapfile
+      swapon /swapfile
+      echo '/swapfile none swap sw 0 0' >> /etc/fstab
+    fi
+
+  # --- Docker ---
+  - curl -fsSL https://get.docker.com | sh
+  - usermod -aG docker chimera
+
+  # --- Copy SSH keys from the default user to chimera ---
+  - |
+    DEFAULT_USER=$(getent passwd 1000 | cut -d: -f1)
+    if [ -n "$DEFAULT_USER" ] && [ -f /home/$DEFAULT_USER/.ssh/authorized_keys ]; then
+      mkdir -p /home/chimera/.ssh
+      cp /home/$DEFAULT_USER/.ssh/authorized_keys /home/chimera/.ssh/authorized_keys
+      chmod 700 /home/chimera/.ssh
+      chmod 600 /home/chimera/.ssh/authorized_keys
+      chown -R chimera:chimera /home/chimera/.ssh
+    elif [ -f /root/.ssh/authorized_keys ]; then
+      mkdir -p /home/chimera/.ssh
+      cp /root/.ssh/authorized_keys /home/chimera/.ssh/authorized_keys
+      chmod 700 /home/chimera/.ssh
+      chmod 600 /home/chimera/.ssh/authorized_keys
+      chown -R chimera:chimera /home/chimera/.ssh
+    fi
+
+  # --- Firewall (443/udp needed for HTTP/3 QUIC via Caddy) ---
+  - ufw allow 22/tcp
+  - ufw allow 80/tcp
+  - ufw allow 443/tcp
+  - ufw allow 443/udp
+  - ufw --force enable
+
+  # --- Clone and prepare (fail fast) ---
+  - |
+    set -e
+    git clone https://github.com/danny-dis/chimera.git /opt/chimera
+    cp /opt/chimera/deploy/.env.example /opt/chimera/deploy/.env
+    chown -R chimera:chimera /opt/chimera
+
+  # --- Pre-pull external images (as chimera, via docker group) ---
+  - sudo -u chimera docker pull caddy:2-alpine
+
+  # --- Build the app image as chimera ---
+  - sudo -u chimera -H bash -c 'cd /opt/chimera && docker compose -f deploy/docker-compose.yml build'
+
+  # --- Signal completion ---
+  - |
+    cat > /opt/chimera/SETUP_COMPLETE << 'DONE'
+    ============================================
+    Chimera server setup complete!
+    ============================================
+
+    Log in as the 'chimera' user (not root):
+      ssh chimera@<server-ip>
+
+    Note: the 'chimera' user has docker access but no sudo.
+
+    Next steps:
+
+      1. Edit credentials and domain:
+         nano /opt/chimera/deploy/.env
+
+      2. (Optional) Protect the daemon bridge with basic auth:
+         docker run caddy caddy hash-password --plaintext 'YOUR_PASSWORD'
+         # Add to deploy/.env (escape $ as $$):
+           CADDY_BASIC_AUTH=basicauth @protected { admin $$2a$$14$$<hash> }
+
+      3. Start the daemon:
+         cd /opt/chimera/deploy
+         docker compose up -d
+         # or with Caddy HTTPS:
+         docker compose --profile cloud up -d
+
+    Logs:  docker compose -f /opt/chimera/deploy/docker-compose.yml logs -f
+    ============================================
+    DONE
+  - echo "[chimera] Setup complete. Edit /opt/chimera/deploy/.env and run docker compose up."

@@ -1,0 +1,29 @@
+# Version control
+.git
+.gitignore
+
+# Dependencies (installed fresh inside the container via pnpm)
+node_modules
+**/node_modules
+
+# Build artifacts (produced by `turbo build` inside the container)
+dist
+**/dist
+
+# Local config / secrets — mount these at runtime instead
+.chimera
+.env
+.env.*
+!.env.example
+
+# Logs & OS cruft
+*.log
+.DS_Store
+Thumbs.db
+
+# Research / docs not needed in the production image
+research
+docs
+**/*.test.ts
+**/*.test.js
+coverage
