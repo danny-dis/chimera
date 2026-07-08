@@ -49,6 +49,8 @@ const workflow_js_1 = require("./commands/workflow.js");
 const learn_js_1 = require("./commands/learn.js");
 const config_loader_js_1 = require("./config-loader.js");
 const isolation_1 = require("@chimera/isolation");
+const fallback_provider_js_1 = require("./fallback-provider.js");
+const setup_js_1 = require("./commands/setup.js");
 function adaptProvider(provider) {
     return {
         async complete(messages, options) {
@@ -105,6 +107,68 @@ function adaptProvider(provider) {
         },
     };
 }
+/**
+ * Format a provider error into a user-actionable message.
+ * Instead of "Rate limit exceeded: HTTP 429", the user sees which provider
+ * failed, what it means, and what to do about it.
+ */
+function formatProviderError(err, providerName) {
+    if (err instanceof providers_1.RateLimitError) {
+        const provider = err.provider ?? providerName ?? 'your provider';
+        const retryHint = err.retryAfter
+            ? ` Retry after ${err.retryAfter}s.`
+            : '';
+        return [
+            `Rate limit hit on ${provider}.`,
+            `This usually means you've exceeded the API's requests-per-minute limit.${retryHint}`,
+            `Tips:`,
+            `  - Wait a minute and try again`,
+            `  - Add more providers to .chimera/config.yaml for automatic failover`,
+            `  - Check your API key quota at the provider's dashboard`,
+        ].join('\n');
+    }
+    if (err instanceof providers_1.ProviderUnavailableError) {
+        const provider = err.provider ?? providerName ?? 'your provider';
+        return [
+            `Provider unavailable: ${provider}.`,
+            `The service may be down, the model may be deprecated, or your API key may be invalid.`,
+            `Tips:`,
+            `  - Run \`chimera setup\` to reconfigure your providers`,
+            `  - Check the provider's status page`,
+            `  - Verify your API key is correct in .env`,
+        ].join('\n');
+    }
+    if (err instanceof providers_1.ProviderError) {
+        const provider = err.provider ?? providerName ?? 'your provider';
+        const status = err.statusCode ? ` (HTTP ${err.statusCode})` : '';
+        return [
+            `Provider error from ${provider}${status}: ${err.message}`,
+            `Tips:`,
+            `  - Check your API key and model name in .chimera/config.yaml`,
+            `  - Run \`chimera setup\` to reconfigure`,
+        ].join('\n');
+    }
+    return err instanceof Error ? err.message : String(err);
+}
+/**
+ * Validate that at least one provider can be created successfully.
+ * Called on startup to fail fast with a clear message instead of discovering
+ * a missing API key mid-task.
+ */
+function validateStartupProviders(mapped) {
+    const real = mapped.fallback.filter((p) => p.getModel().provider !== 'mock');
+    if (real.length === 0 && mapped.fallback.length > 0) {
+        // Only mock providers — warn but don't block
+        console.log('  \u26a0 No real API keys found \u2014 using offline mock provider.');
+        console.log('  Run `chimera setup` to configure real providers.\n');
+    }
+    if (mapped.fallback.length === 0) {
+        console.error('\n\u2717 No providers available. Configure at least one provider:');
+        console.error('  - Run `chimera setup` for interactive configuration');
+        console.error('  - Or set ANTHROPIC_API_KEY, OPENAI_API_KEY, or GOOGLE_API_KEY in .env\n');
+        process.exit(1);
+    }
+}
 class CliRouter {
     program;
     verbose = false;
@@ -125,20 +189,105 @@ class CliRouter {
         });
         this.setupCommands();
     }
-    async initOrchestrator() {
+    /**
+     * Build a fully-wired run context: tools, resolved providers, a live
+     * `ModelRegistry`, active `BudgetEnforcer`/`RateLimiter`, and a
+     * `SessionOrchestrator` that receives all of them. Previously this method
+     * omitted `options.registry` and the enforcers, which left `_registry` null
+     * and silently disabled the entire DeliberationEngine
+     * (solo/duo/trio/fusion/hive/swarm/auto).
+     */
+    async buildRunContext() {
         const eventStream = new core_1.EventStream();
         if (this.verbose) {
             eventStream.subscribe('*', (event) => {
                 console.log(`  [event] ${event.type}`, JSON.stringify(event, null, 2));
             });
         }
-        // Wire up tool system
-        const registry = new tools_1.ToolRegistry();
-        const executor = new tools_1.ToolExecutor(registry, () => 'allow');
+        // Wire up tool system (kept intact — tools must still register).
+        const toolRegistry = new tools_1.ToolRegistry();
+        const toolExecutor = new tools_1.ToolExecutor(toolRegistry, () => 'allow');
         for (const tool of tools_1.allTools) {
-            registry.register(tool);
+            toolRegistry.register(tool);
         }
-        return new core_1.SessionOrchestrator(eventStream, { registry: registry, executor: executor }, process.cwd());
+        // Resolve providers (reuse existing resolution — never duplicate it).
+        const mapped = await this.getRoleMappedProviders();
+        let { writer, reviewer, challenger } = mapped;
+        if (!writer && !reviewer && !challenger) {
+            // No role mapping (e.g. only env-based mocks); derive from the fallback list.
+            writer = mapped.fallback[0];
+            reviewer = mapped.fallback[1] ?? mapped.fallback[0];
+            challenger = mapped.fallback[2] ?? mapped.fallback[1] ?? mapped.fallback[0];
+        }
+        const resolved = [writer, reviewer, challenger].filter(Boolean);
+        // Build the registry from the resolved providers. Start off the hardcoded
+        // default models and skip async cache loading (offline-safe); then layer
+        // in live metadata from whatever providers are actually wired.
+        const registry = new providers_1.ModelRegistry(undefined, { skipCacheLoading: true });
+        for (const p of resolved) {
+            const info = p.getModel();
+            const pricing = p.getPricing();
+            const modelEntry = {
+                id: info.id || info.name,
+                name: info.name,
+                provider: info.provider,
+                contextWindow: info.contextWindow,
+                maxOutputTokens: info.maxOutputTokens,
+                pricing: {
+                    inputPerMillion: pricing.inputPerMillion,
+                    outputPerMillion: pricing.outputPerMillion,
+                    cacheReadPerMillion: pricing.cacheReadPerMillion,
+                    cacheWritePerMillion: pricing.cacheWritePerMillion,
+                },
+                capabilities: {
+                    toolCalling: p.supportsToolCalling(),
+                    structuredOutput: p.supportsStructuredOutput(),
+                    vision: p.supportsVision(),
+                    reasoning: p.supportsReasoning(),
+                    parallelToolCalls: false,
+                },
+                degradationThreshold: 0.75,
+                tier: info.provider === 'mock' ? 'cheap' : 'frontier',
+            };
+            try {
+                registry.upsert(modelEntry);
+            }
+            catch {
+                // A provider with an odd id/partial entry shouldn't break startup;
+                // the default hardcoded models already in the registry remain.
+            }
+        }
+        // Cost tracking + enforceable budgets from the resolved constraints.
+        const costTracker = new providers_1.ProviderCostTracker(registry);
+        const budgetEnforcer = new providers_1.BudgetEnforcer({
+            perTask: 10,
+            perSession: 20,
+            perDay: 50,
+            alertThresholds: [0.5, 0.75, 0.9],
+        }, costTracker);
+        const rateLimiter = new providers_1.RateLimiter({ rpm: 60, tpm: 1_000_000 });
+        const orchestrator = new core_1.SessionOrchestrator(eventStream, { registry: toolRegistry, executor: toolExecutor }, process.cwd(), undefined, {
+            registry,
+            budgetEnforcer,
+            rateLimiter,
+            memoryPersistence: this.memory,
+        });
+        return {
+            orchestrator,
+            writer,
+            reviewer,
+            challenger,
+            registry,
+            costTracker,
+            budgetEnforcer,
+            rateLimiter,
+            toolRegistry,
+            toolExecutor,
+        };
+    }
+    /** Thin backward-compatible accessor. Prefer `buildRunContext()`. */
+    async initOrchestrator() {
+        return (await this.buildRunContext()).orchestrator;
     }
     buildProviderFromEntry(entry) {
         try {
@@ -208,19 +357,56 @@ class CliRouter {
             oal: 'Optimizing',
             auto: 'Auto-selecting',
         };
-        console.log(`\n⚙ Chimera [${mode}] — ${label[mode]}...\n`);
+        console.log(`\n\u2699 Chimera [${mode}] \u2014 ${label[mode]}...\n`);
         // Auto-generate config from env vars (fetches models from API if needed)
         if (!(0, config_loader_js_1.configExists)()) {
             const generated = await (0, config_loader_js_1.autoGenerateConfig)();
             if (generated) {
-                console.log(`  ✓ Auto-configured from environment (${generated.providers.length} providers)`);
+                console.log(`  \u2713 Auto-configured from environment (${generated.providers.length} providers)`);
             }
         }
         const mapped = await this.getRoleMappedProviders();
-        const writer = adaptProvider(mapped.writer ?? mapped.fallback[0]);
-        const reviewer = adaptProvider(mapped.reviewer ?? mapped.writer ?? mapped.fallback[0]);
+        // #6 — Validate providers on startup (fail fast)
+        validateStartupProviders(mapped);
+        // #1 — Use FallbackChain when multiple providers are available.
+        // Instead of a single writer that dies on the first 429, the fallback
+        // chain tries each provider in order before giving up.
+        const allProviders = mapped.fallback;
+        const writer = allProviders.length > 1
+            ? (0, fallback_provider_js_1.createFallbackProvider)(allProviders, (event) => {
+                if (event.type === 'fallback') {
+                    console.log(`  \u26a0 ${event.from} failed (${event.error.message.slice(0, 60)}), falling back to ${event.to}...`);
+                }
+            })
+            : adaptProvider(allProviders[0]);
+        const reviewer = mapped.reviewer
+            ? adaptProvider(mapped.reviewer)
+            : (allProviders.length > 1 ? (0, fallback_provider_js_1.createFallbackProvider)(allProviders) : adaptProvider(allProviders[0]));
         const challenger = mapped.challenger ? adaptProvider(mapped.challenger) : undefined;
         const orchestrator = await this.initOrchestrator();
+        // #4 — Tool execution visibility: stream tool activity to the terminal
+        // so the user sees what the agent is doing in real time.
+        orchestrator.getEventStream().subscribe('*', (event) => {
+            if (event.type === 'tool_call_requested') {
+                const call = event.call;
+                const toolName = call?.tool ?? 'unknown';
+                const argsPreview = call?.args
+                    ? ' ' + JSON.stringify(call.args).slice(0, 80)
+                    : '';
+                console.log(`  \u25b6 [tool] ${toolName}${argsPreview}`);
+            }
+            else if (event.type === 'tool_call_result') {
+                const result = event.result;
+                const status = result?.exitCode !== undefined && result.exitCode !== 0
+                    ? `\u2717 exit ${result.exitCode}`
+                    : '\u2713 ok';
+                console.log(`  \u25c0 [tool] ${result?.tool ?? 'unknown'} ${status}`);
+            }
+            else if (event.type === 'compaction_triggered') {
+                const e = event;
+                console.log(`  \u2a5d [compaction] freed ~${e.tokensSaved ?? '?'} tokens`);
+            }
+        });
         try {
             const result = await orchestrator.execute({
                 task,
@@ -230,7 +416,9 @@ class CliRouter {
             this.printResult(result);
         }
         catch (err) {
-            console.error(`\n✗ Error: ${err instanceof Error ? err.message : String(err)}\n`);
+            // #3 — Better error messages for provider failures
+            const msg = formatProviderError(err);
+            console.error(`\n\u2717 Error:\n${msg}\n`);
             process.exit(1);
         }
     }
@@ -486,6 +674,18 @@ class CliRouter {
             }
         });
         this.program
+            .command('setup')
+            .description('Interactive setup for providers, API keys, and roles')
+            .action(async () => {
+            try {
+                await (0, setup_js_1.runSetup)(process.cwd());
+            }
+            catch (err) {
+                console.error(`\n\u2717 Setup failed: ${err instanceof Error ? err.message : String(err)}\n`);
+                process.exit(1);
+            }
+        });
+        this.program
             .command('cleanup')
             .description('Clean up stale worktrees')
             .option('-d, --dir <dir>', 'worktree directory to scan', '.chimera/worktrees')
@@ -555,8 +755,20 @@ class CliRouter {
             }
         }
         const mapped = await this.getRoleMappedProviders();
-        const writer = adaptProvider(mapped.writer ?? mapped.fallback[0]);
-        const reviewer = adaptProvider(mapped.reviewer ?? mapped.writer ?? mapped.fallback[0]);
+        // #6 — Validate providers before launching TUI
+        validateStartupProviders(mapped);
+        // #1 — Use FallbackChain in TUI mode too
+        const allProvidersTui = mapped.fallback;
+        const writer = allProvidersTui.length > 1
+            ? (0, fallback_provider_js_1.createFallbackProvider)(allProvidersTui, (event) => {
+                if (event.type === 'fallback') {
+                    console.log(`  \u26a0 ${event.from} failed, falling back to ${event.to}...`);
+                }
+            })
+            : adaptProvider(allProvidersTui[0]);
+        const reviewer = mapped.reviewer
+            ? adaptProvider(mapped.reviewer)
+            : (allProvidersTui.length > 1 ? (0, fallback_provider_js_1.createFallbackProvider)(allProvidersTui) : adaptProvider(allProvidersTui[0]));
         const challenger = mapped.challenger ? adaptProvider(mapped.challenger) : undefined;
         const orchestrator = await this.initOrchestrator();
         const sessionId = this.sessionStore.generateSessionId();
@@ -567,6 +779,85 @@ class CliRouter {
         let currentMode = initialMode;
         let currentPreset = 'solo';
         let activeTool;
+        let currentDiffFiles = [];
+        const conversationHistory = [];
+        /** Derive aggregate token usage from the live agent list. */
+        const computeTokenUsage = () => {
+            const input = currentAgents.reduce((s, a) => s + a.tokenUsage.input, 0);
+            const output = currentAgents.reduce((s, a) => s + a.tokenUsage.output, 0);
+            return { input, output, total: input + output };
+        };
+        /**
+         * Collect proposed changes for the DiffViewer. Reads `git diff` for the
+         * paths referenced by a `patch_proposed` event (falls back to the full
+         * working tree when no files are named). Safe: never throws — a missing
+         * repo or git failure simply yields an empty list.
+         */
+        const collectDiffFiles = (files) => {
+            try {
+                const { execSync } = require('node:child_process');
+                const targets = files && files.length > 0 ? files.join(' ') : '.';
+                const raw = execSync(`git diff --no-color ${targets}`, { cwd: workspaceRoot, encoding: 'utf8' });
+                if (!raw.trim())
+                    return [];
+                return parseGitDiff(raw);
+            }
+            catch {
+                return [];
+            }
+        };
+        /** Parse `git diff` output into structured DiffFile hunks. */
+        const parseGitDiff = (raw) => {
+            const files = [];
+            const fileChunks = raw.split(/^(?=diff --git )/m);
+            for (const chunk of fileChunks) {
+                const header = chunk.match(/^diff --git a\/(.+?) b\/(.+?)\n/);
+                if (!header)
+                    continue;
+                const path = header[2];
+                const hunks = [];
+                let additions = 0;
+                let deletions = 0;
+                const lines = chunk.split('\n');
+                let cur = null;
+                let oldLine = 0;
+                let newLine = 0;
+                for (let i = 0; i < lines.length; i++) {
+                    const line = lines[i];
+                    const hunkHeader = line.match(/^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/);
+                    if (hunkHeader) {
+                        if (cur)
+                            hunks.push(cur);
+                        oldLine = Number(hunkHeader[1]);
+                        newLine = Number(hunkHeader[2]);
+                        cur = { oldStart: oldLine, oldLines: 0, newStart: newLine, newLines: 0, lines: [] };
+                        continue;
+                    }
+                    if (!cur)
+                        continue;
+                    if (line.startsWith('+') && !line.startsWith('+++')) {
+                        additions++;
+                        cur.newLines++;
+                        cur.lines.push({ type: 'addition', content: line.slice(1), newLineNum: newLine++ });
+                    }
+                    else if (line.startsWith('-') && !line.startsWith('---')) {
+                        deletions++;
+                        cur.oldLines++;
+                        cur.lines.push({ type: 'deletion', content: line.slice(1), oldLineNum: oldLine++ });
+                    }
+                    else if (line.startsWith(' ') || line.startsWith('\\')) {
+                        cur.oldLines++;
+                        cur.newLines++;
+                        cur.lines.push({ type: 'context', content: line.slice(1), oldLineNum: oldLine++, newLineNum: newLine++ });
+                    }
+                }
+                if (cur)
+                    hunks.push(cur);
+                if (hunks.length > 0)
+                    files.push({ path, additions, deletions, hunks });
+            }
+            return files;
+        };
         /** Build cost data from agent token usage. */
         const buildLiveCostData = () => {
             let inputTokens = 0;
@@ -611,6 +902,8 @@ class CliRouter {
             messages: currentMessages,
             agents: currentAgents,
             costData: currentCostData,
+            tokenUsage: computeTokenUsage(),
+            diffFiles: currentDiffFiles,
             events: currentEvents,
             sessions: await loadSessions(),
             sessionId,
@@ -626,7 +919,7 @@ class CliRouter {
                         content: text,
                         timestamp: Date.now()
                     }];
-                tui.update({ messages: currentMessages, agents: currentAgents, activeTool: undefined });
+                tui.update({ messages: currentMessages, agents: currentAgents, tokenUsage: computeTokenUsage(), diffFiles: currentDiffFiles, activeTool: undefined });
                 try {
                     // TODO: Phase 2 — wire up WorkflowDispatcher for background execution
                     await orchestrator.execute({
@@ -634,6 +927,7 @@ class CliRouter {
                         mode: currentMode,
                         providers: { writer, reviewer, ...(challenger ? { challenger } : {}) },
                         preset: currentPreset,
+                        conversationHistory,
                     });
                     // If the deliberation produced empty output (degraded provider),
                     // surface a user-visible error instead of showing a blank response.
@@ -664,15 +958,27 @@ class CliRouter {
                     // Assistant message already added by event-stream handlers
                     // (deliberation_result / final_response). Just sync state.
                     tui.update({ messages: currentMessages });
+                    // Accumulate conversation history for context in subsequent turns
+                    const lastAssistantMsg = currentMessages[currentMessages.length - 1];
+                    if (lastAssistantMsg?.role === 'assistant' && lastAssistantMsg.content) {
+                        conversationHistory.push({ role: 'user', content: text });
+                        conversationHistory.push({ role: 'assistant', content: lastAssistantMsg.content.slice(0, 2000) });
+                        // Cap history at 10 turns (20 messages) to prevent context overflow
+                        if (conversationHistory.length > 20) {
+                            conversationHistory.splice(0, conversationHistory.length - 20);
+                        }
+                    }
                     // Refresh cost and sessions after task completes
                     currentCostData = buildLiveCostData();
                     tui.update({
                         costData: currentCostData,
+                        tokenUsage: computeTokenUsage(),
+                        diffFiles: currentDiffFiles,
                         sessions: await loadSessions(),
                     });
                 }
                 catch (err) {
-                    const errorMsg = err instanceof Error ? err.message : String(err);
+                    const errorMsg = formatProviderError(err);
                     // Show the error as an assistant message so the user sees it in chat
                     currentMessages = [...currentMessages, {
                             id: Math.random().toString(36).slice(2),
@@ -755,6 +1061,11 @@ class CliRouter {
             }
             else if (event.type === 'verified' || event.type === 'challenged') {
                 currentAgents = currentAgents.map(a => a.id === event.agentId ? { ...a, status: 'completed' } : a);
+            }
+            else if (event.type === 'patch_proposed') {
+                // Surface proposed changes in the DiffViewer (/diff, Ctrl+D).
+                const files = event.files;
+                currentDiffFiles = collectDiffFiles(files);
             }
             // ── Workflow dispatch lifecycle ────────────────────────────────
             if (event.type === 'workflow_dispatched') {
@@ -871,9 +1182,18 @@ class CliRouter {
                     currentCostData = buildLiveCostData();
                 }
                 if (lastMsg && lastMsg.role === 'assistant') {
+                    // Preserve analysis from deliberation_result if content is the same
+                    // (avoids overwriting analysis with undefined when both events fire)
+                    const contentChanged = content !== lastMsg.content;
                     currentMessages = [
                         ...currentMessages.slice(0, -1),
-                        { ...lastMsg, content, timestamp: Date.now() }
+                        {
+                            ...lastMsg,
+                            content,
+                            // Only clear analysis if content actually changed and event has no analysis
+                            analysis: contentChanged ? (lastMsg.analysis ?? undefined) : lastMsg.analysis,
+                            timestamp: Date.now(),
+                        }
                     ];
                 }
                 else {
@@ -892,6 +1212,8 @@ class CliRouter {
                 agents: currentAgents,
                 messages: currentMessages,
                 costData: currentCostData,
+                tokenUsage: computeTokenUsage(),
+                diffFiles: currentDiffFiles,
                 activeTool,
             });
         });
@@ -921,10 +1243,13 @@ class CliRouter {
         if (!(0, config_loader_js_1.configExists)()) {
             const generated = await (0, config_loader_js_1.autoGenerateConfig)();
             if (generated) {
-                console.log(`  ✓ Auto-configured from environment (${generated.providers.length} providers)`);
+                console.log(`  \u2713 Auto-configured from environment (${generated.providers.length} providers)`);
             }
         }
-        console.log('\n  Chimera — interactive mode');
+        // #6 — Validate providers before entering REPL
+        const preflightMapped = await this.getRoleMappedProviders();
+        validateStartupProviders(preflightMapped);
+        console.log('\n  Chimera \u2014 interactive mode');
         console.log('  Type your task, or /help for commands.\n');
         let currentMode = 'code';
         let currentPreset = 'solo';
@@ -1042,7 +1367,8 @@ class CliRouter {
                 }
             }
             catch (err) {
-                console.error(`\n✗ Error: ${err instanceof Error ? err.message : String(err)}\n`);
+                const msg = formatProviderError(err);
+                console.error(`\n\u2717 Error:\n${msg}\n`);
             }
             rl.prompt();
         });
