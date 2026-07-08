@@ -20,4 +20,6 @@ export type { OpenRouterConfig, OpenRouterOptions } from './providers/openrouter
 export type { ToolCall, Message, ToolDefinition, ResponseFormat, CompletionOptions, TokenUsage, CompletionResult, StreamChunk, ModelInfo, PricingInfo, ModelProvider, } from './types/provider.js';
 export { ProviderCapabilitiesSchema, StructuredOutputLevel, DEFAULT_CAPABILITIES, ANTHROPIC_CAPABILITIES, OPENAI_CAPABILITIES, OPENROUTER_CAPABILITIES, OLLAMA_CAPABILITIES, GOOGLE_CAPABILITIES, } from './types/capabilities.js';
 export type { ProviderCapabilities, } from './types/capabilities.js';
+export { FallbackChain } from './fallback-chain.js';
+export type { FallbackEvent, FallbackEventListener } from './fallback-chain.js';
 //# sourceMappingURL=index.d.ts.map

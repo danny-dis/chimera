@@ -299,6 +299,8 @@ export class OpenAICompatibleProvider implements ModelProvider {
     }
 
     const json = (await response.json()) as Record<string, unknown>;
+    console.error('[DBG hy3] req.tools=', JSON.stringify((body.tools as unknown[])?.map((t: any) => t?.function?.name)));
+    console.error('[DBG hy3] resp.choice0=', JSON.stringify((json.choices as any[])?.[0]));
     const result = parseCompletionResult(json);
     if (!result.content && (!result.toolCalls || result.toolCalls.length === 0)) {
       throw new ProviderError(

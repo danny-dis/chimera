@@ -106,3 +106,7 @@ export {
 export type {
   ProviderCapabilities,
 } from './types/capabilities.js';
+
+// Fallback chain — automatic provider failover on rate limits / errors
+export { FallbackChain } from './fallback-chain.js';
+export type { FallbackEvent, FallbackEventListener } from './fallback-chain.js';
