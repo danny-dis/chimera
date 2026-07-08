@@ -1,5 +1,29 @@
 # Archon → Chimera: Mineable Assets Report
 
+> ## ⚠️ CORRECTION — 2026-07-08 (supersedes original 2026-06-15 findings)
+> This report was written when chimera was much younger. Re-checking against the
+> current working tree, **three of its "highest priority" mines are already present
+> in chimera** and must be treated as DONE, not gaps:
+> - **Worktree isolation** — chimera HAS `packages/chimera-isolation` (`worktree.ts`,
+>   `worktree-copy.ts`, `modal.ts`, `e2b.ts`). Not missing.
+> - **Workflow engine** — chimera HAS `packages/chimera-workflows` with a full DAG
+>   executor (`executor/dag-executor.ts`). Not missing.
+> - **Tiered `structuredOutput`** — chimera ALREADY uses
+>   `StructuredOutputLevel = z.enum(['enforced','best-effort','false'])` in
+>   `packages/chimera-providers/src/types/capabilities.ts` (credits "Omnigent's
+>   ProviderCapabilities pattern"). The flat-boolean claim is false.
+>
+> **What is ACTUALLY still mineable from Archon (verified 2026-07-08):**
+> | Asset | Archon | Chimera now | Effort | Value |
+> |---|---|---|---|---|
+> | Bundled starter skills | 10 ready skills (replicate-issue, playwright-cli, docker-extend, rulecheck…) | engine exists, **0 bundled** | Low | High |
+> | Deploy/HA scaffold | Dockerfile, Caddyfile, deploy/, homebrew formula | only basic install.sh | Med | Med (service only) |
+> | Workflow YAML library | 20 workflows | DAG engine, no bundled workflows | Low–Med | Med (inspiration) |
+> | `{domain}.{action}_{state}` logging | Pino convention | generic event names | Low | Low–Med |
+> Do NOT port Archon's Slack/Telegram/Discord/Web adapter layer (chimera is TUI-first).
+> `research/archon` is a separate nested git repo (branch `dev`, MIT) — left untracked,
+> not committed into chimera. Porting work was launched 2026-07-08 (subagents).
+
 **Source:** `https://github.com/coleam00/Archon` (cloned to `research/archon/`, branch `main`, MIT-licensed)
 **Target:** `chimera` (current working tree, `chimera/` package set)
 **Authored:** 2026-06-15
