@@ -65,6 +65,12 @@ export declare class SoloExecutor {
      * carrying the tool_calls, followed by one `tool` message per call.
      */
     private followUpWithToolResults;
+    /**
+     * Last-resort harness nudge: when the model researched/summarized but never
+     * wrote a single file on a task that clearly wants files, send one explicit
+     * turn that demands write_file calls, then execute whatever it emits.
+     */
+    private forceWriteTurn;
     private buildThinkPrompt;
     private buildDraftPrompt;
     private buildReviewPrompt;
@@ -80,6 +86,12 @@ export declare class SoloExecutor {
      * answer. In that case, fall back to the writer's draft.
      */
     private chooseBestResponse;
+    /**
+     * Build a plain-text summary from tool results when the model's closing
+     * turn fails or returns nothing. Keeps a tool-driven run useful even on
+     * small/finicky models that can't produce a coherent closing message.
+     */
+    private summarizeToolResults;
     private degraded;
 }
 //# sourceMappingURL=solo-executor.d.ts.map

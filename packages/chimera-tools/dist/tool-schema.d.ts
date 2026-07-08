@@ -146,4 +146,14 @@ export declare const MAX_OUTPUT_SIZE: number;
 export declare const DEFAULT_SHELL_TIMEOUT = 30000;
 export declare const MAX_SHELL_TIMEOUT = 300000;
 export declare const IGNORED_DIRS: string[];
+/**
+ * Convert a Zod schema into an OpenAI-style JSON schema object the model
+ * API can consume. Zod schemas have no built-in `.toJSON()`, so the previous
+ * `t.parameters?.toJSON?.() ?? {}` produced an empty `parameters: {}` — which
+ * silently broke tool calling (the model narrated tool names instead of
+ * emitting structured tool_calls). This handles the shapes Chimera's tools
+ * actually use: object, string, number, boolean, array, enum, optional,
+ * nullable, and `.default()`.
+ */
+export declare function zodToJsonSchema(schema: z.ZodType): Record<string, unknown>;
 //# sourceMappingURL=tool-schema.d.ts.map

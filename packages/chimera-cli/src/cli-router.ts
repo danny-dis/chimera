@@ -1,7 +1,7 @@
 import { Command } from 'commander';
 import * as readline from 'readline';
 import { resolve } from 'path';
-import { SessionOrchestrator, EventStream, LongTermMemory, CoordinatorEngine, runWorkflow } from '@chimera/core';
+import { SessionOrchestrator, EventStream, LongTermMemory, MemoryPersistence, CoordinatorEngine, runWorkflow } from '@chimera/core';
 import type { LLMProvider, OrchestratorResult, ToolExecutorInterface, ToolRegistryInterface, WorkflowDefinition } from '@chimera/core';
 import type { Mode, DeliberationMode } from '@chimera/core';
 import { ProviderFactory, RateLimitError, ProviderUnavailableError, ProviderError, ModelRegistry, BudgetEnforcer, RateLimiter, ProviderCostTracker } from '@chimera/providers';
@@ -15,7 +15,7 @@ import type { ReplContext } from './commands/registry.js';
 import { registerSkillCommand } from './commands/skill.js';
 import { registerWorkflowCommand } from './commands/workflow.js';
 import { registerLearnCommand } from './commands/learn.js';
-import { autoGenerateConfig, configExists, loadConfig, getProvidersByRole, type ResolvedProvider } from './config-loader.js';
+import { autoGenerateConfig, configExists, loadConfig, getProvidersByRole, type ResolvedProvider, type ChimeraConfig } from './config-loader.js';
 import { cleanupStaleWorktrees, removeWorktree } from '@chimera/isolation';
 // @chimera/tui depends on Ink, which is ESM with top-level await.
 // Loading it synchronously fails under Node ≥ 22 when this CJS module requires it.
@@ -175,13 +175,15 @@ export class CliRouter {
   private noLearn = false;
   private sessionStore: CheckpointStore;
   private memory: LongTermMemory;
+  private memoryPersistence: MemoryPersistence;
   private learningEngine: LearningEngine;
 
   constructor() {
     this.program = new Command();
     this.sessionStore = new CheckpointStore();
-    this.memory = new LongTermMemory();
     const workspaceRoot = process.cwd();
+    this.memoryPersistence = new MemoryPersistence({ workspaceRoot });
+    this.memory = this.memoryPersistence.getMemory();
     this.learningEngine = new LearningEngine({
       sessionDir: resolve(workspaceRoot, '.chimera', 'sessions'),
       outputDir: workspaceRoot,
@@ -259,7 +261,7 @@ export class CliRouter {
         tier: info.provider === 'mock' ? 'cheap' : 'frontier',
       };
       try {
-        registry.upsert(modelEntry);
+        registry.register(modelEntry);
       } catch {
         // A provider with an odd id/partial entry shouldn't break startup;
         // the default hardcoded models already in the registry remain.
@@ -288,7 +290,7 @@ export class CliRouter {
         registry,
         budgetEnforcer,
         rateLimiter,
-        memoryPersistence: this.memory,
+        memoryPersistence: this.memoryPersistence,
       },
     );
 
@@ -344,6 +346,11 @@ export class CliRouter {
   private async getRoleMappedProviders(): Promise<{ writer?: ModelProvider; reviewer?: ModelProvider; challenger?: ModelProvider; fallback: ModelProvider[] }> {
     const config = loadConfig();
     if (config) {
+      // Allow per-role model overrides via env vars (CHIMERA_WRITER_MODEL, etc.)
+      // even when a config file already exists. This lets a stronger model be
+      // targeted for the writer without editing the YAML. Falls back to the
+      // existing NIM / openai-compatible slot (CHIMERA_CHEAP_API_KEY/base_url).
+      this.applyRoleModelOverrides(config);
       const byRole = getProvidersByRole(config);
       const writer = byRole.writer ? this.buildProviderFromEntry(byRole.writer) ?? undefined : undefined;
       const reviewer = byRole.reviewer ? this.buildProviderFromEntry(byRole.reviewer) ?? undefined : undefined;
@@ -366,6 +373,25 @@ export class CliRouter {
       );
     }
     return { fallback };
+  }
+
+  /**
+   * Override the model on each role's provider entry from CHIMERA_*_MODEL env
+   * vars. Reuses the role's existing api_key/base_url (so a NIM writer can be
+   * swapped to a stronger NIM model without re-specifying credentials).
+   */
+  private applyRoleModelOverrides(config: ChimeraConfig): void {
+    const overrides: Record<string, string | undefined> = {
+      writer: process.env.CHIMERA_WRITER_MODEL,
+      reviewer: process.env.CHIMERA_REVIEWER_MODEL,
+      challenger: process.env.CHIMERA_CHALLENGER_MODEL,
+    };
+    for (const provider of config.providers) {
+      const model = overrides[provider.role];
+      if (model && model.trim().length > 0) {
+        provider.model = model.trim();
+      }
+    }
   }
 
   private async getProviders(): Promise<ModelProvider[]> {

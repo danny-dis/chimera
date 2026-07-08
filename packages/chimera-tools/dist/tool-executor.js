@@ -18,8 +18,11 @@ class ToolExecutor {
                 duration: 0,
             };
         }
+        // Coerce model-emitted string args into the types the schema expects
+        // (small models often send booleans/numbers as JSON strings).
+        const coerced = this.registry.coerceParams(toolName, params);
         // Validate params
-        const validation = this.registry.validateParams(toolName, params);
+        const validation = this.registry.validateParams(toolName, coerced);
         if (!validation.valid) {
             return {
                 success: false,
@@ -50,7 +53,7 @@ class ToolExecutor {
             };
         }
         // Execute
-        const result = await this.registry.execute(toolName, params, context);
+        const result = await this.registry.execute(toolName, coerced, context);
         // Emit result event
         context.eventStream.append({
             type: 'tool_call_result',

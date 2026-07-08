@@ -11,12 +11,15 @@ const tool_schema_js_1 = require("../tool-schema.js");
 const media_types_js_1 = require("./media-types.js");
 // ── Helpers ──────────────────────────────────────────────────────────────────
 function resolveAndValidate(basePath, workspaceRoot) {
-    const resolved = path_1.default.resolve(workspaceRoot, basePath);
-    if (!resolved.startsWith(path_1.default.resolve(workspaceRoot) + path_1.default.sep) &&
-        resolved !== path_1.default.resolve(workspaceRoot)) {
-        throw new Error(`Path escapes workspace root: ${basePath}`);
+    const root = path_1.default.resolve(workspaceRoot);
+    const resolved = path_1.default.resolve(root, basePath);
+    // Allow the root itself and anything beneath it. `path.resolve` already
+    // normalizes absolute paths (e.g. C:\Users\pc\Desktop\VirgilNet\Cargo.toml)
+    // so absolute paths that land inside the workspace root are permitted.
+    if (resolved === root || resolved.startsWith(root + path_1.default.sep)) {
+        return resolved;
     }
-    return resolved;
+    throw new Error(`Path escapes workspace root: ${basePath}`);
 }
 function parseGitignore(content) {
     const rules = [];

@@ -33,12 +33,12 @@ declare const WebSearchParamsSchema: z.ZodObject<{
     type: z.ZodDefault<z.ZodEnum<["fast", "deep", "auto"]>>;
 }, "strip", z.ZodTypeAny, {
     type?: "fast" | "deep" | "auto";
-    query?: string;
     numResults?: number;
+    query?: string;
 }, {
     type?: "fast" | "deep" | "auto";
-    query?: string;
     numResults?: number;
+    query?: string;
 }>;
 declare const WebSearchReturnsSchema: z.ZodObject<{
     results: z.ZodArray<z.ZodObject<{

@@ -330,6 +330,8 @@ async function detectPerRoleProvidersAsync() {
     const anthropicKey = getEnv('ANTHROPIC_API_KEY');
     const openaiKey = getEnv('OPENAI_API_KEY');
     const googleKey = getEnv('GOOGLE_API_KEY');
+    const cheapKey = getEnv('CHIMERA_CHEAP_API_KEY');
+    const cheapBaseUrl = getEnv('CHIMERA_CHEAP_BASE_URL');
     let providerType;
     let apiKey;
     let baseUrl;
@@ -345,6 +347,11 @@ async function detectPerRoleProvidersAsync() {
     else if (googleKey) {
         providerType = 'google';
         apiKey = googleKey;
+    }
+    else if (cheapKey) {
+        providerType = 'openai-compatible';
+        apiKey = cheapKey;
+        baseUrl = cheapBaseUrl || 'https://integrate.api.nvidia.com/v1';
     }
     else {
         return [];
@@ -372,6 +379,8 @@ function detectPerRoleProviders() {
     const anthropicKey = getEnv('ANTHROPIC_API_KEY');
     const openaiKey = getEnv('OPENAI_API_KEY');
     const googleKey = getEnv('GOOGLE_API_KEY');
+    const cheapKey = getEnv('CHIMERA_CHEAP_API_KEY');
+    const cheapBaseUrl = getEnv('CHIMERA_CHEAP_BASE_URL');
     let providerType;
     let apiKey;
     let baseUrl;
@@ -387,6 +396,14 @@ function detectPerRoleProviders() {
     else if (googleKey) {
         providerType = 'google';
         apiKey = googleKey;
+    }
+    else if (cheapKey) {
+        // Allow per-role overrides to ride on the existing NIM / openai-compatible
+        // slot (CHIMERA_CHEAP_API_KEY + CHIMERA_CHEAP_BASE_URL) so a stronger model
+        // can be targeted without an Anthropic/OpenAI/Google key.
+        providerType = 'openai-compatible';
+        apiKey = cheapKey;
+        baseUrl = cheapBaseUrl || 'https://integrate.api.nvidia.com/v1';
     }
     else {
         return [];
@@ -439,7 +456,8 @@ async function autoGenerateConfig(cwd) {
             const envKey = p.provider === 'anthropic' ? 'ANTHROPIC_API_KEY'
                 : p.provider === 'openai' ? 'OPENAI_API_KEY'
                     : p.provider === 'google' ? 'GOOGLE_API_KEY'
-                        : undefined;
+                        : p.provider === 'openai-compatible' ? 'CHIMERA_CHEAP_API_KEY'
+                            : undefined;
             providers.push({
                 name: makeName(p.name),
                 provider: p.provider,

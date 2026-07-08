@@ -1,5 +1,29 @@
 import type { ToolDefinition, ToolContext, ToolResult, ValidationResult } from './tool-schema.js';
 
+/**
+ * Coerce a string arg to the scalar type the schema expects. Used to make
+ * tool calling robust against models that emit booleans/numbers as JSON
+ * strings. `Boolean("False")` is truthy in JS, so we map the common boolean
+ * word/number spellings explicitly rather than relying on `Boolean()`.
+ */
+function coerceScalar(typeName: string | undefined, raw: string): unknown {
+  const s = raw.trim();
+  if (typeName === 'ZodBoolean') {
+    const lower = s.toLowerCase();
+    if (['true', 'true.', '1', 'yes', 'y', 'on'].includes(lower)) return true;
+    if (['false', '0', 'no', 'n', 'off', 'null', 'none'].includes(lower)) return false;
+    return s; // leave for Zod to reject if truly invalid
+  }
+  if (typeName === 'ZodNumber') {
+    const n = Number(s);
+    return Number.isNaN(n) ? s : n;
+  }
+  if (typeName === 'ZodEnum') {
+    return s;
+  }
+  return s;
+}
+
 export class ToolRegistry {
   private tools: Map<string, ToolDefinition> = new Map();
 
@@ -60,6 +84,39 @@ export class ToolRegistry {
       throw new Error(`Tool "${name}" not found`);
     }
     return tool.parameters.parse(params) as T;
+  }
+
+  /**
+   * Best-effort type coercion for tool args emitted by chat models, which
+   * routinely send booleans/numbers as JSON strings (e.g. overwrite: "True",
+   * timeout: "30"). Zod's strict `.parse()` rejects those, which silently
+   * breaks the tool round-trip. We walk the schema and coerce string values
+   * to the expected scalar type so small/finicky models still drive tools.
+   */
+  coerceParams(name: string, params: Record<string, unknown>): Record<string, unknown> {
+    const tool = this.get(name);
+    if (!tool || !params || typeof params !== 'object') return params;
+    const def: any = (tool.parameters as any)?._def;
+    const typeName: string | undefined = def?.typeName;
+    const shape =
+      typeName === 'ZodEffects'
+        ? (def?.schema?._def?.shape as (() => Record<string, any>) | undefined)
+        : (def?.shape as (() => Record<string, any>) | undefined);
+    if (typeof shape !== 'function') return params;
+
+    const out: Record<string, unknown> = { ...params };
+    for (const [key, val] of Object.entries<any>(shape())) {
+      if (!(key in out)) continue;
+      const v = out[key];
+      const fieldType = val?._def?.typeName;
+      if (fieldType === 'ZodOptional' || fieldType === 'ZodDefault' || fieldType === 'ZodNullable') {
+        const inner = val._def?.innerType;
+        if (inner && typeof v === 'string') out[key] = coerceScalar(inner._def?.typeName, v);
+      } else if (typeof v === 'string') {
+        out[key] = coerceScalar(fieldType, v);
+      }
+    }
+    return out;
   }
 
   async execute(

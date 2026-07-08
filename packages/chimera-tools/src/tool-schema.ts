@@ -112,3 +112,52 @@ export const DEFAULT_SHELL_TIMEOUT = 30_000; // 30s
 export const MAX_SHELL_TIMEOUT = 300_000; // 300s
 
 export const IGNORED_DIRS = ['node_modules', '.git', 'dist', '.next', '.turbo', 'coverage'];
+
+/**
+ * Convert a Zod schema into an OpenAI-style JSON schema object the model
+ * API can consume. Zod schemas have no built-in `.toJSON()`, so the previous
+ * `t.parameters?.toJSON?.() ?? {}` produced an empty `parameters: {}` — which
+ * silently broke tool calling (the model narrated tool names instead of
+ * emitting structured tool_calls). This handles the shapes Chimera's tools
+ * actually use: object, string, number, boolean, array, enum, optional,
+ * nullable, and `.default()`.
+ */
+export function zodToJsonSchema(schema: z.ZodType): Record<string, unknown> {
+  const def: any = (schema as any)._def ?? {};
+  const type = def.typeName as string | undefined;
+
+  switch (type) {
+    case 'ZodObject': {
+      const shape = def.shape();
+      const properties: Record<string, unknown> = {};
+      const required: string[] = [];
+      for (const [key, val] of Object.entries(shape)) {
+        properties[key] = zodToJsonSchema(val as z.ZodType);
+        const v = val as any;
+        const isOptional =
+          v._def?.typeName === 'ZodOptional' ||
+          v._def?.typeName === 'ZodNullable' ||
+          v._def?.typeName === 'ZodDefault';
+        if (!isOptional) required.push(key);
+      }
+      return { type: 'object', properties, ...(required.length ? { required } : {}) };
+    }
+    case 'ZodString':
+      return { type: 'string' };
+    case 'ZodNumber':
+      return { type: 'number' };
+    case 'ZodBoolean':
+      return { type: 'boolean' };
+    case 'ZodArray':
+      return { type: 'array', items: zodToJsonSchema(def.type().element) };
+    case 'ZodEnum':
+      return { type: 'string', enum: def.values };
+    case 'ZodOptional':
+    case 'ZodNullable':
+      return zodToJsonSchema(def.innerType());
+    case 'ZodDefault':
+      return zodToJsonSchema(def.innerType());
+    default:
+      return { type: 'string' };
+  }
+}

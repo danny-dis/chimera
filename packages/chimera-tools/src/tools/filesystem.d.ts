@@ -1,0 +1,202 @@
+import { z } from 'zod';
+import type { ToolDefinition } from '../tool-schema.js';
+declare const ReadFileParamsSchema: z.ZodEffects<z.ZodObject<{
+    path: z.ZodString;
+    startLine: z.ZodOptional<z.ZodNumber>;
+    endLine: z.ZodOptional<z.ZodNumber>;
+    startPage: z.ZodOptional<z.ZodNumber>;
+    endPage: z.ZodOptional<z.ZodNumber>;
+}, "strip", z.ZodTypeAny, {
+    path: string;
+    startLine?: number | undefined;
+    endLine?: number | undefined;
+    startPage?: number | undefined;
+    endPage?: number | undefined;
+}, {
+    path: string;
+    startLine?: number | undefined;
+    endLine?: number | undefined;
+    startPage?: number | undefined;
+    endPage?: number | undefined;
+}>, {
+    path: string;
+    startLine?: number | undefined;
+    endLine?: number | undefined;
+    startPage?: number | undefined;
+    endPage?: number | undefined;
+}, {
+    path: string;
+    startLine?: number | undefined;
+    endLine?: number | undefined;
+    startPage?: number | undefined;
+    endPage?: number | undefined;
+}>;
+declare const ReadFileReturnsSchema: z.ZodObject<{
+    content: z.ZodString;
+    totalLines: z.ZodNumber;
+    path: z.ZodString;
+    media: z.ZodOptional<z.ZodDiscriminatedUnion<"kind", [z.ZodObject<{
+        kind: z.ZodLiteral<"image">;
+        mime: z.ZodString;
+        base64: z.ZodString;
+        bytes: z.ZodNumber;
+    }, "strip", z.ZodTypeAny, {
+        base64: string;
+        kind: "image";
+        bytes: number;
+        mime: string;
+    }, {
+        base64: string;
+        kind: "image";
+        bytes: number;
+        mime: string;
+    }>, z.ZodObject<{
+        kind: z.ZodLiteral<"pdf">;
+        mime: z.ZodLiteral<"application/pdf">;
+        base64: z.ZodString;
+        bytes: z.ZodNumber;
+        pageCount: z.ZodNumber;
+        pages: z.ZodArray<z.ZodNumber, "many">;
+    }, "strip", z.ZodTypeAny, {
+        base64: string;
+        kind: "pdf";
+        bytes: number;
+        mime: "application/pdf";
+        pageCount: number;
+        pages: number[];
+    }, {
+        base64: string;
+        kind: "pdf";
+        bytes: number;
+        mime: "application/pdf";
+        pageCount: number;
+        pages: number[];
+    }>]>>;
+}, "strip", z.ZodTypeAny, {
+    path: string;
+    content: string;
+    totalLines: number;
+    media?: {
+        base64: string;
+        kind: "image";
+        bytes: number;
+        mime: string;
+    } | {
+        base64: string;
+        kind: "pdf";
+        bytes: number;
+        mime: "application/pdf";
+        pageCount: number;
+        pages: number[];
+    } | undefined;
+}, {
+    path: string;
+    content: string;
+    totalLines: number;
+    media?: {
+        base64: string;
+        kind: "image";
+        bytes: number;
+        mime: string;
+    } | {
+        base64: string;
+        kind: "pdf";
+        bytes: number;
+        mime: "application/pdf";
+        pageCount: number;
+        pages: number[];
+    } | undefined;
+}>;
+export declare const readFileTool: ToolDefinition<typeof ReadFileParamsSchema, typeof ReadFileReturnsSchema>;
+declare const WriteFileParamsSchema: z.ZodObject<{
+    path: z.ZodString;
+    content: z.ZodString;
+    overwrite: z.ZodDefault<z.ZodBoolean>;
+}, "strip", z.ZodTypeAny, {
+    path: string;
+    content: string;
+    overwrite: boolean;
+}, {
+    path: string;
+    content: string;
+    overwrite?: boolean | undefined;
+}>;
+declare const WriteFileReturnsSchema: z.ZodObject<{
+    path: z.ZodString;
+    bytesWritten: z.ZodNumber;
+    created: z.ZodBoolean;
+}, "strip", z.ZodTypeAny, {
+    path: string;
+    bytesWritten: number;
+    created: boolean;
+}, {
+    path: string;
+    bytesWritten: number;
+    created: boolean;
+}>;
+export declare const writeFileTool: ToolDefinition<typeof WriteFileParamsSchema, typeof WriteFileReturnsSchema>;
+declare const ListDirectoryParamsSchema: z.ZodObject<{
+    path: z.ZodOptional<z.ZodString>;
+    depth: z.ZodDefault<z.ZodNumber>;
+    includeHidden: z.ZodDefault<z.ZodBoolean>;
+    gitignore: z.ZodDefault<z.ZodBoolean>;
+}, "strip", z.ZodTypeAny, {
+    depth: number;
+    includeHidden: boolean;
+    gitignore: boolean;
+    path?: string | undefined;
+}, {
+    path?: string | undefined;
+    depth?: number | undefined;
+    includeHidden?: boolean | undefined;
+    gitignore?: boolean | undefined;
+}>;
+declare const ListDirectoryReturnsSchema: z.ZodObject<{
+    entries: z.ZodArray<z.ZodObject<{
+        name: z.ZodString;
+        path: z.ZodString;
+        type: z.ZodEnum<["file", "directory", "symlink"]>;
+        size: z.ZodOptional<z.ZodNumber>;
+        modified: z.ZodOptional<z.ZodString>;
+    }, "strip", z.ZodTypeAny, {
+        name: string;
+        path: string;
+        type: "file" | "directory" | "symlink";
+        modified?: string | undefined;
+        size?: number | undefined;
+    }, {
+        name: string;
+        path: string;
+        type: "file" | "directory" | "symlink";
+        modified?: string | undefined;
+        size?: number | undefined;
+    }>, "many">;
+    path: z.ZodString;
+    totalFiles: z.ZodNumber;
+    totalDirs: z.ZodNumber;
+}, "strip", z.ZodTypeAny, {
+    path: string;
+    entries: {
+        name: string;
+        path: string;
+        type: "file" | "directory" | "symlink";
+        modified?: string | undefined;
+        size?: number | undefined;
+    }[];
+    totalFiles: number;
+    totalDirs: number;
+}, {
+    path: string;
+    entries: {
+        name: string;
+        path: string;
+        type: "file" | "directory" | "symlink";
+        modified?: string | undefined;
+        size?: number | undefined;
+    }[];
+    totalFiles: number;
+    totalDirs: number;
+}>;
+export declare const listDirectoryTool: ToolDefinition<typeof ListDirectoryParamsSchema, typeof ListDirectoryReturnsSchema>;
+export {};
+//# sourceMappingURL=filesystem.d.ts.map

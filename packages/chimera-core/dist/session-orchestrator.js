@@ -733,6 +733,10 @@ class SessionOrchestrator {
             registry: this._registry,
             costTracker: this.costTracker,
             providerFactory: this.buildProviderFactory(providers),
+            // CRITICAL: workspaceRoot must be passed so deliberation executors
+            // actually execute tool calls (write_file/shell) against the repo.
+            // Without it the `&& this.workspaceRoot` guard silently no-ops every tool.
+            workspaceRoot: this._workspaceRoot,
             toolExecutor: this.toolExecutor,
             toolRegistry: this.toolRegistry,
         });

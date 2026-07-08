@@ -1,6 +1,7 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.IGNORED_DIRS = exports.MAX_SHELL_TIMEOUT = exports.DEFAULT_SHELL_TIMEOUT = exports.MAX_OUTPUT_SIZE = exports.MAX_FILE_SIZE = exports.GitCommitSchema = exports.GitFileStatusSchema = exports.SearchMatchSchema = exports.FileEntrySchema = exports.PathSchema = void 0;
+exports.zodToJsonSchema = zodToJsonSchema;
 const zod_1 = require("zod");
 // Shared schemas
 exports.PathSchema = zod_1.z.string().min(1, 'Path must not be empty');
@@ -40,4 +41,51 @@ exports.MAX_OUTPUT_SIZE = 50 * 1024; // 50KB
 exports.DEFAULT_SHELL_TIMEOUT = 30_000; // 30s
 exports.MAX_SHELL_TIMEOUT = 300_000; // 300s
 exports.IGNORED_DIRS = ['node_modules', '.git', 'dist', '.next', '.turbo', 'coverage'];
+/**
+ * Convert a Zod schema into an OpenAI-style JSON schema object the model
+ * API can consume. Zod schemas have no built-in `.toJSON()`, so the previous
+ * `t.parameters?.toJSON?.() ?? {}` produced an empty `parameters: {}` — which
+ * silently broke tool calling (the model narrated tool names instead of
+ * emitting structured tool_calls). This handles the shapes Chimera's tools
+ * actually use: object, string, number, boolean, array, enum, optional,
+ * nullable, and `.default()`.
+ */
+function zodToJsonSchema(schema) {
+    const def = schema._def ?? {};
+    const type = def.typeName;
+    switch (type) {
+        case 'ZodObject': {
+            const shape = def.shape();
+            const properties = {};
+            const required = [];
+            for (const [key, val] of Object.entries(shape)) {
+                properties[key] = zodToJsonSchema(val);
+                const v = val;
+                const isOptional = v._def?.typeName === 'ZodOptional' ||
+                    v._def?.typeName === 'ZodNullable' ||
+                    v._def?.typeName === 'ZodDefault';
+                if (!isOptional)
+                    required.push(key);
+            }
+            return { type: 'object', properties, ...(required.length ? { required } : {}) };
+        }
+        case 'ZodString':
+            return { type: 'string' };
+        case 'ZodNumber':
+            return { type: 'number' };
+        case 'ZodBoolean':
+            return { type: 'boolean' };
+        case 'ZodArray':
+            return { type: 'array', items: zodToJsonSchema(def.type().element) };
+        case 'ZodEnum':
+            return { type: 'string', enum: def.values };
+        case 'ZodOptional':
+        case 'ZodNullable':
+            return zodToJsonSchema(def.innerType());
+        case 'ZodDefault':
+            return zodToJsonSchema(def.innerType());
+        default:
+            return { type: 'string' };
+    }
+}
 //# sourceMappingURL=tool-schema.js.map

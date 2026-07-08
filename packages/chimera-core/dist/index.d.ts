@@ -1,3 +1,4 @@
+export { zodToJsonSchema } from './zod-json.js';
 export { EventStream } from './event-stream.js';
 export { AgentMesh } from './agent-mesh.js';
 export { TaskRouter } from './task-router.js';

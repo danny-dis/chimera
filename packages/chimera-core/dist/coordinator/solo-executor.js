@@ -1,9 +1,28 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.SoloExecutor = void 0;
+const zod_json_js_1 = require("../zod-json.js");
 const output_sanitizer_js_1 = require("./output-sanitizer.js");
 const task_router_js_1 = require("../task-router.js");
 const tool_execution_helper_js_1 = require("./tool-execution-helper.js");
+/**
+ * System prompt injected for `code` / tool-driven tasks. Small instruction-
+ * following models (e.g. 8B) will otherwise narrate what files they "would"
+ * create instead of actually calling write_file. This forces action.
+ */
+const CODE_MODE_PROMPT = `You are an autonomous coding agent operating inside a real workspace.
+
+CRITICAL EXECUTION RULES:
+- You MUST accomplish the task by CALLING TOOLS (write_file, read_file, run_shell_command, websearch, webfetch). Do NOT describe files in prose or claim you created them without actually calling write_file.
+- NEVER end your turn with a summary like "I created file X" unless you have actually called write_file for X in this conversation.
+- Use relative paths. The current working directory IS the workspace root.
+- When the task lists multiple files, call write_file once per file, across as many turns as needed.
+- After every tool result, continue calling tools until the task is fully complete. Only produce a final closing message once ALL files are written.
+- If a tool call fails, read the error and retry with corrected arguments.
+
+RESEARCH BEFORE WRITING:
+- If the task involves unfamiliar libraries, current APIs, or best practices, call websearch FIRST to gather facts, then write code from what you learned. Do not rely on memory alone for anything you are unsure about.
+- If you have a known documentation URL, use webfetch to pull its contents.`;
 /**
  * The simplest executor: one model answers one prompt.
  *
@@ -85,33 +104,105 @@ class SoloExecutor {
             }
         }
         try {
-            const res = await this.callPeer('writer', config.model, task, config, providerFactory, undefined, thought, this.toolRegistry ? this.listToolDefs() : undefined);
+            // For tool-driven (code) tasks, force an agentic system prompt so the
+            // model actually invokes tools instead of narrating a plan in prose.
+            const writerConfig = this.toolRegistry
+                ? { ...config, systemPrompt: [CODE_MODE_PROMPT, config.systemPrompt].filter(Boolean).join('\n\n') }
+                : config;
+            const res = await this.callPeer('writer', config.model, task, writerConfig, providerFactory, undefined, thought, this.toolRegistry ? this.listToolDefs() : undefined);
             draftContent = (0, output_sanitizer_js_1.sanitizeWriterOutput)(res.content);
             totalTokens += res.inputTokens + res.outputTokens;
             const cost = this.computeCost(config.model, res.inputTokens, res.outputTokens);
             totalCostUsd += cost;
             this.recordSpend(config.model, cost);
-            // ── Tool execution round-trip ──────────────────────────────────
-            // If the writer emitted tool calls and a tool executor is wired in,
-            // execute them against the workspace and feed results back into the
-            // model for a single follow-up turn. No infinite loop — capped at 1.
-            if (res.toolCalls && res.toolCalls.length > 0 && this.toolExecutor && this.workspaceRoot) {
+            // ── Multi-round tool execution loop ──────────────────────────
+            // Small models often stop after one tool batch (e.g. they research with
+            // websearch then emit a summary instead of writing). Loop up to maxDepth
+            // turns so the writer can read→write→continue until the task is done.
+            let currentToolCalls = res.toolCalls;
+            let lastContent = res.content;
+            const MAX_TOOL_ROUNDS = Math.max(1, config.maxDepth ?? 4);
+            let round = 0;
+            let wroteFileCount = 0;
+            while (currentToolCalls &&
+                currentToolCalls.length > 0 &&
+                this.toolExecutor &&
+                this.workspaceRoot &&
+                round < MAX_TOOL_ROUNDS) {
+                round++;
                 const toolResults = await (0, tool_execution_helper_js_1.runToolCalls)({
-                    toolCalls: res.toolCalls,
+                    toolCalls: currentToolCalls,
                     toolExecutor: this.toolExecutor,
                     toolRegistry: this.toolRegistry,
                     eventStream: this.eventStream,
                     workspaceRoot: this.workspaceRoot,
                     sessionId: `solo-${config.model}`,
                 });
-                // Build follow-up messages: assistant (with tool_calls) + tool results.
+                for (const tc of currentToolCalls) {
+                    if (tc.name === 'write_file')
+                        wroteFileCount++;
+                }
                 const provider = providerFactory(config.model);
-                const followUp = await this.followUpWithToolResults(provider, config, res.content, res.toolCalls, toolResults);
-                draftContent = (0, output_sanitizer_js_1.sanitizeWriterOutput)(followUp.content);
-                totalTokens += followUp.inputTokens + followUp.outputTokens;
-                const followUpCost = this.computeCost(config.model, followUp.inputTokens, followUp.outputTokens);
-                totalCostUsd += followUpCost;
-                this.recordSpend(config.model, followUpCost);
+                try {
+                    const followUp = await this.followUpWithToolResults(provider, config, lastContent, currentToolCalls, toolResults, wroteFileCount);
+                    lastContent = (0, output_sanitizer_js_1.sanitizeWriterOutput)(followUp.content);
+                    totalTokens += followUp.inputTokens + followUp.outputTokens;
+                    const followUpCost = this.computeCost(config.model, followUp.inputTokens, followUp.outputTokens);
+                    totalCostUsd += followUpCost;
+                    this.recordSpend(config.model, followUpCost);
+                    // Continue looping if the model emitted more tool calls.
+                    currentToolCalls = followUp.toolCalls ?? [];
+                }
+                catch {
+                    currentToolCalls = [];
+                }
+            }
+            // Harness-level guard: the task clearly wants files created (a code
+            // scaffold / creation task) but the model only researched or summarized
+            // and never wrote anything. Force one explicit write turn so small
+            // models that stop after research still produce the deliverable.
+            if (wroteFileCount === 0 && this.toolExecutor && this.workspaceRoot && round > 0) {
+                const wantsFiles = /\b(create|scaffold|write|generate|build|implement|make)\b/i.test(task) ||
+                    /write_file|Cargo\.toml|src\/|\.rs|\.ts/i.test(task);
+                if (wantsFiles) {
+                    try {
+                        const forceProvider = providerFactory(config.model);
+                        const forced = await this.forceWriteTurn(forceProvider, config, lastContent, task);
+                        lastContent = (0, output_sanitizer_js_1.sanitizeWriterOutput)(forced.content);
+                        totalTokens += forced.inputTokens + forced.outputTokens;
+                        const forcedCost = this.computeCost(config.model, forced.inputTokens, forced.outputTokens);
+                        totalCostUsd += forcedCost;
+                        this.recordSpend(config.model, forcedCost);
+                        if (forced.toolCalls) {
+                            for (const tc of forced.toolCalls) {
+                                if (tc.name === 'write_file')
+                                    wroteFileCount++;
+                            }
+                            // Execute any write_file calls the forced turn emitted.
+                            if (wroteFileCount > 0) {
+                                await (0, tool_execution_helper_js_1.runToolCalls)({
+                                    toolCalls: forced.toolCalls,
+                                    toolExecutor: this.toolExecutor,
+                                    toolRegistry: this.toolRegistry,
+                                    eventStream: this.eventStream,
+                                    workspaceRoot: this.workspaceRoot,
+                                    sessionId: `solo-${config.model}`,
+                                });
+                            }
+                        }
+                    }
+                    catch {
+                        /* best-effort; do not crash the run */
+                    }
+                }
+            }
+            // If the model never produced a usable closing message but tools ran,
+            // synthesize a summary so the run still completes as `done`.
+            if ((!draftContent || draftContent.trim().length === 0) && round > 0) {
+                draftContent = lastContent || 'Task executed via tools.';
+            }
+            else if (round > 0) {
+                draftContent = lastContent || draftContent;
             }
         }
         catch (err) {
@@ -183,7 +274,7 @@ class SoloExecutor {
             messages.push({ role: 'system', content: config.systemPrompt });
         }
         messages.push({ role: 'user', content: prompt });
-        const r = await provider.complete(messages, { temperature: config.temperature, maxTokens: config.maxCompletionTokens, ...(tools ? { tools } : {}), ...(config.reasoning !== undefined ? { reasoning: config.reasoning } : {}) });
+        const r = await provider.complete(messages, { temperature: config.temperature, maxTokens: config.maxCompletionTokens, ...(tools ? { tools, toolChoice: 'auto' } : {}), ...(config.reasoning !== undefined ? { reasoning: config.reasoning } : {}) });
         return {
             content: r.content,
             inputTokens: r.usage?.inputTokens ?? 0,
@@ -199,18 +290,26 @@ class SoloExecutor {
     listToolDefs() {
         if (!this.toolRegistry)
             return [];
-        return this.toolRegistry.getAll().map((t) => ({
-            name: t.name,
-            description: t.description,
-            parameters: (t.parameters?.toJSON?.() ?? {}),
-        }));
+        const out = [];
+        for (const t of this.toolRegistry.getAll()) {
+            let parameters = { type: 'object', properties: {} };
+            try {
+                parameters = (0, zod_json_js_1.zodToJsonSchema)(t.parameters);
+            }
+            catch {
+                // A malformed tool schema must not break the entire run; fall back
+                // to an empty object schema so the model can still attempt the call.
+            }
+            out.push({ name: t.name, description: t.description, parameters });
+        }
+        return out;
     }
     /**
      * Feed tool results back to the writer for one follow-up turn. Mirrors the
      * orchestrator's `buildToolResultMessages` contract: an assistant message
      * carrying the tool_calls, followed by one `tool` message per call.
      */
-    async followUpWithToolResults(provider, config, assistantContent, toolCalls, toolResults) {
+    async followUpWithToolResults(provider, config, assistantContent, toolCalls, toolResults, wroteFileCount = 0) {
         const messages = [];
         if (config.systemPrompt) {
             messages.push({ role: 'system', content: config.systemPrompt });
@@ -218,16 +317,25 @@ class SoloExecutor {
         messages.push({
             role: 'assistant',
             content: assistantContent,
-            tool_calls: toolCalls.map((tc) => ({ id: tc.id, name: tc.name, arguments: tc.arguments })),
+            toolCalls: toolCalls.map((tc) => ({
+                id: tc.id,
+                name: tc.name,
+                arguments: typeof tc.arguments === 'string' ? tc.arguments : JSON.stringify(tc.arguments),
+            })),
         });
         for (const tr of toolResults) {
             messages.push({
                 role: 'tool',
                 content: JSON.stringify(tr.result.result),
-                tool_call_id: tr.result.toolCallId,
+                toolResultId: tr.result.toolCallId,
             });
         }
-        messages.push({ role: 'user', content: 'Continue. Incorporate the tool results and finish the task.' });
+        // If the model has researched/read but not yet created any files, escalate
+        // the instruction so small models actually transition to writing.
+        const nudge = wroteFileCount === 0
+            ? 'You have NOT created any files yet. The task requires you to CREATE files. Call write_file NOW for each file the task lists — do not summarize or explain, just write the files.'
+            : 'Continue. Incorporate the tool results and finish the task.';
+        messages.push({ role: 'user', content: nudge });
         const r = await provider.complete(messages, {
             temperature: config.temperature,
             maxTokens: config.maxCompletionTokens,
@@ -237,6 +345,36 @@ class SoloExecutor {
             content: r.content,
             inputTokens: r.usage?.inputTokens ?? 0,
             outputTokens: r.usage?.outputTokens ?? 0,
+            toolCalls: r.toolCalls,
+        };
+    }
+    /**
+     * Last-resort harness nudge: when the model researched/summarized but never
+     * wrote a single file on a task that clearly wants files, send one explicit
+     * turn that demands write_file calls, then execute whatever it emits.
+     */
+    async forceWriteTurn(provider, config, lastContent, task) {
+        const messages = [];
+        if (config.systemPrompt) {
+            messages.push({ role: 'system', content: config.systemPrompt });
+        }
+        messages.push({
+            role: 'user',
+            content: `Your previous response did not create any files. The task REQUIRES you to create files on disk. ` +
+                `Re-read the task and immediately call write_file for EVERY file it lists, using the exact relative paths. ` +
+                `Do not describe or summarize — produce the tool calls now.\n\nTASK: ${task}\n\nPREVIOUS OUTPUT (for reference, do not copy):\n${lastContent.slice(0, 2000)}`,
+        });
+        const r = await provider.complete(messages, {
+            temperature: config.temperature,
+            maxTokens: config.maxCompletionTokens,
+            tools: this.listToolDefs(),
+            ...(config.reasoning !== undefined ? { reasoning: config.reasoning } : {}),
+        });
+        return {
+            content: r.content,
+            inputTokens: r.usage?.inputTokens ?? 0,
+            outputTokens: r.usage?.outputTokens ?? 0,
+            toolCalls: r.toolCalls,
         };
     }
     buildThinkPrompt(task, context) {
@@ -358,6 +496,23 @@ class SoloExecutor {
             return draft.trim().length > 0 ? draft : '';
         }
         return review;
+    }
+    /**
+     * Build a plain-text summary from tool results when the model's closing
+     * turn fails or returns nothing. Keeps a tool-driven run useful even on
+     * small/finicky models that can't produce a coherent closing message.
+     */
+    summarizeToolResults(toolResults) {
+        const lines = [];
+        for (const tr of toolResults) {
+            const inner = tr.result.result;
+            const ok = inner.success;
+            const detail = ok
+                ? JSON.stringify(inner.data ?? {})
+                : (inner.error ?? 'failed');
+            lines.push(`- ${tr.toolName}: ${ok ? 'ok' : 'failed'} — ${detail}`);
+        }
+        return `Completed ${toolResults.length} tool call(s):\n${lines.join('\n')}`;
     }
     degraded(reason, totalTokens, totalCostUsd, startTime, output = '') {
         this.safeEmit({ type: 'final_response', status: 'needs_user', cost: totalCostUsd, agentCount: 1, output });

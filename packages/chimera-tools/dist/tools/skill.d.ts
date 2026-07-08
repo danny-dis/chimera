@@ -66,15 +66,15 @@ declare const CreateWorkflowParamsSchema: z.ZodObject<{
         config: z.ZodDefault<z.ZodRecord<z.ZodString, z.ZodUnknown>>;
         required: z.ZodOptional<z.ZodBoolean>;
     }, "strip", z.ZodTypeAny, {
+        required?: boolean;
         kind?: "llm" | "tool" | "parallel" | "sequence" | "gate" | "loop";
         id?: string;
         config?: Record<string, unknown>;
-        required?: boolean;
     }, {
+        required?: boolean;
         kind?: "llm" | "tool" | "parallel" | "sequence" | "gate" | "loop";
         id?: string;
         config?: Record<string, unknown>;
-        required?: boolean;
     }>, "many">;
     tags: z.ZodDefault<z.ZodArray<z.ZodString, "many">>;
     overwrite: z.ZodDefault<z.ZodBoolean>;
@@ -83,10 +83,10 @@ declare const CreateWorkflowParamsSchema: z.ZodObject<{
     description?: string;
     overwrite?: boolean;
     steps?: {
+        required?: boolean;
         kind?: "llm" | "tool" | "parallel" | "sequence" | "gate" | "loop";
         id?: string;
         config?: Record<string, unknown>;
-        required?: boolean;
     }[];
     tags?: string[];
 }, {
@@ -94,10 +94,10 @@ declare const CreateWorkflowParamsSchema: z.ZodObject<{
     description?: string;
     overwrite?: boolean;
     steps?: {
+        required?: boolean;
         kind?: "llm" | "tool" | "parallel" | "sequence" | "gate" | "loop";
         id?: string;
         config?: Record<string, unknown>;
-        required?: boolean;
     }[];
     tags?: string[];
 }>;

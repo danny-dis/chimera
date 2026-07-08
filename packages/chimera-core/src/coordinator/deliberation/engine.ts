@@ -144,7 +144,12 @@ export class DeliberationEngine {
         const complexity = await this.deps.taskRouter.classifyTask(cfg.task);
         soloConfig.eternalCoT = complexity.overall >= 0.5;
       } else {
-        soloConfig.eternalCoT = true;
+        // No taskRouter available to classify complexity. For a single
+        // (often small) model, defaulting the thinker ON causes weak models
+        // to over-plan and "ask for clarification" instead of acting.
+        // Default it OFF so the writer executes directly; opt in via
+        // eternalCoT: true when a stronger model is configured.
+        soloConfig.eternalCoT = false;
       }
     }
 

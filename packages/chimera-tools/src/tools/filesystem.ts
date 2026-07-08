@@ -1,6 +1,8 @@
 import { z } from 'zod';
 import { promises as fs, readFileSync } from 'fs';
 import path from 'path';
+import { zodToJsonSchema } from '@chimera/core';
+import type { EventStream, CostTracker, PermissionDecision } from '@chimera/core';
 import type { ToolDefinition, ToolContext, FileEntry } from '../tool-schema.js';
 import {
   PathSchema,
@@ -13,12 +15,15 @@ import { type MediaBlock, MediaBlockSchema } from './media-types.js';
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
 function resolveAndValidate(basePath: string, workspaceRoot: string): string {
-  const resolved = path.resolve(workspaceRoot, basePath);
-  if (!resolved.startsWith(path.resolve(workspaceRoot) + path.sep) &&
-      resolved !== path.resolve(workspaceRoot)) {
-    throw new Error(`Path escapes workspace root: ${basePath}`);
+  const root = path.resolve(workspaceRoot);
+  const resolved = path.resolve(root, basePath);
+  // Allow the root itself and anything beneath it. `path.resolve` already
+  // normalizes absolute paths (e.g. C:\Users\pc\Desktop\VirgilNet\Cargo.toml)
+  // so absolute paths that land inside the workspace root are permitted.
+  if (resolved === root || resolved.startsWith(root + path.sep)) {
+    return resolved;
   }
-  return resolved;
+  throw new Error(`Path escapes workspace root: ${basePath}`);
 }
 
 // Minimal gitignore pattern matcher

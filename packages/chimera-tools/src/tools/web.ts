@@ -107,17 +107,40 @@ const WebSearchReturnsSchema = z.object({
 
 export const webSearchTool: ToolDefinition<typeof WebSearchParamsSchema, typeof WebSearchReturnsSchema> = {
   name: 'websearch',
-  description: 'Search the web for information using Exa AI',
+  description:
+    'Search the web for current information, docs, APIs, or prior art. ' +
+    'Use this BEFORE writing code when the task involves unfamiliar libraries, ' +
+    'current best practices, or anything you are not certain about. ' +
+    'Returns a list of {title, url, snippet} results.',
   parameters: WebSearchParamsSchema,
   returns: WebSearchReturnsSchema,
   category: 'mcp',
   permissionLevel: 'read',
-  execute: async (_params) => {
-    // Return graceful error instead of throwing
-    return {
-      results: [],
-      total: 0,
-      _warning: 'Web search is not yet implemented. A real search API integration (e.g., Exa AI) is needed.',
-    };
+  execute: async (params) => {
+    try {
+      // Lazily import the provider manager so the tool stays dependency-light
+      // and the search providers only load when actually used.
+      const { WebSearchProviderManager } = await import('./web-search-providers/index.js');
+      const manager = new WebSearchProviderManager();
+      const response = await manager.search(params.query, {
+        numResults: params.numResults,
+      });
+      return {
+        results: response.results.map((r) => ({
+          title: r.title,
+          url: r.url,
+          snippet: r.snippet,
+        })),
+        total: response.total,
+      };
+    } catch (err) {
+      // Graceful degradation: never throw — return an empty result with a note
+      // so the model can try webfetch on a known URL or proceed without web data.
+      return {
+        results: [],
+        total: 0,
+        _warning: `Web search failed: ${err instanceof Error ? err.message : String(err)}`,
+      };
+    }
   },
 };

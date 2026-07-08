@@ -680,12 +680,12 @@ export declare const allTools: readonly [import("./tool-schema.js").ToolDefiniti
     type: import("zod").ZodDefault<import("zod").ZodEnum<["fast", "deep", "auto"]>>;
 }, "strip", import("zod").ZodTypeAny, {
     type?: "fast" | "deep" | "auto";
-    query?: string;
     numResults?: number;
+    query?: string;
 }, {
     type?: "fast" | "deep" | "auto";
-    query?: string;
     numResults?: number;
+    query?: string;
 }>, import("zod").ZodObject<{
     results: import("zod").ZodArray<import("zod").ZodObject<{
         title: import("zod").ZodString;
@@ -1042,15 +1042,15 @@ export declare const allTools: readonly [import("./tool-schema.js").ToolDefiniti
         config: import("zod").ZodDefault<import("zod").ZodRecord<import("zod").ZodString, import("zod").ZodUnknown>>;
         required: import("zod").ZodOptional<import("zod").ZodBoolean>;
     }, "strip", import("zod").ZodTypeAny, {
+        required?: boolean;
         kind?: "llm" | "tool" | "parallel" | "sequence" | "gate" | "loop";
         id?: string;
         config?: Record<string, unknown>;
-        required?: boolean;
     }, {
+        required?: boolean;
         kind?: "llm" | "tool" | "parallel" | "sequence" | "gate" | "loop";
         id?: string;
         config?: Record<string, unknown>;
-        required?: boolean;
     }>, "many">;
     tags: import("zod").ZodDefault<import("zod").ZodArray<import("zod").ZodString, "many">>;
     overwrite: import("zod").ZodDefault<import("zod").ZodBoolean>;
@@ -1059,10 +1059,10 @@ export declare const allTools: readonly [import("./tool-schema.js").ToolDefiniti
     description?: string;
     overwrite?: boolean;
     steps?: {
+        required?: boolean;
         kind?: "llm" | "tool" | "parallel" | "sequence" | "gate" | "loop";
         id?: string;
         config?: Record<string, unknown>;
-        required?: boolean;
     }[];
     tags?: string[];
 }, {
@@ -1070,10 +1070,10 @@ export declare const allTools: readonly [import("./tool-schema.js").ToolDefiniti
     description?: string;
     overwrite?: boolean;
     steps?: {
+        required?: boolean;
         kind?: "llm" | "tool" | "parallel" | "sequence" | "gate" | "loop";
         id?: string;
         config?: Record<string, unknown>;
-        required?: boolean;
     }[];
     tags?: string[];
 }>, import("zod").ZodObject<{

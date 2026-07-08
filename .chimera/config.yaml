@@ -1,14 +1,14 @@
 providers:
-  # Writer: Mistral
+  # Writer: NVIDIA NIM (big free model — llama-3.3-70b, supports response_format)
   - name: writer
     provider: openai-compatible
-    model: mistral-small-latest
-    api_key: ${MISTRAL_API_KEY}
-    base_url: https://api.mistral.ai
+    model: meta/llama-3.1-70b-instruct
+    api_key: ${CHIMERA_CHEAP_API_KEY}
+    base_url: https://integrate.api.nvidia.com
     role: writer
-    timeout_ms: 60000
+    timeout_ms: 180000
 
-  # Reviewer: NVIDIA NIM
+  # Reviewer: NVIDIA NIM (fast free model)
   - name: reviewer
     provider: openai-compatible
     model: meta/llama-3.1-8b-instruct
