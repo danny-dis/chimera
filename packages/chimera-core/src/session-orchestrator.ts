@@ -4,7 +4,7 @@ import { TaskRouter } from './task-router.js';
 import { AgentMesh } from './agent-mesh.js';
 import { ResponseSynthesizer, SynthesisInput } from './response-synthesizer.js';
 import { checkUserInput, checkToolOutput } from './security/prompt-guard.js';
-import { buildMessages, buildConversationalMessages, buildWorkflowGeneratorPrompt } from './prompts.js';
+import { buildMessages, buildConversationalMessages, buildWorkflowGeneratorPrompt, CHIMERA_CORE_IDENTITY, AGENT_PROMPTS, COMPACT_CORE_IDENTITY, compactAgentPrompt, SMALL_MODEL_GUIDANCE } from './prompts.js';
 import { AuditLog } from './security/audit-log.js';
 import { BiomeLinter } from './coordinator/biome-linter.js';
 import { sanitizeWriterOutput, sanitizeReviewerOutput } from './coordinator/output-sanitizer.js';
@@ -27,7 +27,7 @@ const VALID_MODE_PRESET_COMBOS: Record<Mode, readonly DeliberationMode[]> = {
 };
 import { ChimeraEvent } from './types/events.js';
 import { ComplexityScore } from './types/router.js';
-import { ContextEngine, RelayRacing, HandoffProtocol } from '@chimera/context';
+import { ContextEngine, RelayRacing, HandoffProtocol, ToolContextRelay } from '@chimera/context';
 import { runCompactionPipeline } from '@chimera/context';
 import { BudgetEnforcer, type BudgetCheckResult } from '@chimera/providers';
 import { RateLimiter } from '@chimera/providers';
@@ -36,7 +36,7 @@ import { discoverInstructions, buildInstructionContext } from './instruction-dis
 import { detectProjectContext } from './project-detection.js';
 import { DeliberationEngine } from './coordinator/deliberation/engine.js';
 import type { DeliberationConfig, DeliberationMode, DeliberationResult } from './coordinator/deliberation/types.js';
-import { buildPool } from './coordinator/model-capabilities.js';
+import { buildPool, inferCapabilities, coreToolsForTier, contextBudgetForTier } from './coordinator/model-capabilities.js';
 import type { MemoryPersistence } from './memory/memory-persistence.js';
 import type { AutoExtractService } from './memory/auto-extract.js';
 import type { RecallService } from './memory/recall-service.js';
@@ -227,12 +227,6 @@ const TOOL_OUTPUT_MAX_BYTES = 8 * 1024;
 const TOOL_OUTPUT_MAX_LINES = 200;
 const TOOL_OUTPUT_TRUNCATION_MARKER = '\n\n[... truncated, see event log for full output ...]';
 
-// P0.7 — RelayRacing observation-masking caps, mirrored from
-// @chimera/context. Inlined here to avoid a new package dependency
-// (chimera-core does not depend on @chimera/context).
-const MASK_OUTPUT_LIMIT = 200;
-const MASK_ARGS_LIMIT = 100;
-
 /** 5-minute hard cap on a single execute() invocation. */
 const EXECUTE_TIMEOUT_MS = 60_000 * 5;
 
@@ -302,12 +296,7 @@ export class SessionOrchestrator {
   private handoffProtocol: HandoffProtocol;
   private linter: BiomeLinter;
   private _workspaceRoot: string;
-  // P0.7 — relay-racing observation masking. Inlined here (rather than
-  // importing RelayRacing from @chimera/context) because chimera-core does
-  // not depend on @chimera/context. The class is small enough that
-  // mirroring its behavior is cheaper than adding a new package edge.
-  private maskedObservations = new Map<string, Array<{ original: string; masked: string; tokensSaved: number }>>();
-  private maskedTokensSaved = 0;
+  private toolRelay: ToolContextRelay;
   private workflowExecutor: { execute(script: string): Promise<any> } | null = null;
   private _sessionId: string = `session-${Date.now()}`;
   private _writerMessages: Array<{ role: string; content: string }> = [];
@@ -348,7 +337,7 @@ export class SessionOrchestrator {
     this.rateLimiter = options?.rateLimiter ?? null;
     this.auditLog = options?.auditLog ?? new AuditLog();
     this.relayRacing = new RelayRacing({ defaultContextWindow: 200_000 });
-    this.relayRacing.registerAgent('default', 200_000);
+    this.toolRelay = new ToolContextRelay({ boxThreshold: 2000 });
     this.handoffProtocol = new HandoffProtocol();
     this.linter = new BiomeLinter({ configPath: this._workspaceRoot });
     this._registry = options?.registry ?? null;
@@ -680,9 +669,19 @@ export class SessionOrchestrator {
       const writerId = nextAgentId();
       this.transition({ status: 'drafting', task, agentId: writerId });
       this.agentMesh.registerAgent(this.buildAgentConfig(writerId, 'writer', costCap));
+      // Tier-aware runtime adaptation (Stream A). The writer model id is not
+      // carried on LLMProvider, so we read it from the registry (first
+      // available model is the configured writer). Unknown ids fall back to
+      // 'mid' in inferCapabilities → full tools + full context. Only 'cheap'
+      // models are trimmed, so frontier/mid behavior is byte-identical.
+      const writerModelId = this._registry?.getAll?.()[0]?.id ?? '';
+      const writerTier = writerModelId ? inferCapabilities(writerModelId).tier : 'mid';
+      const contextWindow = contextBudgetForTier(writerTier).maxContextTokens;
+      this.relayRacing.registerAgent(writerId, contextWindow);
 
-      const toolDefs = this.buildToolDefinitions();
-      const writerMessages = this.buildWriterPrompt(task, resolvedMode, conversationHistory, memoryContext);
+      const allowedTools = coreToolsForTier(writerTier);
+      const toolDefs = this.buildToolDefinitions(allowedTools);
+      const writerMessages = this.buildWriterPrompt(task, resolvedMode, conversationHistory, memoryContext, writerTier);
 
       const budgetCheck = this.checkBudget(8192);
       if (budgetCheck && budgetCheck.action === 'stop') {
@@ -727,12 +726,9 @@ export class SessionOrchestrator {
         const toolMessages = this.buildToolResultMessages(writerMessages, draftResult, toolResults);
 
         const inputTokens = (draftResult.usage?.inputTokens ?? 0) + (draftResult.usage?.outputTokens ?? 0);
-        const threshold = this.relayRacing.trackTokens('default', inputTokens);
+        const threshold = this.relayRacing.trackTokens(writerId, inputTokens);
 
         let maskedMessages = this.relayRacing.maskObservations(toolMessages);
-        if (maskedMessages !== toolMessages) {
-          this.relayRacing.trackMaskedObservation('default', JSON.stringify(toolMessages), JSON.stringify(maskedMessages));
-        }
 
         if (threshold.recommendedAction === 'handoff' || threshold.recommendedAction === 'emergency_handoff') {
           const compacted = runCompactionPipeline(this._writerMessages);
@@ -1570,48 +1566,6 @@ export class SessionOrchestrator {
     return `Review findings:\n${lines.join('\n')}`;
   }
 
-  /**
-   * P0.7 — Apply relay-racing observation masking before the next LLM
-   * call. Caps tool/function outputs and trims assistant tool-call
-   * signatures so the writer's context window does not fill up on
-   * redundant tool noise. Mirrors the behavior of @chimera/context's
-   * RelayRacing.maskObservations / RelayRacing.maskToolCalls.
-   */
-  private maskRelayObservations(
-    messages: Array<{ role: string; content: string }>,
-    agentId: string,
-  ): Array<{ role: string; content: string }> {
-    const masked: Array<{ original: string; masked: string; tokensSaved: number }> = [];
-    const result: Array<{ role: string; content: string }> = [];
-
-    for (const msg of messages) {
-      if (msg.role === 'tool' || (msg.role === 'assistant' && msg.content.length > MASK_OUTPUT_LIMIT)) {
-        const original = msg.content;
-        let maskedContent = original;
-        let tokensSaved = 0;
-
-        if (original.length > MASK_OUTPUT_LIMIT) {
-          maskedContent = original.slice(0, MASK_OUTPUT_LIMIT) + '\n\n[... masked ...]';
-          tokensSaved = Math.floor((original.length - MASK_OUTPUT_LIMIT) / 4);
-        }
-
-        if (maskedContent !== original) {
-          masked.push({ original, masked: maskedContent, tokensSaved });
-          this.maskedTokensSaved += tokensSaved;
-        }
-        result.push({ role: msg.role, content: maskedContent });
-      } else {
-        result.push(msg);
-      }
-    }
-
-    if (masked.length > 0) {
-      this.maskedObservations.set(agentId, masked);
-    }
-
-    return result;
-  }
-
   async executeQualityGateParallel(params: {
     task: string;
     draft: string;
@@ -1836,8 +1790,21 @@ export class SessionOrchestrator {
     return true;
   }
 
-  buildWriterPrompt(task: string, mode: Mode, conversationHistory?: Array<{ role: string; content: string }>, context?: string): Array<{ role: string; content: string }> {
+  buildWriterPrompt(task: string, mode: Mode, conversationHistory?: Array<{ role: string; content: string }>, context?: string, tier: 'cheap' | 'mid' | 'frontier' | 'reasoning' = 'mid'): Array<{ role: string; content: string }> {
+    // Tier-aware prompt compression (Stream C + Stream A). Cheap models get a
+    // compact identity + compact role prompt + small-model guidance so they
+    // stay coherent; frontier/mid get the full prompt (byte-identical to before).
+    const identity = tier === 'cheap' ? COMPACT_CORE_IDENTITY : CHIMERA_CORE_IDENTITY;
+    const rolePrompt = tier === 'cheap' ? compactAgentPrompt('writer') : AGENT_PROMPTS.writer.system;
+    const smallModelSuffix = tier === 'cheap' ? `\n\n${SMALL_MODEL_GUIDANCE}` : '';
     const messages = buildMessages({ role: 'writer', mode, task, context, workspaceRoot: this._workspaceRoot, cacheControl: DEFAULT_CACHE_CONTROL });
+    // Inject the tier-specific identity + role prompt at the front (after the
+    // leading system message that buildMessages emits).
+    if (messages.length > 0 && messages[0].role === 'system') {
+      messages[0] = { role: 'system', content: `${identity}\n\n${rolePrompt}${smallModelSuffix}` };
+    } else {
+      messages.unshift({ role: 'system', content: `${identity}\n\n${rolePrompt}${smallModelSuffix}` });
+    }
 
     const isConversational = TaskRouter.isConversationalTask(task);
 
@@ -2076,13 +2043,19 @@ export class SessionOrchestrator {
     return usage.inputTokens * inputRate + usage.outputTokens * outputRate;
   }
 
-  private buildToolDefinitions(): Array<{
+  private buildToolDefinitions(allowedTools?: string[]): Array<{
     name: string;
     description: string;
     parameters: Record<string, unknown>;
   }> {
     if (!this.toolRegistry) return [];
-    return this.toolRegistry.getAll().map((tool) => ({
+    const all = this.toolRegistry.getAll();
+    // Tier-aware tool budget (Stream A): when a limited tool set is supplied
+    // (cheap models), expose only those. `['*']` or undefined → all tools.
+    const filtered = allowedTools && !allowedTools.includes('*')
+      ? all.filter((tool) => allowedTools.includes(tool.name))
+      : all;
+    return filtered.map((tool) => ({
       name: tool.name,
       description: tool.description,
       parameters: tool.parameters.toJSON?.() ?? { type: 'object' },
@@ -2191,17 +2164,30 @@ export class SessionOrchestrator {
         dataStr = dataStr.slice(0, TOOL_OUTPUT_MAX_CHARS) + '\n... [truncated]';
       }
 
-      messages.push({
-        role: 'tool',
-        tool_call_id: tr.result.toolCallId,
-        content: JSON.stringify({
-          toolCallId: tr.result.toolCallId,
-          toolName: tr.toolName,
-          success: tr.result.result.success,
-          data: dataStr,
-          error: tr.result.result.error,
-        }),
+      const envelope = JSON.stringify({
+        toolCallId: tr.result.toolCallId,
+        toolName: tr.toolName,
+        success: tr.result.result.success,
+        data: dataStr,
+        error: tr.result.result.error,
       });
+
+      if (envelope.length > 2000) {
+        const ref = this.toolRelay.box(envelope, {
+          metadata: { toolName: tr.toolName, toolCallId: tr.result.toolCallId },
+        });
+        messages.push({
+          role: 'tool',
+          tool_call_id: tr.result.toolCallId,
+          content: `[Tool output boxed — reference: ${ref.ref}]`,
+        });
+      } else {
+        messages.push({
+          role: 'tool',
+          tool_call_id: tr.result.toolCallId,
+          content: envelope,
+        });
+      }
     }
 
     messages.push({

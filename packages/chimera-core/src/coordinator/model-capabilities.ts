@@ -97,3 +97,56 @@ export function buildPool(
     preferFrontierForJudge: opts?.preferFrontierForJudge ?? true,
   };
 }
+
+/**
+ * Return the set of core tool names a model of the given `tier` should
+ * be allowed to use.
+ *
+ * - `cheap` → a small, high-signal subset (no expensive tools).
+ * - `mid` / `frontier` / `reasoning` → `['*']` (all tools).
+ *
+ * ```ts
+ * coreToolsForTier('cheap')     → ['read_file', 'search_files', 'write_file', 'edit_file', 'terminal', 'ask']
+ * coreToolsForTier('frontier')  → ['*']
+ * coreToolsForTier('mid')       → ['*']
+ * ```
+ */
+export function coreToolsForTier(tier: Tier): string[] {
+  if (tier === 'cheap') {
+    return ['read_file', 'search_files', 'write_file', 'edit_file', 'terminal', 'ask'];
+  }
+  return ['*'];
+}
+
+/** Budget constraints for a given tier. */
+export interface ContextBudget {
+  /** Maximum characters a single tool output may contribute before truncation. */
+  maxToolOutputChars: number;
+  /** Approximate token ceiling for the context window. */
+  maxContextTokens: number;
+  /** Character count after which tool output is truncated with an ellipsis marker. */
+  truncationChars: number;
+}
+
+const BUDGETS: Record<Tier, ContextBudget> = {
+  cheap:     { maxToolOutputChars: 1500,  maxContextTokens: 32000,  truncationChars: 120 },
+  mid:       { maxToolOutputChars: 4000,  maxContextTokens: 120000, truncationChars: 200 },
+  frontier:  { maxToolOutputChars: 8000,  maxContextTokens: 200000, truncationChars: 200 },
+  reasoning: { maxToolOutputChars: 8000,  maxContextTokens: 200000, truncationChars: 200 },
+};
+
+/**
+ * Return the context budget for a model of the given `tier`.
+ *
+ * Budgets establish a strict ordering: `cheap < mid < frontier === reasoning`.
+ * Downstream consumers (orchestrator, harness) read these caps to decide
+ * how much context to feed a model.
+ *
+ * ```ts
+ * contextBudgetForTier('cheap').maxContextTokens     // 32000
+ * contextBudgetForTier('frontier').maxToolOutputChars // 8000
+ * ```
+ */
+export function contextBudgetForTier(tier: Tier): ContextBudget {
+  return { ...BUDGETS[tier] };
+}

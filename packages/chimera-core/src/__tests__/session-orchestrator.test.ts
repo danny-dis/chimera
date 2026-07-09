@@ -387,6 +387,69 @@ describe('SessionOrchestrator', () => {
       expect(callCount).toBe(2);
       expect(reviewerCalls).toBe(0);
     });
+
+    it('boxes large tool outputs (>2000 chars) to internal://relay-... references', async () => {
+      let callCount = 0;
+      let capturedMessages: Array<{ role: string; content: string }> = [];
+      const writerProvider: LLMProvider = {
+        async complete(messages) {
+          callCount++;
+          capturedMessages = [...messages];
+          if (callCount === 1) {
+            return {
+              content: JSON.stringify({ response: '', confidence: 0.5 }),
+              toolCalls: [{ id: 'tc-1', name: 'read_file', arguments: { path: 'test.ts' } }],
+              usage: { inputTokens: 100, outputTokens: 100 },
+            };
+          }
+          return {
+            content: JSON.stringify({ response: 'Analyzed.', confidence: 0.8 }),
+            usage: { inputTokens: 100, outputTokens: 100 },
+          };
+        },
+      };
+
+      const largeOutput = 'x'.repeat(5000);
+      const mockToolRegistry = {
+        getAll: () => [
+          {
+            name: 'read_file',
+            description: 'Read a file',
+            parameters: { toJSON: () => ({ type: 'object', properties: { path: { type: 'string' } } }) },
+          },
+        ],
+        has: (name: string) => name === 'read_file',
+      };
+
+      const mockToolExecutor = {
+        execute: async () => ({
+          success: true,
+          data: { content: largeOutput },
+          duration: 10,
+        }),
+      };
+
+      const orch = new SessionOrchestrator(undefined, {
+        registry: mockToolRegistry,
+        executor: mockToolExecutor,
+      });
+
+      const result = await orch.execute({
+        task: 'read file',
+        mode: 'ask',
+        providers: { writer: writerProvider, reviewer: writerProvider },
+        costCap: 10,
+      });
+
+      expect(result.status).toBe('done');
+      expect(callCount).toBe(2);
+
+      // The second call's messages should contain a boxed reference, not the raw 5000-char output
+      const toolMsg = capturedMessages.find(m => m.role === 'tool');
+      expect(toolMsg).toBeDefined();
+      expect(toolMsg!.content).toContain('internal://relay-');
+      expect(toolMsg!.content).not.toContain(largeOutput);
+    });
   });
 
   describe('buildWriterPrompt', () => {

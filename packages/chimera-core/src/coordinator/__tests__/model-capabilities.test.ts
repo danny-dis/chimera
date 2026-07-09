@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { inferCapabilities, buildPool } from '../model-capabilities.js';
+import { inferCapabilities, buildPool, coreToolsForTier, contextBudgetForTier } from '../model-capabilities.js';
 
 describe('inferCapabilities', () => {
   it('infers frontier tier for gpt-4o', () => {
@@ -52,5 +52,99 @@ describe('buildPool', () => {
   it('defaults preferFrontierForJudge to true', () => {
     const pool = buildPool(['gpt-4o']);
     expect(pool.preferFrontierForJudge).toBe(true);
+  });
+});
+
+describe('coreToolsForTier', () => {
+  it('returns limited tool set for cheap tier', () => {
+    const tools = coreToolsForTier('cheap');
+    expect(tools).toEqual([
+      'read_file',
+      'search_files',
+      'write_file',
+      'edit_file',
+      'terminal',
+      'ask',
+    ]);
+  });
+
+  it('returns wildcard for mid tier', () => {
+    expect(coreToolsForTier('mid')).toEqual(['*']);
+  });
+
+  it('returns wildcard for frontier tier', () => {
+    expect(coreToolsForTier('frontier')).toEqual(['*']);
+  });
+
+  it('returns wildcard for reasoning tier', () => {
+    expect(coreToolsForTier('reasoning')).toEqual(['*']);
+  });
+
+  it('cheap tool set is a strict subset of frontier', () => {
+    const cheap = coreToolsForTier('cheap');
+    const frontier = coreToolsForTier('frontier');
+    // frontier is ['*'] meaning "all tools", so cheap is a subset
+    expect(frontier).toEqual(['*']);
+    expect(cheap.length).toBeGreaterThan(0);
+    expect(cheap).not.toEqual(['*']);
+  });
+});
+
+describe('contextBudgetForTier', () => {
+  it('returns correct budget for cheap tier', () => {
+    const budget = contextBudgetForTier('cheap');
+    expect(budget).toEqual({
+      maxToolOutputChars: 1500,
+      maxContextTokens: 32000,
+      truncationChars: 120,
+    });
+  });
+
+  it('returns correct budget for mid tier', () => {
+    const budget = contextBudgetForTier('mid');
+    expect(budget).toEqual({
+      maxToolOutputChars: 4000,
+      maxContextTokens: 120000,
+      truncationChars: 200,
+    });
+  });
+
+  it('returns correct budget for frontier tier', () => {
+    const budget = contextBudgetForTier('frontier');
+    expect(budget).toEqual({
+      maxToolOutputChars: 8000,
+      maxContextTokens: 200000,
+      truncationChars: 200,
+    });
+  });
+
+  it('reasoning tier matches frontier budget', () => {
+    expect(contextBudgetForTier('reasoning')).toEqual(
+      contextBudgetForTier('frontier'),
+    );
+  });
+
+  it('budgets are ordered cheap < mid < frontier', () => {
+    const cheap = contextBudgetForTier('cheap');
+    const mid = contextBudgetForTier('mid');
+    const frontier = contextBudgetForTier('frontier');
+
+    expect(cheap.maxToolOutputChars).toBeLessThan(mid.maxToolOutputChars);
+    expect(mid.maxToolOutputChars).toBeLessThan(frontier.maxToolOutputChars);
+
+    expect(cheap.maxContextTokens).toBeLessThan(mid.maxContextTokens);
+    expect(mid.maxContextTokens).toBeLessThan(frontier.maxContextTokens);
+
+    expect(cheap.truncationChars).toBeLessThan(mid.truncationChars);
+    expect(mid.truncationChars).toBe(frontier.truncationChars);
+  });
+
+  it('returns a fresh copy each call (no shared mutation)', () => {
+    const a = contextBudgetForTier('cheap');
+    const b = contextBudgetForTier('cheap');
+    expect(a).toEqual(b);
+    // Mutating a should not affect b
+    (a as any).maxToolOutputChars = 9999;
+    expect(b.maxToolOutputChars).toBe(1500);
   });
 });
