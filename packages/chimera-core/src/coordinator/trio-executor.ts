@@ -5,6 +5,7 @@ import type { CostTracker } from '../cost-tracker.js';
 import type { WorktreeIsolation, WorktreeInfo } from '../agent/worktree-isolation.js';
 import { ResponseSynthesizer, type SynthesisInput } from '../response-synthesizer.js';
 import { buildMessages } from '../prompts.js';
+import { zodToJsonSchema } from '../zod-json.js';
 import { sanitizeWriterOutput, sanitizeReviewerOutput } from './output-sanitizer.js';
 import { TaskRouter } from '../task-router.js';
 import { runToolCalls } from './tool-execution-helper.js';
@@ -155,7 +156,7 @@ export class TrioExecutor {
         ? this.toolRegistry.getAll().map((t) => ({
             name: t.name,
             description: t.description,
-            parameters: (t.parameters?.toJSON?.() ?? {}) as Record<string, unknown>,
+            parameters: (t.parameters ? zodToJsonSchema(t.parameters as any) : {}) as Record<string, unknown>,
           }))
         : undefined;
       const draftResult = await draftProvider.complete(

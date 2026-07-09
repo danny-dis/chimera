@@ -3,7 +3,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.searchReplaceTool = exports.editBlockTool = exports.applyPatchTool = void 0;
+exports.searchReplaceTool = exports.editFileTool = exports.editBlockTool = exports.applyPatchTool = void 0;
 const zod_1 = require("zod");
 const execa_1 = require("execa");
 const fs_1 = require("fs");
@@ -188,9 +188,24 @@ exports.editBlockTool = {
             throw new Error(`Path escapes workspace root: ${params.path}`);
         }
         const content = await fs_1.promises.readFile(resolved, 'utf-8');
-        // Count occurrences
+        // Exact match first.
         const firstIndex = content.indexOf(params.oldText);
         if (firstIndex === -1) {
+            // Lenient fallback: models (esp. small/cheap ones) often emit a partial
+            // or truncated oldText. Anchor on the first line that *contains* the
+            // snippet and replace that whole line. This turns a hard "not found"
+            // failure into a best-effort edit instead of dropping the change.
+            const needle = params.oldText.trim();
+            if (needle.length > 0) {
+                const lines = content.split('\n');
+                const lineIdx = lines.findIndex((ln) => ln.includes(needle));
+                if (lineIdx !== -1) {
+                    lines[lineIdx] = params.newText;
+                    const newContent = lines.join('\n');
+                    await fs_1.promises.writeFile(resolved, newContent, 'utf-8');
+                    return { applied: true, path: params.path, replacements: 1 };
+                }
+            }
             // Provide helpful suggestions
             const similarLines = findSimilarLines(content, params.oldText);
             throw new Error(`oldText not found in file. Similar lines found:\n${similarLines.join('\n')}`);
@@ -212,6 +227,40 @@ exports.editBlockTool = {
         }
         await fs_1.promises.writeFile(resolved, newContent, 'utf-8');
         return { applied: true, path: params.path, replacements };
+    },
+};
+// ── edit_file (alias of edit_block, the name the harness advertises) ─────────
+// `coreToolsForTier` and the permission policies reference `edit_file`, but the
+// underlying implementation is registered as `edit_block`. Without this alias a
+// model that emits an `edit_file` tool call has no matching tool, so the call is
+// silently dropped and the model falls back to describing the edit in prose.
+// Accepts both `old_string`/`new_string` and `oldText`/`newText` spellings.
+const EditFileParamsSchema = zod_1.z
+    .object({
+    path: tool_schema_js_1.PathSchema,
+    old_string: zod_1.z.string().optional(),
+    new_string: zod_1.z.string().optional(),
+    oldText: zod_1.z.string().optional(),
+    newText: zod_1.z.string().optional(),
+    replaceAll: zod_1.z.boolean().default(false),
+})
+    .refine((d) => (d.old_string ?? d.oldText) !== undefined && (d.new_string ?? d.newText) !== undefined, { message: 'Either old_string/oldText and new_string/newText must be provided' });
+const EditFileReturnsSchema = zod_1.z.object({
+    applied: zod_1.z.boolean(),
+    path: zod_1.z.string(),
+    replacements: zod_1.z.number(),
+});
+exports.editFileTool = {
+    name: 'edit_file',
+    description: 'Edit an existing file by replacing an exact old_string/oldText with new_string/newText.',
+    parameters: EditFileParamsSchema,
+    returns: EditFileReturnsSchema,
+    category: 'edit',
+    permissionLevel: 'write',
+    execute: async (params, context) => {
+        const oldText = (params.old_string ?? params.oldText);
+        const newText = (params.new_string ?? params.newText ?? '');
+        return exports.editBlockTool.execute({ path: params.path, oldText, newText, replaceAll: params.replaceAll }, context);
     },
 };
 const SearchReplaceParamsSchema = zod_1.z.object({

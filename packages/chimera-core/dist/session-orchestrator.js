@@ -11,6 +11,7 @@ const prompts_js_1 = require("./prompts.js");
 const audit_log_js_1 = require("./security/audit-log.js");
 const biome_linter_js_1 = require("./coordinator/biome-linter.js");
 const output_sanitizer_js_1 = require("./coordinator/output-sanitizer.js");
+const zod_json_js_1 = require("./zod-json.js");
 /**
  * Cross-mode validation: which presets are valid for each mode.
  * Invalid combinations are wasteful (e.g. ask + fusion burns tokens for zero benefit).
@@ -48,11 +49,6 @@ const DEFAULT_CACHE_CONTROL = { type: 'ephemeral', ttl: '5m' };
 const TOOL_OUTPUT_MAX_BYTES = 8 * 1024;
 const TOOL_OUTPUT_MAX_LINES = 200;
 const TOOL_OUTPUT_TRUNCATION_MARKER = '\n\n[... truncated, see event log for full output ...]';
-// P0.7 — RelayRacing observation-masking caps, mirrored from
-// @chimera/context. Inlined here to avoid a new package dependency
-// (chimera-core does not depend on @chimera/context).
-const MASK_OUTPUT_LIMIT = 200;
-const MASK_ARGS_LIMIT = 100;
 /** 5-minute hard cap on a single execute() invocation. */
 const EXECUTE_TIMEOUT_MS = 60_000 * 5;
 const AbortSignalAny = AbortSignal.any;
@@ -110,12 +106,7 @@ class SessionOrchestrator {
     handoffProtocol;
     linter;
     _workspaceRoot;
-    // P0.7 — relay-racing observation masking. Inlined here (rather than
-    // importing RelayRacing from @chimera/context) because chimera-core does
-    // not depend on @chimera/context. The class is small enough that
-    // mirroring its behavior is cheaper than adding a new package edge.
-    maskedObservations = new Map();
-    maskedTokensSaved = 0;
+    toolRelay;
     workflowExecutor = null;
     _sessionId = `session-${Date.now()}`;
     _writerMessages = [];
@@ -139,7 +130,7 @@ class SessionOrchestrator {
         this.rateLimiter = options?.rateLimiter ?? null;
         this.auditLog = options?.auditLog ?? new audit_log_js_1.AuditLog();
         this.relayRacing = new context_1.RelayRacing({ defaultContextWindow: 200_000 });
-        this.relayRacing.registerAgent('default', 200_000);
+        this.toolRelay = new context_1.ToolContextRelay({ boxThreshold: 2000 });
         this.handoffProtocol = new context_1.HandoffProtocol();
         this.linter = new biome_linter_js_1.BiomeLinter({ configPath: this._workspaceRoot });
         this._registry = options?.registry ?? null;
@@ -422,8 +413,18 @@ class SessionOrchestrator {
             const writerId = nextAgentId();
             this.transition({ status: 'drafting', task, agentId: writerId });
             this.agentMesh.registerAgent(this.buildAgentConfig(writerId, 'writer', costCap));
-            const toolDefs = this.buildToolDefinitions();
-            const writerMessages = this.buildWriterPrompt(task, resolvedMode, conversationHistory, memoryContext);
+            // Tier-aware runtime adaptation (Stream A). The writer model id is not
+            // carried on LLMProvider, so we read it from the registry (first
+            // available model is the configured writer). Unknown ids fall back to
+            // 'mid' in inferCapabilities → full tools + full context. Only 'cheap'
+            // models are trimmed, so frontier/mid behavior is byte-identical.
+            const writerModelId = this._registry?.getAll?.()[0]?.id ?? '';
+            const writerTier = writerModelId ? (0, model_capabilities_js_1.inferCapabilities)(writerModelId).tier : 'mid';
+            const contextWindow = (0, model_capabilities_js_1.contextBudgetForTier)(writerTier).maxContextTokens;
+            this.relayRacing.registerAgent(writerId, contextWindow);
+            const allowedTools = (0, model_capabilities_js_1.coreToolsForTier)(writerTier);
+            const toolDefs = this.buildToolDefinitions(allowedTools);
+            const writerMessages = this.buildWriterPrompt(task, resolvedMode, conversationHistory, memoryContext, writerTier);
             const budgetCheck = this.checkBudget(8192);
             if (budgetCheck && budgetCheck.action === 'stop') {
                 this.eventStream.append({
@@ -439,7 +440,9 @@ class SessionOrchestrator {
             let draftResult = await providers.writer.complete(writerMessages, {
                 temperature: 0.7,
                 maxTokens: 4096,
-                responseFormat: 'json_object',
+                // json_object is mutually exclusive with tool_calls: only force it when
+                // no tools are offered, otherwise the model can't emit tool calls.
+                ...(toolDefs.length > 0 ? {} : { responseFormat: 'json_object' }),
                 tools: toolDefs.length > 0 ? toolDefs : undefined,
                 cacheControl: DEFAULT_CACHE_CONTROL,
                 signal: executeSignal,
@@ -460,11 +463,8 @@ class SessionOrchestrator {
                 }
                 const toolMessages = this.buildToolResultMessages(writerMessages, draftResult, toolResults);
                 const inputTokens = (draftResult.usage?.inputTokens ?? 0) + (draftResult.usage?.outputTokens ?? 0);
-                const threshold = this.relayRacing.trackTokens('default', inputTokens);
+                const threshold = this.relayRacing.trackTokens(writerId, inputTokens);
                 let maskedMessages = this.relayRacing.maskObservations(toolMessages);
-                if (maskedMessages !== toolMessages) {
-                    this.relayRacing.trackMaskedObservation('default', JSON.stringify(toolMessages), JSON.stringify(maskedMessages));
-                }
                 if (threshold.recommendedAction === 'handoff' || threshold.recommendedAction === 'emergency_handoff') {
                     const compacted = (0, context_2.runCompactionPipeline)(this._writerMessages);
                     this._writerMessages = compacted.messages;
@@ -523,7 +523,7 @@ class SessionOrchestrator {
                 draftResult = await providers.writer.complete(maskedMessages, {
                     temperature: 0.7,
                     maxTokens: 4096,
-                    responseFormat: 'json_object',
+                    ...(toolDefs.length > 0 ? {} : { responseFormat: 'json_object' }),
                     tools: toolDefs.length > 0 ? toolDefs : undefined,
                     cacheControl: DEFAULT_CACHE_CONTROL,
                     signal: executeSignal,
@@ -1122,40 +1122,6 @@ class SessionOrchestrator {
         const lines = findings.map((f) => `- [${f.severity.toUpperCase()}] ${f.description}`);
         return `Review findings:\n${lines.join('\n')}`;
     }
-    /**
-     * P0.7 — Apply relay-racing observation masking before the next LLM
-     * call. Caps tool/function outputs and trims assistant tool-call
-     * signatures so the writer's context window does not fill up on
-     * redundant tool noise. Mirrors the behavior of @chimera/context's
-     * RelayRacing.maskObservations / RelayRacing.maskToolCalls.
-     */
-    maskRelayObservations(messages, agentId) {
-        const masked = [];
-        const result = [];
-        for (const msg of messages) {
-            if (msg.role === 'tool' || (msg.role === 'assistant' && msg.content.length > MASK_OUTPUT_LIMIT)) {
-                const original = msg.content;
-                let maskedContent = original;
-                let tokensSaved = 0;
-                if (original.length > MASK_OUTPUT_LIMIT) {
-                    maskedContent = original.slice(0, MASK_OUTPUT_LIMIT) + '\n\n[... masked ...]';
-                    tokensSaved = Math.floor((original.length - MASK_OUTPUT_LIMIT) / 4);
-                }
-                if (maskedContent !== original) {
-                    masked.push({ original, masked: maskedContent, tokensSaved });
-                    this.maskedTokensSaved += tokensSaved;
-                }
-                result.push({ role: msg.role, content: maskedContent });
-            }
-            else {
-                result.push(msg);
-            }
-        }
-        if (masked.length > 0) {
-            this.maskedObservations.set(agentId, masked);
-        }
-        return result;
-    }
     async executeQualityGateParallel(params) {
         const { task, draft, mode, providers, costCap, conversationHistory } = params;
         const startTime = Date.now();
@@ -1340,8 +1306,22 @@ class SessionOrchestrator {
             return false;
         return true;
     }
-    buildWriterPrompt(task, mode, conversationHistory, context) {
+    buildWriterPrompt(task, mode, conversationHistory, context, tier = 'mid') {
+        // Tier-aware prompt compression (Stream C + Stream A). Cheap models get a
+        // compact identity + compact role prompt + small-model guidance so they
+        // stay coherent; frontier/mid get the full prompt (byte-identical to before).
+        const identity = tier === 'cheap' ? prompts_js_1.COMPACT_CORE_IDENTITY : prompts_js_1.CHIMERA_CORE_IDENTITY;
+        const rolePrompt = tier === 'cheap' ? (0, prompts_js_1.compactAgentPrompt)('writer') : prompts_js_1.AGENT_PROMPTS.writer.system;
+        const smallModelSuffix = tier === 'cheap' ? `\n\n${prompts_js_1.SMALL_MODEL_GUIDANCE}` : '';
         const messages = (0, prompts_js_1.buildMessages)({ role: 'writer', mode, task, context, workspaceRoot: this._workspaceRoot, cacheControl: DEFAULT_CACHE_CONTROL });
+        // Inject the tier-specific identity + role prompt at the front (after the
+        // leading system message that buildMessages emits).
+        if (messages.length > 0 && messages[0].role === 'system') {
+            messages[0] = { role: 'system', content: `${identity}\n\n${rolePrompt}${smallModelSuffix}` };
+        }
+        else {
+            messages.unshift({ role: 'system', content: `${identity}\n\n${rolePrompt}${smallModelSuffix}` });
+        }
         const isConversational = task_router_js_1.TaskRouter.isConversationalTask(task);
         const outputInstructions = isConversational
             ? [
@@ -1517,13 +1497,19 @@ class SessionOrchestrator {
         const outputRate = 1.5 / 1_000_000;
         return usage.inputTokens * inputRate + usage.outputTokens * outputRate;
     }
-    buildToolDefinitions() {
+    buildToolDefinitions(allowedTools) {
         if (!this.toolRegistry)
             return [];
-        return this.toolRegistry.getAll().map((tool) => ({
+        const all = this.toolRegistry.getAll();
+        // Tier-aware tool budget (Stream A): when a limited tool set is supplied
+        // (cheap models), expose only those. `['*']` or undefined → all tools.
+        const filtered = allowedTools && !allowedTools.includes('*')
+            ? all.filter((tool) => allowedTools.includes(tool.name))
+            : all;
+        return filtered.map((tool) => ({
             name: tool.name,
             description: tool.description,
-            parameters: tool.parameters.toJSON?.() ?? { type: 'object' },
+            parameters: tool.parameters ? (0, zod_json_js_1.zodToJsonSchema)(tool.parameters) : { type: 'object' },
         }));
     }
     async executeToolCalls(toolCalls, context, signal) {
@@ -1609,17 +1595,30 @@ class SessionOrchestrator {
             if (dataStr.length > TOOL_OUTPUT_MAX_CHARS) {
                 dataStr = dataStr.slice(0, TOOL_OUTPUT_MAX_CHARS) + '\n... [truncated]';
             }
-            messages.push({
-                role: 'tool',
-                tool_call_id: tr.result.toolCallId,
-                content: JSON.stringify({
-                    toolCallId: tr.result.toolCallId,
-                    toolName: tr.toolName,
-                    success: tr.result.result.success,
-                    data: dataStr,
-                    error: tr.result.result.error,
-                }),
+            const envelope = JSON.stringify({
+                toolCallId: tr.result.toolCallId,
+                toolName: tr.toolName,
+                success: tr.result.result.success,
+                data: dataStr,
+                error: tr.result.result.error,
             });
+            if (envelope.length > 2000) {
+                const ref = this.toolRelay.box(envelope, {
+                    metadata: { toolName: tr.toolName, toolCallId: tr.result.toolCallId },
+                });
+                messages.push({
+                    role: 'tool',
+                    tool_call_id: tr.result.toolCallId,
+                    content: `[Tool output boxed — reference: ${ref.ref}]`,
+                });
+            }
+            else {
+                messages.push({
+                    role: 'tool',
+                    tool_call_id: tr.result.toolCallId,
+                    content: envelope,
+                });
+            }
         }
         messages.push({
             role: 'user',

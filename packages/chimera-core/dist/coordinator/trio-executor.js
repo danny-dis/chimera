@@ -3,6 +3,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.TrioExecutor = void 0;
 const response_synthesizer_js_1 = require("../response-synthesizer.js");
 const prompts_js_1 = require("../prompts.js");
+const zod_json_js_1 = require("../zod-json.js");
 const output_sanitizer_js_1 = require("./output-sanitizer.js");
 const task_router_js_1 = require("../task-router.js");
 const tool_execution_helper_js_1 = require("./tool-execution-helper.js");
@@ -98,7 +99,7 @@ class TrioExecutor {
                 ? this.toolRegistry.getAll().map((t) => ({
                     name: t.name,
                     description: t.description,
-                    parameters: (t.parameters?.toJSON?.() ?? {}),
+                    parameters: (t.parameters ? (0, zod_json_js_1.zodToJsonSchema)(t.parameters) : {}),
                 }))
                 : undefined;
             const draftResult = await draftProvider.complete([{ role: 'user', content: this.buildDraftPrompt(task, config.context) }], { temperature: config.temperature, maxTokens: config.maxCompletionTokens, ...(config.reasoning !== undefined ? { reasoning: config.reasoning } : {}), ...(toolDefs ? { tools: toolDefs } : {}) });

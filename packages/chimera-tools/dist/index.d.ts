@@ -7,7 +7,7 @@ export { type MediaBlock, MediaBlockSchema } from './tools/media-types.js';
 export { searchFilesTool, globFilesTool } from './tools/search.js';
 export { runShellCommandTool } from './tools/shell.js';
 export { gitStatusTool, gitDiffTool, gitLogTool, gitBranchTool, gitInitTool, gitAddTool, gitCommitTool, gitPushTool } from './tools/git.js';
-export { applyPatchTool, editBlockTool, searchReplaceTool } from './tools/edit.js';
+export { applyPatchTool, editBlockTool, editFileTool, searchReplaceTool } from './tools/edit.js';
 export { webFetchTool, webSearchTool } from './tools/web.js';
 export { todoWriteTool, todoReadTool, questionTool } from './tools/todo.js';
 export { taskCreateTool, taskListTool, taskUpdateTool, TaskSchema, TaskStatusSchema } from './tools/task.js';
@@ -634,6 +634,53 @@ export declare const allTools: readonly [import("./tool-schema.js").ToolDefiniti
     replaceAll?: boolean;
     oldText?: string;
     newText?: string;
+}>, import("zod").ZodObject<{
+    applied: import("zod").ZodBoolean;
+    path: import("zod").ZodString;
+    replacements: import("zod").ZodNumber;
+}, "strip", import("zod").ZodTypeAny, {
+    path?: string;
+    applied?: boolean;
+    replacements?: number;
+}, {
+    path?: string;
+    applied?: boolean;
+    replacements?: number;
+}>>, import("./tool-schema.js").ToolDefinition<import("zod").ZodEffects<import("zod").ZodObject<{
+    path: import("zod").ZodString;
+    old_string: import("zod").ZodOptional<import("zod").ZodString>;
+    new_string: import("zod").ZodOptional<import("zod").ZodString>;
+    oldText: import("zod").ZodOptional<import("zod").ZodString>;
+    newText: import("zod").ZodOptional<import("zod").ZodString>;
+    replaceAll: import("zod").ZodDefault<import("zod").ZodBoolean>;
+}, "strip", import("zod").ZodTypeAny, {
+    path?: string;
+    replaceAll?: boolean;
+    oldText?: string;
+    newText?: string;
+    old_string?: string;
+    new_string?: string;
+}, {
+    path?: string;
+    replaceAll?: boolean;
+    oldText?: string;
+    newText?: string;
+    old_string?: string;
+    new_string?: string;
+}>, {
+    path?: string;
+    replaceAll?: boolean;
+    oldText?: string;
+    newText?: string;
+    old_string?: string;
+    new_string?: string;
+}, {
+    path?: string;
+    replaceAll?: boolean;
+    oldText?: string;
+    newText?: string;
+    old_string?: string;
+    new_string?: string;
 }>, import("zod").ZodObject<{
     applied: import("zod").ZodBoolean;
     path: import("zod").ZodString;

@@ -63,6 +63,56 @@ declare const EditBlockReturnsSchema: z.ZodObject<{
     replacements?: number;
 }>;
 export declare const editBlockTool: ToolDefinition<typeof EditBlockParamsSchema, typeof EditBlockReturnsSchema>;
+declare const EditFileParamsSchema: z.ZodEffects<z.ZodObject<{
+    path: z.ZodString;
+    old_string: z.ZodOptional<z.ZodString>;
+    new_string: z.ZodOptional<z.ZodString>;
+    oldText: z.ZodOptional<z.ZodString>;
+    newText: z.ZodOptional<z.ZodString>;
+    replaceAll: z.ZodDefault<z.ZodBoolean>;
+}, "strip", z.ZodTypeAny, {
+    path?: string;
+    replaceAll?: boolean;
+    oldText?: string;
+    newText?: string;
+    old_string?: string;
+    new_string?: string;
+}, {
+    path?: string;
+    replaceAll?: boolean;
+    oldText?: string;
+    newText?: string;
+    old_string?: string;
+    new_string?: string;
+}>, {
+    path?: string;
+    replaceAll?: boolean;
+    oldText?: string;
+    newText?: string;
+    old_string?: string;
+    new_string?: string;
+}, {
+    path?: string;
+    replaceAll?: boolean;
+    oldText?: string;
+    newText?: string;
+    old_string?: string;
+    new_string?: string;
+}>;
+declare const EditFileReturnsSchema: z.ZodObject<{
+    applied: z.ZodBoolean;
+    path: z.ZodString;
+    replacements: z.ZodNumber;
+}, "strip", z.ZodTypeAny, {
+    path?: string;
+    applied?: boolean;
+    replacements?: number;
+}, {
+    path?: string;
+    applied?: boolean;
+    replacements?: number;
+}>;
+export declare const editFileTool: ToolDefinition<typeof EditFileParamsSchema, typeof EditFileReturnsSchema>;
 declare const SearchReplaceParamsSchema: z.ZodEffects<z.ZodObject<{
     path: z.ZodString;
     blocks: z.ZodOptional<z.ZodArray<z.ZodObject<{

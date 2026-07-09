@@ -246,7 +246,20 @@ function detectProvidersFromEnv() {
             name: 'google',
             provider: 'google',
             model: getEnv('GOOGLE_MODEL') || DEFAULT_MODELS.google,
-            apiKey: googleKey,
+            apiKey: getEnv('GOOGLE_API_KEY'),
+        });
+    }
+    // OpenRouter — openai-compatible gateway to hundreds of models (incl. Google
+    // Gemma, which excels at agentic work). Key alone is enough; model defaults
+    // to a Gemma variant when OPENROUTER_MODEL is unset.
+    const openrouterKey = getEnv('OPENROUTER_API_KEY');
+    if (openrouterKey) {
+        providers.push({
+            name: 'openrouter',
+            provider: 'openai-compatible',
+            model: getEnv('OPENROUTER_MODEL') || 'google/gemma-3-27b-it',
+            apiKey: getEnv('OPENROUTER_API_KEY'),
+            baseUrl: 'https://openrouter.ai/api',
         });
     }
     // Ollama (no key required)
@@ -310,7 +323,19 @@ async function detectProvidersFromEnvAsync() {
             const available = await (0, providers_1.listModels)('google', googleKey);
             model = available[0] || DEFAULT_MODELS.google;
         }
-        providers.push({ name: 'google', provider: 'google', model, apiKey: googleKey });
+        providers.push({ name: 'google', provider: 'google', model, apiKey: getEnv('GOOGLE_API_KEY') });
+    }
+    // OpenRouter — openai-compatible gateway (incl. Gemma). Key alone is enough.
+    const openrouterKey = getEnv('OPENROUTER_API_KEY');
+    if (openrouterKey) {
+        const specifiedModel = getEnv('OPENROUTER_MODEL');
+        providers.push({
+            name: 'openrouter',
+            provider: 'openai-compatible',
+            model: specifiedModel || 'google/gemma-3-27b-it',
+            apiKey: getEnv('OPENROUTER_API_KEY'),
+            baseUrl: 'https://openrouter.ai/api',
+        });
     }
     // Ollama
     const ollamaModel = getEnv('OLLAMA_MODEL');

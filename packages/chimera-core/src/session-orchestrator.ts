@@ -10,6 +10,7 @@ import { BiomeLinter } from './coordinator/biome-linter.js';
 import { sanitizeWriterOutput, sanitizeReviewerOutput } from './coordinator/output-sanitizer.js';
 import type { LongTermMemory } from './memory/long-term-memory.js';
 import { Mode, type ToolCall, type ToolCallResult } from './types/agent.js';
+import { zodToJsonSchema } from './zod-json.js';
 
 /**
  * Cross-mode validation: which presets are valid for each mode.
@@ -700,7 +701,9 @@ export class SessionOrchestrator {
       let draftResult = await providers.writer.complete(writerMessages, {
         temperature: 0.7,
         maxTokens: 4096,
-        responseFormat: 'json_object',
+        // json_object is mutually exclusive with tool_calls: only force it when
+        // no tools are offered, otherwise the model can't emit tool calls.
+        ...(toolDefs.length > 0 ? {} : { responseFormat: 'json_object' }),
         tools: toolDefs.length > 0 ? toolDefs : undefined,
         cacheControl: DEFAULT_CACHE_CONTROL,
         signal: executeSignal,
@@ -795,7 +798,7 @@ export class SessionOrchestrator {
         draftResult = await providers.writer.complete(maskedMessages, {
           temperature: 0.7,
           maxTokens: 4096,
-          responseFormat: 'json_object',
+          ...(toolDefs.length > 0 ? {} : { responseFormat: 'json_object' }),
           tools: toolDefs.length > 0 ? toolDefs : undefined,
           cacheControl: DEFAULT_CACHE_CONTROL,
           signal: executeSignal,
@@ -2058,7 +2061,7 @@ export class SessionOrchestrator {
     return filtered.map((tool) => ({
       name: tool.name,
       description: tool.description,
-      parameters: tool.parameters.toJSON?.() ?? { type: 'object' },
+      parameters: tool.parameters ? zodToJsonSchema(tool.parameters as any) : { type: 'object' },
     }));
   }
 

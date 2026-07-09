@@ -1,0 +1,68 @@
+# Multi-model provider configuration for Chimera.
+# Each provider uses its own API key via ${ENV} (resolved from .env).
+# Assign roles: writer (implements), reviewer (verifies), challenger (attacks).
+# The harness falls back across providers on failure.
+#
+# Put your keys in .env (gitignored):
+#   CHIMERA_CHEAP_API_KEY=...        # NVIDIA NIM (or any openai-compatible)
+#   CHIMERA_CHEAP_BASE_URL=https://integrate.api.nvidia.com
+#   CHIMERA_CHEAP_MODEL=meta/llama-3.1-70b-instruct
+#   OPENROUTER_API_KEY=...           # gateway to Gemma + hundreds of models
+#   OPENROUTER_MODEL=google/gemma-3-27b-it
+#   ANTHROPIC_API_KEY=...            # optional, for claude reviewer/challenger
+#   OPENAI_API_KEY=...               # optional
+#   GOOGLE_API_KEY=...               # optional
+#
+# Copy this file to .chimera/config.yaml (or run `chimera setup`).
+
+providers:
+  # Cheap/free bulk model — NVIDIA NIM (used for writing here; 70B is capable
+  # of reliable tool calls, unlike the 8B which narrates edits).
+  - name: writer
+    provider: openai-compatible
+    model: ${CHIMERA_CHEAP_MODEL}
+    api_key: ${CHIMERA_CHEAP_API_KEY}
+    base_url: ${CHIMERA_CHEAP_BASE_URL}
+    role: writer
+
+  # Gemma via OpenRouter — excels at agentic work; use as reviewer.
+  - name: reviewer
+    provider: openai-compatible
+    model: ${OPENROUTER_MODEL}
+    api_key: ${OPENROUTER_API_KEY}
+    base_url: https://openrouter.ai/api
+    role: reviewer
+
+  # A second OpenRouter model (or Anthropic/OpenAI) as challenger.
+  - name: challenger
+    provider: openai-compatible
+    model: ${OPENROUTER_MODEL}
+    api_key: ${OPENROUTER_API_KEY}
+    base_url: https://openrouter.ai/api
+    role: challenger
+
+modes:
+  code:
+    enabled: true
+    providers: [writer]
+    reviewer: reviewer
+    challenger: challenger
+    purpose: implement
+  ask:
+    enabled: true
+    providers: [writer]
+  plan:
+    enabled: true
+    providers: [writer]
+  debug:
+    enabled: true
+    providers: [writer]
+    reviewer: reviewer
+  review:
+    enabled: true
+    providers: [reviewer]
+  oal:
+    enabled: true
+    providers: [writer]
+    reviewer: reviewer
+    challenger: challenger

@@ -184,6 +184,7 @@ export class ProviderFactory {
       { provider: 'deepseek', modelEnv: 'DEEPSEEK_MODEL', baseUrl: 'https://api.deepseek.com' },
       { provider: 'qwen', modelEnv: 'QWEN_MODEL', baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1' },
       { provider: 'moonshot', modelEnv: 'MOONSHOT_MODEL', baseUrl: 'https://api.moonshot.cn/v1' },
+      { provider: 'openrouter', modelEnv: 'OPENROUTER_MODEL', baseUrl: 'https://openrouter.ai/api' },
     ];
 
     for (const pc of providerConfigs) {

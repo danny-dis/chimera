@@ -204,8 +204,7 @@ export declare class SessionOrchestrator {
     private handoffProtocol;
     private linter;
     private _workspaceRoot;
-    private maskedObservations;
-    private maskedTokensSaved;
+    private toolRelay;
     private workflowExecutor;
     private _sessionId;
     private _writerMessages;
@@ -311,14 +310,6 @@ export declare class SessionOrchestrator {
      * summary suitable for use as an agent's `content` field.
      */
     private buildReviewerSummary;
-    /**
-     * P0.7 — Apply relay-racing observation masking before the next LLM
-     * call. Caps tool/function outputs and trims assistant tool-call
-     * signatures so the writer's context window does not fill up on
-     * redundant tool noise. Mirrors the behavior of @chimera/context's
-     * RelayRacing.maskObservations / RelayRacing.maskToolCalls.
-     */
-    private maskRelayObservations;
     executeQualityGateParallel(params: {
         task: string;
         draft: string;
@@ -347,7 +338,7 @@ export declare class SessionOrchestrator {
     buildWriterPrompt(task: string, mode: Mode, conversationHistory?: Array<{
         role: string;
         content: string;
-    }>, context?: string): Array<{
+    }>, context?: string, tier?: 'cheap' | 'mid' | 'frontier' | 'reasoning'): Array<{
         role: string;
         content: string;
     }>;

@@ -202,9 +202,24 @@ export const editBlockTool: ToolDefinition<typeof EditBlockParamsSchema, typeof 
 
     const content = await fs.readFile(resolved, 'utf-8');
 
-    // Count occurrences
+    // Exact match first.
     const firstIndex = content.indexOf(params.oldText);
     if (firstIndex === -1) {
+      // Lenient fallback: models (esp. small/cheap ones) often emit a partial
+      // or truncated oldText. Anchor on the first line that *contains* the
+      // snippet and replace that whole line. This turns a hard "not found"
+      // failure into a best-effort edit instead of dropping the change.
+      const needle = params.oldText.trim();
+      if (needle.length > 0) {
+        const lines = content.split('\n');
+        const lineIdx = lines.findIndex((ln) => ln.includes(needle));
+        if (lineIdx !== -1) {
+          lines[lineIdx] = params.newText;
+          const newContent = lines.join('\n');
+          await fs.writeFile(resolved, newContent, 'utf-8');
+          return { applied: true, path: params.path, replacements: 1 };
+        }
+      }
       // Provide helpful suggestions
       const similarLines = findSimilarLines(content, params.oldText);
       throw new Error(
@@ -231,6 +246,47 @@ export const editBlockTool: ToolDefinition<typeof EditBlockParamsSchema, typeof 
     await fs.writeFile(resolved, newContent, 'utf-8');
 
     return { applied: true, path: params.path, replacements };
+  },
+};
+
+// ── edit_file (alias of edit_block, the name the harness advertises) ─────────
+// `coreToolsForTier` and the permission policies reference `edit_file`, but the
+// underlying implementation is registered as `edit_block`. Without this alias a
+// model that emits an `edit_file` tool call has no matching tool, so the call is
+// silently dropped and the model falls back to describing the edit in prose.
+// Accepts both `old_string`/`new_string` and `oldText`/`newText` spellings.
+
+const EditFileParamsSchema = z
+  .object({
+    path: PathSchema,
+    old_string: z.string().optional(),
+    new_string: z.string().optional(),
+    oldText: z.string().optional(),
+    newText: z.string().optional(),
+    replaceAll: z.boolean().default(false),
+  })
+  .refine(
+    (d) => (d.old_string ?? d.oldText) !== undefined && (d.new_string ?? d.newText) !== undefined,
+    { message: 'Either old_string/oldText and new_string/newText must be provided' },
+  );
+
+const EditFileReturnsSchema = z.object({
+  applied: z.boolean(),
+  path: z.string(),
+  replacements: z.number(),
+});
+
+export const editFileTool: ToolDefinition<typeof EditFileParamsSchema, typeof EditFileReturnsSchema> = {
+  name: 'edit_file',
+  description: 'Edit an existing file by replacing an exact old_string/oldText with new_string/newText.',
+  parameters: EditFileParamsSchema,
+  returns: EditFileReturnsSchema,
+  category: 'edit',
+  permissionLevel: 'write',
+  execute: async (params, context: ToolContext) => {
+    const oldText = (params.old_string ?? params.oldText) as string;
+    const newText = (params.new_string ?? params.newText ?? '') as string;
+    return editBlockTool.execute({ path: params.path, oldText, newText, replaceAll: params.replaceAll }, context);
   },
 };
 

@@ -48,7 +48,7 @@ export { runShellCommandTool } from './tools/shell.js';
 export { gitStatusTool, gitDiffTool, gitLogTool, gitBranchTool, gitInitTool, gitAddTool, gitCommitTool, gitPushTool } from './tools/git.js';
 
 // Edit tools
-export { applyPatchTool, editBlockTool, searchReplaceTool } from './tools/edit.js';
+export { applyPatchTool, editBlockTool, editFileTool, searchReplaceTool } from './tools/edit.js';
 
 // Web tools
 export { webFetchTool, webSearchTool } from './tools/web.js';
@@ -75,7 +75,7 @@ import { readFileTool, writeFileTool, listDirectoryTool } from './tools/filesyst
 import { searchFilesTool, globFilesTool } from './tools/search.js';
 import { runShellCommandTool } from './tools/shell.js';
 import { gitStatusTool, gitDiffTool, gitLogTool, gitBranchTool, gitInitTool, gitAddTool, gitCommitTool, gitPushTool } from './tools/git.js';
-import { applyPatchTool, editBlockTool, searchReplaceTool } from './tools/edit.js';
+import { applyPatchTool, editBlockTool, editFileTool, searchReplaceTool } from './tools/edit.js';
 import { webFetchTool, webSearchTool } from './tools/web.js';
 import { todoWriteTool, todoReadTool, questionTool } from './tools/todo.js';
 import { taskCreateTool, taskListTool, taskUpdateTool } from './tools/task.js';
@@ -99,6 +99,7 @@ export const allTools = [
   gitPushTool,
   applyPatchTool,
   editBlockTool,
+  editFileTool,
   searchReplaceTool,
   webFetchTool,
   webSearchTool,
