@@ -18,8 +18,7 @@ import {
   EventStream,
   WorkflowAutoLoader,
   WorkflowRegistry,
-  CoordinatorEngine,
-  AgentMesh,
+  registerBuiltInWorkflows,
   runWorkflow,
   type WorkflowDefinition,
   type LLMProvider,
@@ -85,11 +84,10 @@ async function loadWorkflowRegistry(workspaceRoot: string): Promise<WorkflowSour
   // `quality-gate.yaml` silently shadow the built-in).
   const builtin = new WorkflowRegistry();
   for (const wf of BUILTIN_WORKFLOWS) builtin.register(wf);
-  // Delegate the engine-owned workflow registration to the engine.
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  (CoordinatorEngine as any).registerBuiltins(builtin);
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  (AgentMesh as any).registerQualityGateWorkflow(builtin);
+  // Register the engine/mesh-owned built-in workflows via the canonical
+  // core API (CoordinatorEngine/AgentMesh no longer expose static
+  // registration methods).
+  registerBuiltInWorkflows(builtin);
   sources.push({ registry: builtin, source: 'builtin' });
 
   return sources;

@@ -51,11 +51,10 @@ async function loadWorkflowRegistry(workspaceRoot) {
     const builtin = new core_1.WorkflowRegistry();
     for (const wf of BUILTIN_WORKFLOWS)
         builtin.register(wf);
-    // Delegate the engine-owned workflow registration to the engine.
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    core_1.CoordinatorEngine.registerBuiltins(builtin);
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    core_1.AgentMesh.registerQualityGateWorkflow(builtin);
+    // Register the engine/mesh-owned built-in workflows via the canonical
+    // core API (CoordinatorEngine/AgentMesh no longer expose static
+    // registration methods).
+    (0, core_1.registerBuiltInWorkflows)(builtin);
     sources.push({ registry: builtin, source: 'builtin' });
     return sources;
 }
