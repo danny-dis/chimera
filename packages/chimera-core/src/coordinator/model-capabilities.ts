@@ -21,23 +21,30 @@ interface PatternEntry {
  * Patterns are case-insensitive.
  */
 const PATTERNS: PatternEntry[] = [
+  // ── Reasoning / search models ────────────────────────────────
+  {
+    match: /sonar|sonar-pro/i,
+    tier: 'reasoning',
+    specialties: ['reasoning', 'research', 'analysis'],
+  },
+
   // ── Frontier reasoning / code models ──────────────────────────
   {
-    match: /gpt-4o(?!-mini)|o3|o4|claude-3\.5-sonnet|claude-4|claude-opus|gemini.*pro|deepseek.*r1|deepseek.*v3|qwen.*max|mistral-large|codestral/i,
+    match: /gpt-5(?!-mini|-nano)|o3|o4|gpt-4o(?!-mini)|claude-3\.5-sonnet|claude-4|claude-opus|claude-sonnet-4|gemini.*pro|gemini-3|grok-4(?!-fast)|grok-3|deepseek.*(v4|v3|r1)|llama-4-(maverick|opus)|llama-3\.1-405b|mistral-large|codestral|mistral-(medium|large)-3|mistral-large-2|qwen3-(235b|72b)|qwen.*max|qwen-2\.5-72b|command-a|command-r-plus|kimi-k2/i,
     tier: 'frontier',
     specialties: ['reasoning', 'code_generation', 'code_review', 'analysis'],
   },
 
   // ── Mid-tier all-rounders ────────────────────────────────────
   {
-    match: /gpt-4o-mini|claude-3-haiku|claude-3\.5-haiku|gemini.*flash(?!.*lite)|llama-3\.1-(70|405)|mistral-medium|sonnet|grok-3/i,
+    match: /gpt-5-mini|gpt-5-nano|gpt-4o-mini|claude-3-haiku|claude-3\.5-haiku|claude-haiku-4|gemini.*flash(?!.*lite)|gemini-2\.5-flash|llama-4-scout|llama-3\.1-70b|mistral-medium|sonnet|grok-4-fast|qwen3-32b|qwen.*(32b|14b)|command-r7b|deepseek.*lite/i,
     tier: 'mid',
     specialties: ['general', 'summarization', 'code_generation', 'research'],
   },
 
   // ── Cheap / fast models ──────────────────────────────────────
   {
-    match: /gemini.*flash.*lite|gpt-3\.5|llama-3\.1-(8b|70b)|mistral-small|qwen.*7b|qwen.*14b|phi-3|phind|deepseek.*lite|haiku/i,
+    match: /gemini.*flash.*lite|gpt-3\.5|llama-3\.1-8b|mistral-small|qwen.*(7b|14b)|phi-3|phind|haiku|deepseek.*v2/i,
     tier: 'cheap',
     specialties: ['summarization', 'general'],
   },
@@ -60,8 +67,11 @@ const FALLBACK_COST_PER_MILLION: Record<Tier, { input: number; output: number }>
  * ```
  */
 export function inferCapabilities(modelId: string): ModelCapability {
+  // Strip an optional `provider/` prefix (e.g. `xai/grok-4` → `grok-4`)
+  // so provider-qualified IDs still match on their model substring.
+  const lookupId = modelId.replace(/^[^/]+\//, '');
   for (const p of PATTERNS) {
-    if (p.match.test(modelId)) {
+    if (p.match.test(lookupId)) {
       const cost = FALLBACK_COST_PER_MILLION[p.tier];
       return {
         modelId,

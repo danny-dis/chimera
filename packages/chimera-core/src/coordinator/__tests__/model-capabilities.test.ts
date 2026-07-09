@@ -37,6 +37,54 @@ describe('inferCapabilities', () => {
     const cap = inferCapabilities('deepseek-r1');
     expect(cap.modelId).toBe('deepseek-r1');
   });
+
+  it('infers frontier tier for xai/grok-4 (provider prefix)', () => {
+    expect(inferCapabilities('xai/grok-4').tier).toBe('frontier');
+  });
+
+  it('infers reasoning tier for perplexity/sonar-pro', () => {
+    expect(inferCapabilities('perplexity/sonar-pro').tier).toBe('reasoning');
+  });
+
+  it('infers frontier tier for openai/gpt-5', () => {
+    expect(inferCapabilities('openai/gpt-5').tier).toBe('frontier');
+  });
+
+  it('infers frontier tier for anthropic/claude-opus-4.1', () => {
+    expect(inferCapabilities('anthropic/claude-opus-4.1').tier).toBe('frontier');
+  });
+
+  it('infers frontier tier for google/gemini-3-pro', () => {
+    expect(inferCapabilities('google/gemini-3-pro').tier).toBe('frontier');
+  });
+
+  it('infers frontier tier for deepseek/deepseek-v4', () => {
+    expect(inferCapabilities('deepseek/deepseek-v4').tier).toBe('frontier');
+  });
+
+  it('infers mid tier for meta/llama-4-scout', () => {
+    expect(inferCapabilities('meta/llama-4-scout').tier).toBe('mid');
+  });
+
+  it('infers frontier tier for mistral/mistral-large-3', () => {
+    expect(inferCapabilities('mistral/mistral-large-3').tier).toBe('frontier');
+  });
+
+  it('infers mid tier for qwen/qwen3-32b', () => {
+    expect(inferCapabilities('qwen/qwen3-32b').tier).toBe('mid');
+  });
+
+  it('infers frontier tier for cohere/command-a', () => {
+    expect(inferCapabilities('cohere/command-a').tier).toBe('frontier');
+  });
+
+  it('infers mid tier for openai/gpt-5-mini', () => {
+    expect(inferCapabilities('openai/gpt-5-mini').tier).toBe('mid');
+  });
+
+  it('falls back to mid for some-unknown-model', () => {
+    expect(inferCapabilities('some-unknown-model').tier).toBe('mid');
+  });
 });
 
 describe('buildPool', () => {

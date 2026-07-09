@@ -8,13 +8,21 @@ import { GoogleProvider, GoogleConfig } from './providers/google.js';
 import { OllamaProvider, OllamaConfig } from './providers/ollama.js';
 import { createDefaultMockProvider } from './providers/mock.js';
 
-const ProviderTypeSchema = z.enum([
+export const ProviderTypeSchema = z.enum([
   'openai',
   'anthropic',
   'google',
   'ollama',
   'openai-compatible',
   'mock',
+  'xai',
+  'perplexity',
+  'cohere',
+  'mistral',
+  'meta',
+  'deepseek',
+  'qwen',
+  'moonshot',
 ]);
 
 const EnvProviderConfigSchema = z.object({
@@ -45,6 +53,14 @@ function resolveApiKey(config: EnvProviderConfig): string {
     // Falling back to OPENAI_API_KEY caused cross-provider key leakage.
     anthropic: 'ANTHROPIC_API_KEY',
     google: 'GOOGLE_API_KEY',
+    xai: 'XAI_API_KEY',
+    perplexity: 'PERPLEXITY_API_KEY',
+    cohere: 'COHERE_API_KEY',
+    mistral: 'MISTRAL_API_KEY',
+    meta: 'META_API_KEY',
+    deepseek: 'DEEPSEEK_API_KEY',
+    qwen: 'QWEN_API_KEY',
+    moonshot: 'MOONSHOT_API_KEY',
   };
 
   const envKey = keyMap[config.provider];
@@ -68,6 +84,14 @@ function resolveBaseUrl(config: EnvProviderConfig): string {
     anthropic: 'https://api.anthropic.com',
     google: 'https://generativelanguage.googleapis.com',
     ollama: 'http://localhost:11434',
+    xai: 'https://api.x.ai/v1',
+    perplexity: 'https://api.perplexity.ai',
+    cohere: 'https://api.cohere.ai/v2',
+    mistral: 'https://api.mistral.ai/v1',
+    meta: 'https://api.llama.com/v1',
+    deepseek: 'https://api.deepseek.com',
+    qwen: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+    moonshot: 'https://api.moonshot.cn/v1',
   };
 
   const url = urlMap[config.provider];
@@ -152,13 +176,22 @@ export class ProviderFactory {
       { provider: 'openai', modelEnv: 'OPENAI_MODEL', baseUrl: 'https://api.openai.com' },
       { provider: 'google', modelEnv: 'GOOGLE_MODEL', baseUrl: 'https://generativelanguage.googleapis.com' },
       { provider: 'ollama', modelEnv: 'OLLAMA_MODEL', baseUrl: 'http://localhost:11434' },
+      { provider: 'xai', modelEnv: 'XAI_MODEL', baseUrl: 'https://api.x.ai/v1' },
+      { provider: 'perplexity', modelEnv: 'PERPLEXITY_MODEL', baseUrl: 'https://api.perplexity.ai' },
+      { provider: 'cohere', modelEnv: 'COHERE_MODEL', baseUrl: 'https://api.cohere.ai/v2' },
+      { provider: 'mistral', modelEnv: 'MISTRAL_MODEL', baseUrl: 'https://api.mistral.ai/v1' },
+      { provider: 'meta', modelEnv: 'META_MODEL', baseUrl: 'https://api.llama.com/v1' },
+      { provider: 'deepseek', modelEnv: 'DEEPSEEK_MODEL', baseUrl: 'https://api.deepseek.com' },
+      { provider: 'qwen', modelEnv: 'QWEN_MODEL', baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1' },
+      { provider: 'moonshot', modelEnv: 'MOONSHOT_MODEL', baseUrl: 'https://api.moonshot.cn/v1' },
     ];
 
     for (const pc of providerConfigs) {
       const model = getEnv(pc.modelEnv);
       const apiKey = pc.provider === 'ollama' ? undefined : getEnv(`${pc.provider.toUpperCase()}_API_KEY`);
 
-      if (model) {
+      // Only add provider if model is set AND (Ollama or API key is available)
+      if (model && (pc.provider === 'ollama' || apiKey)) {
         configs.push({
           provider: pc.provider as EnvProviderConfig['provider'],
           model,
@@ -221,7 +254,15 @@ export class ProviderFactory {
       }
 
       case 'openai':
-      case 'openai-compatible': {
+      case 'openai-compatible':
+      case 'xai':
+      case 'perplexity':
+      case 'cohere':
+      case 'mistral':
+      case 'meta':
+      case 'deepseek':
+      case 'qwen':
+      case 'moonshot': {
         const openaiConfig: OpenAICompatibleConfig = {
           baseUrl: resolveBaseUrl(config),
           apiKey: resolveApiKey(config),
@@ -259,6 +300,15 @@ export async function listModels(provider: string, apiKey: string): Promise<stri
         return listAnthropicModels();
       case 'ollama':
         return await listOllamaModels();
+      case 'xai':
+      case 'perplexity':
+      case 'cohere':
+      case 'mistral':
+      case 'meta':
+      case 'deepseek':
+      case 'qwen':
+      case 'moonshot':
+        return [];
       default:
         return [];
     }

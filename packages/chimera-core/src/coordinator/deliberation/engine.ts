@@ -144,12 +144,12 @@ export class DeliberationEngine {
         const complexity = await this.deps.taskRouter.classifyTask(cfg.task);
         soloConfig.eternalCoT = complexity.overall >= 0.5;
       } else {
-        // No taskRouter available to classify complexity. For a single
-        // (often small) model, defaulting the thinker ON causes weak models
-        // to over-plan and "ask for clarification" instead of acting.
-        // Default it OFF so the writer executes directly; opt in via
-        // eternalCoT: true when a stronger model is configured.
-        soloConfig.eternalCoT = false;
+        // No taskRouter available to classify complexity. Safe fallback per
+        // the established contract (see repo memory: CoT safe-fallback
+        // eternalCoT default reverted to true): enable the strategic thinker
+        // so a single model still reasons before acting. Opt out via
+        // eternalCoT: false when a weaker model is configured.
+        soloConfig.eternalCoT = true;
       }
     }
 
