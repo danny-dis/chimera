@@ -267,7 +267,15 @@ export class ProviderFactory {
           baseUrl: resolveBaseUrl(config),
           apiKey: resolveApiKey(config),
           model: config.model,
-          options: { timeoutMs: config.timeoutMs },
+          // Free/local endpoints (NVIDIA integrate.nvcf) reliably return an
+          // EMPTY json_object for small instruction models (e.g. llama-3.1-8b),
+          // which the orchestrator then parses as nothing. Disable the
+          // response_format hint there so the model answers in plain text.
+          // OpenAI / OpenRouter / Mistral keep JSON mode on.
+          options: {
+            timeoutMs: config.timeoutMs,
+            supportsResponseFormat: !/nvidia/i.test(resolveBaseUrl(config)),
+          },
         };
         return new OpenAICompatibleProvider(openaiConfig);
       }

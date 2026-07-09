@@ -2,7 +2,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { z } from 'zod';
 import YAML from 'yaml';
-import { listModels } from '@chimera/providers';
+import { listModels, recommendFromProviders } from '@chimera/providers';
 
 // ---------------------------------------------------------------------------
 // Schema
@@ -107,8 +107,10 @@ function getConfigPath(cwd?: string): string {
 
 function resolveEnvRef(value: string | undefined): string | undefined {
   if (!value) return undefined;
-  // Support ${ENV_VAR} syntax
-  const match = value.match(/^\$\{(\w+)\}$/);
+  // Support ${ENV_VAR} (and the backslash-escaped \${ENV_VAR} form written by
+  // autoGenerateConfig / the setup wizard) so the literal reference resolves
+  // to the real environment value at runtime.
+  const match = value.match(/^\\?\${([\w]+)}$/);
   if (match) {
     return process.env[match[1]] || undefined;
   }
@@ -488,47 +490,62 @@ export async function autoGenerateConfig(cwd?: string): Promise<ChimeraConfig | 
         name: makeName(p.name),
         provider: p.provider,
         model: p.model,
-        api_key: envKey ? `\${${envKey}}` : undefined,
+        api_key: envKey ? '\\${' + envKey + '}' : undefined,
         base_url: p.baseUrl,
         role: p.name as ConfigProviderRole,
       });
     }
   } else {
-    // Standard mode: assign roles by convention
-    const cheapIdx = detected.findIndex((p) => p.name === 'cheap');
-    if (cheapIdx !== -1) {
-      const p = detected[cheapIdx];
-      providers.push({
-        name: makeName('primary'),
-        provider: p.provider,
-        model: p.model,
-        api_key: p.apiKey ? `\${${p.name === 'cheap' ? 'CHIMERA_CHEAP_API_KEY' : p.provider.toUpperCase() + '_API_KEY'}}` : undefined,
-        base_url: p.baseUrl,
-        role: 'writer',
-      });
-      detected.splice(cheapIdx, 1);
+    // Standard mode: smartly auto-populate roles from the detected models.
+    // The user can override any role later via CHIMERA_WRITER_MODEL /
+    // CHIMERA_REVIEWER_MODEL / CHIMERA_CHALLENGER_MODEL or by editing
+    // .chimera/config.yaml.
+    const roleToDetected = new Map<ConfigProviderRole, DetectedProvider>();
+
+    if (detected.length === 1) {
+      // Single provider (e.g. the free CHIMERA_CHEAP slot) → assign it to
+      // all three roles so the harness runs out-of-the-box on the free model.
+      for (const role of ['writer', 'reviewer', 'challenger'] as ConfigProviderRole[]) {
+        roleToDetected.set(role, detected[0]);
+      }
+    } else {
+      // Multiple providers: let the tier-aware recommender pick the strongest
+      // model per role from the providers the user actually configured.
+      const recommended = recommendFromProviders(detected.map((p) => p.provider));
+      for (const role of ['writer', 'reviewer', 'challenger'] as ConfigProviderRole[]) {
+        const modelId = recommended[role];
+        const match =
+          (modelId && detected.find((p) => p.model === modelId)) || detected[0];
+        if (match) roleToDetected.set(role, match);
+      }
     }
 
-    // Remaining providers: first → reviewer, second → challenger
-    const roles: ConfigProviderRole[] = ['reviewer', 'challenger'];
-    for (let i = 0; i < detected.length && i < 2; i++) {
-      const p = detected[i];
+    const roleNames: Record<ConfigProviderRole, string> = {
+      writer: 'primary',
+      reviewer: 'secondary',
+      challenger: 'tertiary',
+    };
+
+    for (const role of ['writer', 'reviewer', 'challenger'] as ConfigProviderRole[]) {
+      const p = roleToDetected.get(role);
+      if (!p) continue;
       const envKey =
-        p.name === 'anthropic'
+        p.provider === 'anthropic'
           ? 'ANTHROPIC_API_KEY'
-          : p.name === 'openai'
+          : p.provider === 'openai'
             ? 'OPENAI_API_KEY'
-            : p.name === 'google'
+            : p.provider === 'google'
               ? 'GOOGLE_API_KEY'
-              : p.name === 'ollama'
-                ? undefined
+              : p.provider === 'openai-compatible'
+                ? 'CHIMERA_CHEAP_API_KEY'
                 : undefined;
       providers.push({
-        name: makeName(i === 0 ? 'secondary' : 'tertiary'),
+        name: makeName(roleNames[role]),
         provider: p.provider,
         model: p.model,
-        api_key: envKey ? `\${${envKey}}` : undefined,
-        role: roles[i],
+        api_key: envKey ? '\\${' + envKey + '}' : undefined,
+        base_url: p.baseUrl,
+        role,
       });
     }
   }

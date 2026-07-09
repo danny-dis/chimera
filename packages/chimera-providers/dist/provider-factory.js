@@ -1,6 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.ProviderFactory = void 0;
+exports.ProviderFactory = exports.ProviderTypeSchema = void 0;
 exports.listModels = listModels;
 exports.getDefaultRegistry = getDefaultRegistry;
 exports.resetDefaultRegistry = resetDefaultRegistry;
@@ -12,16 +12,24 @@ const anthropic_js_1 = require("./providers/anthropic.js");
 const google_js_1 = require("./providers/google.js");
 const ollama_js_1 = require("./providers/ollama.js");
 const mock_js_1 = require("./providers/mock.js");
-const ProviderTypeSchema = zod_1.z.enum([
+exports.ProviderTypeSchema = zod_1.z.enum([
     'openai',
     'anthropic',
     'google',
     'ollama',
     'openai-compatible',
     'mock',
+    'xai',
+    'perplexity',
+    'cohere',
+    'mistral',
+    'meta',
+    'deepseek',
+    'qwen',
+    'moonshot',
 ]);
 const EnvProviderConfigSchema = zod_1.z.object({
-    provider: ProviderTypeSchema,
+    provider: exports.ProviderTypeSchema,
     model: zod_1.z.string(),
     baseUrl: zod_1.z.string().optional(),
     apiKey: zod_1.z.string().optional(),
@@ -44,6 +52,14 @@ function resolveApiKey(config) {
         // Falling back to OPENAI_API_KEY caused cross-provider key leakage.
         anthropic: 'ANTHROPIC_API_KEY',
         google: 'GOOGLE_API_KEY',
+        xai: 'XAI_API_KEY',
+        perplexity: 'PERPLEXITY_API_KEY',
+        cohere: 'COHERE_API_KEY',
+        mistral: 'MISTRAL_API_KEY',
+        meta: 'META_API_KEY',
+        deepseek: 'DEEPSEEK_API_KEY',
+        qwen: 'QWEN_API_KEY',
+        moonshot: 'MOONSHOT_API_KEY',
     };
     const envKey = keyMap[config.provider];
     const key = envKey ? getEnv(envKey) : undefined;
@@ -60,6 +76,14 @@ function resolveBaseUrl(config) {
         anthropic: 'https://api.anthropic.com',
         google: 'https://generativelanguage.googleapis.com',
         ollama: 'http://localhost:11434',
+        xai: 'https://api.x.ai/v1',
+        perplexity: 'https://api.perplexity.ai',
+        cohere: 'https://api.cohere.ai/v2',
+        mistral: 'https://api.mistral.ai/v1',
+        meta: 'https://api.llama.com/v1',
+        deepseek: 'https://api.deepseek.com',
+        qwen: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+        moonshot: 'https://api.moonshot.cn/v1',
     };
     const url = urlMap[config.provider];
     if (!url) {
@@ -125,11 +149,20 @@ class ProviderFactory {
             { provider: 'openai', modelEnv: 'OPENAI_MODEL', baseUrl: 'https://api.openai.com' },
             { provider: 'google', modelEnv: 'GOOGLE_MODEL', baseUrl: 'https://generativelanguage.googleapis.com' },
             { provider: 'ollama', modelEnv: 'OLLAMA_MODEL', baseUrl: 'http://localhost:11434' },
+            { provider: 'xai', modelEnv: 'XAI_MODEL', baseUrl: 'https://api.x.ai/v1' },
+            { provider: 'perplexity', modelEnv: 'PERPLEXITY_MODEL', baseUrl: 'https://api.perplexity.ai' },
+            { provider: 'cohere', modelEnv: 'COHERE_MODEL', baseUrl: 'https://api.cohere.ai/v2' },
+            { provider: 'mistral', modelEnv: 'MISTRAL_MODEL', baseUrl: 'https://api.mistral.ai/v1' },
+            { provider: 'meta', modelEnv: 'META_MODEL', baseUrl: 'https://api.llama.com/v1' },
+            { provider: 'deepseek', modelEnv: 'DEEPSEEK_MODEL', baseUrl: 'https://api.deepseek.com' },
+            { provider: 'qwen', modelEnv: 'QWEN_MODEL', baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1' },
+            { provider: 'moonshot', modelEnv: 'MOONSHOT_MODEL', baseUrl: 'https://api.moonshot.cn/v1' },
         ];
         for (const pc of providerConfigs) {
             const model = getEnv(pc.modelEnv);
             const apiKey = pc.provider === 'ollama' ? undefined : getEnv(`${pc.provider.toUpperCase()}_API_KEY`);
-            if (model) {
+            // Only add provider if model is set AND (Ollama or API key is available)
+            if (model && (pc.provider === 'ollama' || apiKey)) {
                 configs.push({
                     provider: pc.provider,
                     model,
@@ -182,12 +215,28 @@ class ProviderFactory {
                 return new ollama_js_1.OllamaProvider(ollamaConfig);
             }
             case 'openai':
-            case 'openai-compatible': {
+            case 'openai-compatible':
+            case 'xai':
+            case 'perplexity':
+            case 'cohere':
+            case 'mistral':
+            case 'meta':
+            case 'deepseek':
+            case 'qwen':
+            case 'moonshot': {
                 const openaiConfig = {
                     baseUrl: resolveBaseUrl(config),
                     apiKey: resolveApiKey(config),
                     model: config.model,
-                    options: { timeoutMs: config.timeoutMs },
+                    // Free/local endpoints (NVIDIA integrate.nvcf) reliably return an
+                    // EMPTY json_object for small instruction models (e.g. llama-3.1-8b),
+                    // which the orchestrator then parses as nothing. Disable the
+                    // response_format hint there so the model answers in plain text.
+                    // OpenAI / OpenRouter / Mistral keep JSON mode on.
+                    options: {
+                        timeoutMs: config.timeoutMs,
+                        supportsResponseFormat: !/nvidia/i.test(resolveBaseUrl(config)),
+                    },
                 };
                 return new openai_compatible_js_1.OpenAICompatibleProvider(openaiConfig);
             }
@@ -215,6 +264,15 @@ async function listModels(provider, apiKey) {
                 return listAnthropicModels();
             case 'ollama':
                 return await listOllamaModels();
+            case 'xai':
+            case 'perplexity':
+            case 'cohere':
+            case 'mistral':
+            case 'meta':
+            case 'deepseek':
+            case 'qwen':
+            case 'moonshot':
+                return [];
             default:
                 return [];
         }

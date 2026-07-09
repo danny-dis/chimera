@@ -11,6 +11,14 @@ export {
 } from './model-registry.js';
 
 export {
+  recommendRoleModels,
+  recommendFromProviders,
+  rankByTier,
+  type RoleModels,
+  type ConfigProviderRole,
+} from './recommend.js';
+
+export {
   ModelMetadataFetcher,
   fetchAndCacheModelMetadata,
   getModelEntriesFromAPI,

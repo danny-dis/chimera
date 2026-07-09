@@ -7,7 +7,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { z } from 'zod';
 import YAML from 'yaml';
-import { listModels } from '@chimera/providers';
+import { listModels, recommendFromProviders } from '@chimera/providers';
 
 // ---------------------------------------------------------------------------
 // Schema (mirrors CLI config-loader)
@@ -273,25 +273,54 @@ export async function autoGenerateConfig(cwd: string): Promise<ChimeraConfig | n
         name: p.name,
         provider: p.provider,
         model: p.model,
-        api_key: envKey ? `\${${envKey}}` : undefined,
+        api_key: envKey ? '\\${' + envKey + '}' : undefined,
         role: p.name as ConfigProviderRole,
       });
     }
   } else {
-    const roles: ConfigProviderRole[] = ['writer', 'reviewer', 'challenger'];
-    for (let i = 0; i < detected.length && i < 3; i++) {
-      const p = detected[i];
+    // Standard mode: smartly auto-populate roles from the detected providers.
+    // Single provider (e.g. the free CHIMERA_CHEAP slot) → assign it to all
+    // three roles so the harness runs out-of-the-box. Multiple providers →
+    // let the tier-aware recommender pick the strongest model per role.
+    const roleToProvider = new Map<ConfigProviderRole, DetectedProvider>();
+
+    if (detected.length === 1) {
+      for (const role of ['writer', 'reviewer', 'challenger'] as ConfigProviderRole[]) {
+        roleToProvider.set(role, detected[0]);
+      }
+    } else {
+      const recommended = recommendFromProviders(detected.map((p) => p.provider));
+      for (const role of ['writer', 'reviewer', 'challenger'] as ConfigProviderRole[]) {
+        const modelId = recommended[role];
+        const match = (modelId && detected.find((p) => p.model === modelId)) || detected[0];
+        if (match) roleToProvider.set(role, match);
+      }
+    }
+
+    const roleNames: Record<ConfigProviderRole, string> = {
+      writer: 'primary',
+      reviewer: 'secondary',
+      challenger: 'tertiary',
+    };
+    for (const role of ['writer', 'reviewer', 'challenger'] as ConfigProviderRole[]) {
+      const p = roleToProvider.get(role);
+      if (!p) continue;
       const envKey =
-        p.name === 'anthropic' ? 'ANTHROPIC_API_KEY'
-          : p.name === 'openai' ? 'OPENAI_API_KEY'
-            : p.name === 'google' ? 'GOOGLE_API_KEY'
-              : undefined;
+        p.provider === 'anthropic'
+          ? 'ANTHROPIC_API_KEY'
+          : p.provider === 'openai'
+            ? 'OPENAI_API_KEY'
+            : p.provider === 'google'
+              ? 'GOOGLE_API_KEY'
+              : p.provider === 'openai-compatible'
+                ? 'CHIMERA_CHEAP_API_KEY'
+                : undefined;
       providers.push({
-        name: p.name,
+        name: roleNames[role],
         provider: p.provider,
         model: p.model,
-        api_key: envKey ? `\${${envKey}}` : undefined,
-        role: roles[i],
+        api_key: envKey ? '\\${' + envKey + '}' : undefined,
+        role,
       });
     }
   }

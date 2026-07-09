@@ -344,7 +344,15 @@ export class CliRouter {
    * Return providers mapped by role. Falls back to flat-array for backward compat.
    */
   private async getRoleMappedProviders(): Promise<{ writer?: ModelProvider; reviewer?: ModelProvider; challenger?: ModelProvider; fallback: ModelProvider[] }> {
-    const config = loadConfig();
+    let config = loadConfig();
+    if (!config && !configExists()) {
+      // No config file yet — auto-generate from env (incl. the free
+      // CHIMERA_CHEAP_API_KEY slot) so the harness runs out-of-the-box on
+      // whatever keys are present. This also covers `eval --real`, which
+      // calls this method directly without the auto-generate step in run().
+      const generated = await autoGenerateConfig();
+      if (generated) config = generated;
+    }
     if (config) {
       // Allow per-role model overrides via env vars (CHIMERA_WRITER_MODEL, etc.)
       // even when a config file already exists. This lets a stronger model be
