@@ -1,7 +1,11 @@
 import { EventStream } from '../event-stream.js';
-import type { LLMProvider } from '../session-orchestrator.js';
+import type { LLMProvider, ToolExecutorInterface, ToolRegistryInterface } from '../session-orchestrator.js';
 import type { ModelRegistry, ModelEntry } from '@chimera/providers';
 import type { CostTracker } from '../cost-tracker.js';
+import { sanitizeWriterOutput } from './output-sanitizer.js';
+import { runAgentToolLoop, countSourceFiles } from './agent-tool-loop.js';
+import { executeProseActions } from './file-write-fallback.js';
+import { taskWantsFiles } from './path-from-task.js';
 import type {
   FusionConfig,
   FusionContext,
@@ -75,6 +79,14 @@ interface FusionExecutorDeps {
   eventStream: EventStream;
   registry: ModelRegistry;
   costTracker?: CostTracker;
+  toolExecutor?: ToolExecutorInterface;
+  toolRegistry?: ToolRegistryInterface;
+  workspaceRoot?: string;
+}
+
+function expectedPathFromTask(task: string): string | undefined {
+  const m = task.match(/\b([A-Za-z0-9_\-./]+\.(?:rs|ts|js|jsx|tsx|py|toml|json|md|ya?ml|go|java|cpp|c|rb|php|txt|html|css|sh))\b/);
+  return m ? m[1] : undefined;
 }
 
 /**
@@ -85,11 +97,17 @@ export class FusionExecutor {
   private eventStream: EventStream;
   private registry: ModelRegistry;
   private costTracker: CostTracker | undefined;
+  private toolExecutor: ToolExecutorInterface | undefined;
+  private toolRegistry: ToolRegistryInterface | undefined;
+  private workspaceRoot: string | undefined;
 
   constructor(deps: FusionExecutorDeps) {
     this.eventStream = deps.eventStream;
     this.registry = deps.registry;
     this.costTracker = deps.costTracker;
+    this.toolExecutor = deps.toolExecutor;
+    this.toolRegistry = deps.toolRegistry;
+    this.workspaceRoot = deps.workspaceRoot;
   }
 
   async execute(
@@ -168,15 +186,83 @@ export class FusionExecutor {
             finalTask = `PERSPECTIVE: ${perspective}\n\nTASK: ${task}`;
         }
 
+        const toolDefs = this.toolRegistry
+          ? this.toolRegistry.getAll().map((t) => ({
+              name: t.name,
+              description: t.description,
+              parameters: (t.parameters as unknown as Record<string, unknown>) ?? {},
+            }))
+          : undefined;
+
         const res = await provider.complete(
           [{ role: 'user', content: finalTask }],
-          { temperature: config.temperature, maxTokens: config.maxCompletionTokens, ...(config.reasoning !== undefined ? { reasoning: config.reasoning } : {}) }
+          {
+            temperature: config.temperature,
+            maxTokens: config.maxCompletionTokens,
+            ...(config.reasoning !== undefined ? { reasoning: config.reasoning } : {}),
+            ...(this.toolExecutor && this.workspaceRoot && toolDefs ? { tools: toolDefs } : {}),
+          }
         );
+
+        // Writer-panel path: route through the shared agentic tool loop so the
+        // panel agent actually calls write_file instead of narrating the file in
+        // prose. Falls back to the bare draft when tooling is unavailable
+        // (non-file tasks, or deps not wired).
+        let content = res.content;
+        let extraInput = res.usage?.inputTokens ?? 0;
+        let extraOutput = res.usage?.outputTokens ?? 0;
+        if (this.toolExecutor && this.toolRegistry && this.workspaceRoot) {
+          const wantsFiles = taskWantsFiles(task);
+          try {
+            const loop = await runAgentToolLoop({
+              provider,
+              messages: [{ role: 'user', content: finalTask }],
+              options: { temperature: config.temperature, maxTokens: config.maxCompletionTokens },
+              toolExecutor: this.toolExecutor,
+              toolRegistry: this.toolRegistry,
+              eventStream: this.eventStream,
+              workspaceRoot: this.workspaceRoot,
+              sessionId: `fusion-${modelId}`,
+              initialContent: res.content,
+              initialToolCalls: res.toolCalls ?? [],
+              maxRounds: Math.max(1, config.maxDepth ?? 4),
+              mode: 'solo',
+              forceMinFiles: 1,
+              wantsFiles,
+              task,
+              toolDefs,
+              sanitize: sanitizeWriterOutput,
+            });
+            content = loop.content || res.content;
+            extraInput = (res.usage?.inputTokens ?? 0) + loop.inputTokens;
+            extraOutput = (res.usage?.outputTokens ?? 0) + loop.outputTokens;
+            // Prose fallback: if still no file landed, parse the narration and
+            // execute it for real (mirrors solo/duo).
+            if (wantsFiles && loop.wroteFileCount < 1) {
+              try {
+                const proseFiles = await executeProseActions(content, {
+                  eventStream: this.eventStream,
+                  toolExecutor: this.toolExecutor,
+                  toolRegistry: this.toolRegistry,
+                  workspaceRoot: this.workspaceRoot,
+                  sessionId: `fusion-${modelId}`,
+                  expectedPath: expectedPathFromTask(task),
+                });
+                if (proseFiles > 0) content = content || 'Task executed via tools.';
+              } catch {
+                /* best-effort */
+              }
+            }
+          } catch {
+            // Tool loop failed — fall through to the bare draft below.
+          }
+        }
+
         return {
           modelId,
-          content: res.content,
-          inputTokens: res.usage?.inputTokens ?? 0,
-          outputTokens: res.usage?.outputTokens ?? 0,
+          content,
+          inputTokens: extraInput,
+          outputTokens: extraOutput,
           durationMs: Date.now() - start,
         };
       })

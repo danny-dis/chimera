@@ -93,14 +93,18 @@ function parseCompletionResult(body: Record<string, unknown>): CompletionResult 
   let toolCalls: ToolCall[] | undefined;
   const rawToolCalls = message?.tool_calls as Record<string, unknown>[] | undefined;
   if (rawToolCalls?.length) {
-    toolCalls = rawToolCalls.map((tc) => {
-      const fn = tc.function as Record<string, unknown>;
-      return {
-        id: tc.id as string,
-        name: fn.name as string,
-        arguments: fn.arguments as string,
-      };
-    });
+    toolCalls = rawToolCalls
+      .map((tc) => {
+        const fn = tc.function as Record<string, unknown> | undefined;
+        if (!fn || typeof fn.name !== 'string') return null;
+        return {
+          id: (tc.id as string) ?? '',
+          name: fn.name,
+          arguments: (fn.arguments as string) ?? '',
+        };
+      })
+      .filter((tc): tc is ToolCall => tc !== null);
+    if (toolCalls.length === 0) toolCalls = undefined;
   }
 
   const usage = body.usage as Record<string, unknown> | undefined;

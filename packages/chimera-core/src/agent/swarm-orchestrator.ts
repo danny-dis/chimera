@@ -59,6 +59,7 @@ export interface SwarmResult {
   totalCostUsd: number;
   durationMs: number;
   clusterResults: string[];
+  errors?: string[];
 }
 
 export interface ProviderPoolEntry {
@@ -148,6 +149,7 @@ export class SwarmOrchestrator extends EventEmitter {
     const semaphore = new AsyncSemaphore(this.config.maxConcurrency);
     const completedResults: Array<{ taskId: string; output: string }> = [];
     const failedTasks: string[] = [];
+    const agentErrors: string[] = [];
 
     const executeTask = async (task: SwarmTask): Promise<void> => {
       await semaphore.acquire();
@@ -156,9 +158,9 @@ export class SwarmOrchestrator extends EventEmitter {
 
       const agent = this.agents.get(agentId)!;
       const provider = this.selectProvider();
-      if (!provider) {
+      if (!provider || typeof provider.provider?.complete !== 'function') {
         agent.status = 'failed';
-        agent.error = 'No available provider';
+        agent.error = !provider ? 'No available provider' : 'Provider missing a usable complete()';
         failedTasks.push(task.id);
         semaphore.release();
         return;
@@ -173,7 +175,10 @@ export class SwarmOrchestrator extends EventEmitter {
       try {
         const result = await this.withTimeout(
           provider.provider.complete(
-            [{ role: 'user', content: task.context ? `TASK: ${task.description}\n\nCONTEXT:\n${task.context}` : `TASK: ${task.description}` }],
+            [
+              { role: 'system', content: 'You are a swarm sub-agent. Execute the task and return only the result.' },
+              { role: 'user', content: task.context ? `TASK: ${task.description}\n\nCONTEXT:\n${task.context}` : `TASK: ${task.description}` },
+            ],
             { temperature: 0.3 },
           ),
           this.config.taskTimeoutMs,
@@ -192,6 +197,7 @@ export class SwarmOrchestrator extends EventEmitter {
         agent.error = err instanceof Error ? err.message : String(err);
         agent.completedAt = Date.now();
         failedTasks.push(task.id);
+        agentErrors.push(`agent ${agentId}: ${agent.error}`);
         this.emit('agent_failed', { agentId, taskId: task.id, error: agent.error });
       } finally {
         provider.activeCount--;
@@ -236,6 +242,7 @@ export class SwarmOrchestrator extends EventEmitter {
       totalCostUsd: totalCost,
       durationMs: Date.now() - startTime,
       clusterResults,
+      ...(agentErrors.length > 0 ? { errors: agentErrors } : {}),
     };
   }
 

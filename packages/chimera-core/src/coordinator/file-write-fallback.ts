@@ -76,6 +76,25 @@ export function parseProseActions(text: string, expectedPath?: string): ToolCall
     if (path && content) calls.push({ id: mkId(), name: 'write_file', arguments: { path, content } });
   }
 
+  // 4b) Inline prose that names a file then shows a fenced block, e.g.
+  //     "Here is the corrected bug.js:" / "Updated src/app.ts:" / "Fixed foo.py"
+  //     + a ```...``` block. Common for debug/edit-existing narration where the
+  //     model rewrites the whole file. write_file OVERWRITES, which is correct
+  //     for a fix. We require a filename-with-extension to avoid false matches.
+  //     CRITICAL: only treat a block as a write when it is preceded by a
+  //     write-intent verb (wrote/write/correct/fix/update/edit/revise/patch/
+  //     rewrote). Otherwise a *read* narration like "Read bug.js:" + a fenced
+  //     block showing the OLD code would be matched and the bug would be
+  //     re-written back in. The intent keyword disambiguates read vs write.
+  const inlineRe = /(?:wrote|write|writing|correct(?:ed)?|fix(?:ed)?|update(?:d)?|edit(?:ed)?|revise(?:d)?|patch(?:ed)?|rewrote|rewritten|replaced|changed)\b[\s\S]{0,80}?\b([A-Za-z0-9_\-./]+\.(?:rs|ts|js|jsx|tsx|py|toml|json|md|ya?ml|go|java|cpp|c|rb|php|txt|html|css|sh))\b[\s\S]{0,40}?\n+```(?:[a-zA-Z0-9_-]*)\n([\s\S]*?)```/gi;
+  while ((m = inlineRe.exec(text))) {
+    const path = m[1].trim();
+    const content = m[2].replace(/\s+$/, '');
+    if (path && content && !calls.some((c) => c.arguments.path === path)) {
+      calls.push({ id: mkId(), name: 'write_file', arguments: { path, content } });
+    }
+  }
+
   // 5) Bash-style narration: <execute_bash> / <write_to_file> / ```bash
   //    blocks containing `writeFile <path> <<EOF ... EOF` or
   //    `cat > <path> <<'EOF' ... EOF`. Common on tool-capable models that

@@ -207,3 +207,36 @@ describe('TrioExecutor — budget enforcement', () => {
     expect(result.degradationReason).toMatch(/budget/i);
   });
 });
+
+describe('TrioExecutor — draft stage tool-def robustness', () => {
+  it('does not crash when the tool registry contains a malformed (nameless) tool', async () => {
+    const eventStream = new EventStream();
+    const registry = makeRegistry();
+
+    // A tool registration whose `name` is empty/undefined must not be
+    // propagated to the provider (which would throw
+    // `Cannot read properties of undefined (reading 'name')`).
+    const badToolRegistry = {
+      getAll: () => [
+        { name: '', description: 'broken tool', parameters: undefined },
+        { description: 'also broken', parameters: undefined },
+      ],
+      has: () => false,
+    } as unknown as import('../../session-orchestrator.js').ToolRegistryInterface;
+
+    const executor = new TrioExecutor({ eventStream, registry, toolRegistry: badToolRegistry });
+
+    const result = await executor.executeWithAnalysis(
+      'task',
+      { writer: MOCK_IDS.writer, reviewer: MOCK_IDS.reviewer, temperature: 0 },
+      (id) =>
+        id === MOCK_IDS.writer
+          ? makeMockProvider([{ match: 'You are a code writer', content: 'draft' }])
+          : makeMockProvider([{ match: 'You are a code reviewer', content: '{"verdict":"pass","issues":[],"commentary":"ok"}' }])
+    );
+
+    // The nameless tools are filtered out; the draft stage completes.
+    expect(result.degraded).toBe(false);
+    expect(result.stages).toHaveLength(2);
+  });
+});

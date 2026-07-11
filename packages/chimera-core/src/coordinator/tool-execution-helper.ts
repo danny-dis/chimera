@@ -94,21 +94,43 @@ export async function runToolCalls(
   }
 
   const EDIT_TOOLS = new Set(['edit', 'write', 'create_file']);
+  // Write-side tools whose transient failure should get one bounded retry.
+  // A single retry turns a flaky `writeErrors=1` (transient FS/executor
+  // hiccup, no retry before) into a success without masking a real, repeatable
+  // failure — the second failure is surfaced as the result error.
+  const WRITE_TOOLS = new Set(['write_file', 'write', 'create_file', 'edit_file', 'edit']);
   const results: Array<{ toolName: string; args: Record<string, unknown>; result: ToolCallResult }> = [];
 
   for (const tc of toolCalls) {
+    if (!tc || typeof tc.name !== 'string') continue;
     eventStream.append({
       type: 'tool_call_requested',
       call: { tool: tc.name, args: tc.arguments },
       policy: 'allow',
     } as Parameters<EventStream['append']>[0]);
 
-    const result = await toolExecutor.execute(tc.name, tc.arguments, {
+    let result = await toolExecutor.execute(tc.name, tc.arguments, {
       workspaceRoot,
       sessionId,
       eventStream,
       signal,
     });
+
+    // ── Single bounded retry on write failure ──────────────────────────
+    // Only retry write-side tools, only once, and only when not aborted.
+    if (!result.success && WRITE_TOOLS.has(tc.name) && !signal?.aborted) {
+      eventStream.append({
+        type: 'tool_call_retry',
+        tool: tc.name,
+        error: result.error ?? 'unknown write error',
+      } as any);
+      result = await toolExecutor.execute(tc.name, tc.arguments, {
+        workspaceRoot,
+        sessionId,
+        eventStream,
+        signal,
+      });
+    }
 
     // ── Security check (optional) ───────────────────────────────────
     if (result.success && result.data && checkToolOutput) {

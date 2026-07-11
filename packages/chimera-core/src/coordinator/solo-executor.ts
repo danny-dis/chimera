@@ -7,6 +7,9 @@ import { ResponseSynthesizer, type SynthesisInput } from '../response-synthesize
 import { sanitizeWriterOutput, sanitizeReviewerOutput } from './output-sanitizer.js';
 import { TaskRouter } from '../task-router.js';
 import { runToolCalls, runAgentToolLoop, countSourceFiles } from './tool-execution-helper.js';
+import { taskWantsFiles } from './path-from-task.js';
+import { existsSync, readFileSync } from 'fs';
+import { join } from 'path';
 import { executeProseActions } from './file-write-fallback.js';
 import type {
   SoloConfig,
@@ -132,9 +135,15 @@ export class SoloExecutor {
     let wroteFileCount = 0;
     const selfVerify = config.selfVerify ?? true;
     // Whether the task wants files created on disk (used for the completion gate).
-    const wantsFiles = /\b(create|scaffold|write|generate|build|implement|make|port|add)\b/i.test(task) ||
-      /write_file|\.(rs|ts|js|py|toml|json|md|ya?ml|go|java|cpp|c|rb|php)$/i.test(task) ||
-      /Cargo\.toml|src[\\/]|\b(src|lib|app|components|tests?)\b[\\/]/i.test(task);
+    const wantsFiles = taskWantsFiles(task);
+    // Capture the pre-existing target file content (if any) so the prose
+    // fallback can detect "the model only NARRATED the fix" — a write tool may
+    // have been *called* yet failed to land, leaving the file at its seed/old
+    // content. Counting tool calls is not enough; we compare on-disk bytes.
+    const targetPath = expectedPathFromTask(task);
+    const seedContent = targetPath && existsSync(join(this.workspaceRoot, targetPath))
+      ? readFileSync(join(this.workspaceRoot, targetPath), 'utf-8')
+      : null;
 
     // ── Recursion guard ───────────────────────────────────────────────
     const maxDepth = config.maxDepth ?? 1;
@@ -235,8 +244,15 @@ export class SoloExecutor {
       // Fallback: the model sometimes NARRATES file ops instead of emitting
       // native tool calls (common on small/free models). Parse that prose and
       // execute it for real so the task actually lands on disk.
-      let realFiles = countSourceFiles(this.workspaceRoot);
-      if (wantsFiles && realFiles < 1 && this.toolExecutor && this.workspaceRoot) {
+      // Gate on the TARGET FILE having actually changed on disk — not on
+      // whether a source file merely exists (a seeded/buggy file satisfies
+      // that) and not on wroteFileCount (a write tool may have been *called*
+      // yet failed to land, leaving the file at its seed/old content).
+      const targetNow = targetPath && existsSync(join(this.workspaceRoot, targetPath))
+        ? readFileSync(join(this.workspaceRoot, targetPath), 'utf-8')
+        : null;
+      const targetUnchanged = targetPath ? (targetNow === seedContent) : (wroteFileCount < 1);
+      if (wantsFiles && targetUnchanged && this.toolExecutor && this.workspaceRoot) {
         try {
           const proseFiles = await executeProseActions(draftContent || lastContent, {
             eventStream: this.eventStream,
@@ -248,7 +264,6 @@ export class SoloExecutor {
           });
           if (proseFiles > 0) {
             wroteFileCount += proseFiles;
-            realFiles = countSourceFiles(this.workspaceRoot);
           }
         } catch {
           /* best-effort */

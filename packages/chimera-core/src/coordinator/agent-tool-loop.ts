@@ -146,22 +146,26 @@ function assistantMessage(
     return {
       role: 'assistant',
       content,
-      tool_calls: toolCalls.map((tc) => ({
-        id: tc.id,
-        name: tc.name,
-        arguments: tc.arguments,
-      })),
+      tool_calls: toolCalls
+        .filter((tc) => tc && typeof tc.name === 'string')
+        .map((tc) => ({
+          id: tc.id,
+          name: tc.name,
+          arguments: tc.arguments,
+        })),
     };
   }
   // solo / spawner: string-arg tool calls under `toolCalls`
   return {
     role: 'assistant',
     content,
-    toolCalls: toolCalls.map((tc) => ({
-      id: tc.id,
-      name: tc.name,
-      arguments: typeof tc.arguments === 'string' ? tc.arguments : JSON.stringify(tc.arguments),
-    })),
+    toolCalls: toolCalls
+      .filter((tc) => tc && typeof tc.name === 'string')
+      .map((tc) => ({
+        id: tc.id,
+        name: tc.name,
+        arguments: typeof tc.arguments === 'string' ? tc.arguments : JSON.stringify(tc.arguments),
+      })),
   };
 }
 
@@ -237,7 +241,7 @@ export async function runAgentToolLoop(
   while (canLoop && currentToolCalls.length > 0 && round < maxRounds) {
     round++;
     for (const tc of currentToolCalls) {
-      if (tc.name === 'write_file') wroteFileCount++;
+      if (tc && typeof tc.name === 'string' && tc.name === 'write_file') wroteFileCount++;
     }
 
     messages.push(assistantMessage(mode, assistantContent, currentToolCalls));
@@ -252,6 +256,19 @@ export async function runAgentToolLoop(
     });
 
     for (const tr of toolResults) messages.push(toolResultMessage(mode, tr));
+
+    // Surface persistent write failures (after runToolCalls' single retry) on
+    // the event stream instead of only burying them in the tool-result
+    // transcript — so `writeErrors` are observable to the caller/matrix.
+    for (const tr of toolResults) {
+      if (!tr.result.result.success && /write|edit|create/.test(tr.toolName)) {
+        eventStream.append({
+          type: 'tool_call_failed',
+          tool: tr.toolName,
+          error: tr.result.result.error ?? 'write failed',
+        } as any);
+      }
+    }
 
     const nudge = mode === 'trio'
       ? CONTINUE_NUDGE
@@ -270,8 +287,7 @@ export async function runAgentToolLoop(
   // ── Force-min-files gate (solo only) ──────────────────────────────────
   let realFiles = 0;
   const wantForce =
-    mode === 'solo' && forceMinFiles !== undefined && wantsFiles === true &&
-    canLoop && round > 0;
+    mode === 'solo' && forceMinFiles !== undefined && wantsFiles === true && canLoop;
 
   if (wantForce) {
     realFiles = countSourceFiles(workspaceRoot!);

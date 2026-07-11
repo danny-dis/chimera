@@ -11,6 +11,7 @@ import { sanitizeWriterOutput, sanitizeReviewerOutput } from './output-sanitizer
 import { TaskRouter } from '../task-router.js';
 import { runAgentToolLoop } from './tool-execution-helper.js';
 import { executeProseActions } from './file-write-fallback.js';
+import { taskWantsFiles } from './path-from-task.js';
 import type { Mode, ToolCall } from '../types/agent.js';
 import type {
   TrioConfig,
@@ -160,12 +161,19 @@ export class TrioExecutor {
       let inputTokensForDraft = 0;
       let outputTokensForDraft = 0;
       const draftProvider = providerFactory(config.writer);
+      // A malformed tool registration (empty/undefined name) must never
+      // reach the provider: its adapter derefs `tool.name` and would throw
+      // `Cannot read properties of undefined (reading 'name')`. Filter any
+      // such definition out at the source so a bad tool can't crash the
+      // whole draft stage (see debug/trio matrix failure).
       const toolDefs = this.toolRegistry
-        ? this.toolRegistry.getAll().map((t) => ({
-            name: t.name,
-            description: t.description,
-            parameters: (t.parameters ? zodToJsonSchema(t.parameters as any) : {}) as Record<string, unknown>,
-          }))
+        ? this.toolRegistry.getAll()
+            .filter((t): t is typeof t & { name: string } => Boolean(t?.name))
+            .map((t) => ({
+              name: t.name,
+              description: t.description,
+              parameters: (t.parameters ? zodToJsonSchema(t.parameters as any) : {}) as Record<string, unknown>,
+            }))
         : undefined;
       const draftResult = await draftProvider.complete(
         [{ role: 'user', content: this.buildDraftPrompt(task, config.context) }],
@@ -174,6 +182,7 @@ export class TrioExecutor {
       const inputTokens = draftResult.usage?.inputTokens ?? 0;
       const outputTokens = draftResult.usage?.outputTokens ?? 0;
       let draftContent = sanitizeWriterOutput(draftResult.content);
+      let draftWroteFiles = 0;
 
       // ── Writer tool execution round-trip ─────────────────────────────
       // Writer is the only stage that edits files. If it emitted tool calls
@@ -199,6 +208,7 @@ export class TrioExecutor {
         });
         if (loop.round > 0) {
           draftContent = sanitizeWriterOutput(loop.content);
+          draftWroteFiles = loop.wroteFileCount;
           // Fold the loop's follow-up token usage into the draft stage counts.
           inputTokensForDraft = inputTokens + loop.inputTokens;
           outputTokensForDraft = outputTokens + loop.outputTokens;
@@ -224,10 +234,11 @@ export class TrioExecutor {
       totalCostUsd += cost;
       this.recordSpend(config.writer, cost);
 
-      // Fallback: small/free writers often NARRATE file ops ("### ACTION: WRITE
-      // greeter.js" + code block) instead of emitting native tool calls. Parse
-      // that prose and execute it so the task actually lands on disk.
-      if (this.toolExecutor && this.workspaceRoot) {
+      // Fallback: small/free writers often NARRATE file ops instead of emitting
+      // native tool calls. Parse that prose and execute it for real. Gate on
+      // "no real write landed" (draftWroteFiles) so we don't clobber a file the
+      // writer already fixed via a genuine tool call.
+      if (this.toolExecutor && this.workspaceRoot && draftWroteFiles < 1) {
         try {
           await executeProseActions(draftContent, {
             eventStream: this.eventStream,
@@ -469,7 +480,7 @@ export class TrioExecutor {
         }
       } else {
         // All synthesizers failed — fall back to deterministic
-        const det = this.runDeterministicSynthesis(task, draftStage, reviewStage, challengeStage);
+        const det = this.safeDeterministicSynthesis(task, draftStage, reviewStage, challengeStage);
         analysis = det.analysis;
         finalResponse = det.output;
         needsUserEscalation = det.needsUserEscalation;
@@ -477,7 +488,7 @@ export class TrioExecutor {
       }
     } else {
       // Deterministic synthesis (no LLM call)
-      const det = this.runDeterministicSynthesis(task, draftStage, reviewStage, challengeStage);
+      const det = this.safeDeterministicSynthesis(task, draftStage, reviewStage, challengeStage);
       analysis = det.analysis;
       finalResponse = det.output;
       needsUserEscalation = det.needsUserEscalation;
@@ -497,9 +508,7 @@ export class TrioExecutor {
     // Completion gate: a task that wants files on disk must have actually
     // written at least one, or we escalate to needs_user instead of a false
     // `done` (small/free models sometimes narrate instead of writing).
-    const wantsFiles = /\b(create|scaffold|write|generate|build|implement|make|port|add)\b/i.test(task) ||
-      /write_file|\.(rs|ts|js|py|toml|json|md|ya?ml|go|java|cpp|c|rb|php)$/i.test(task) ||
-      /Cargo\.toml|src[\\/]|\b(src|lib|app|components|tests?)\b[\\/]/i.test(task);
+    const wantsFiles = taskWantsFiles(task);
     if (wantsFiles && this.workspaceRoot) {
       const countSourceFiles = (dir: string): number => {
         if (!existsSync(dir)) return 0;
@@ -633,6 +642,40 @@ export class TrioExecutor {
       needsUserEscalation: result.needsUserEscalation,
       escalationReason: result.escalationReason,
     };
+  }
+
+  private safeDeterministicSynthesis(
+    task: string,
+    draftStage: TrioStageResult,
+    reviewStage: TrioStageResult,
+    challengeStage: TrioStageResult | null
+  ): { output: string; analysis: Partial<TrioAnalysis>; needsUserEscalation: boolean; escalationReason?: string } {
+    // Stage content may be undefined when a model returned no parseable
+    // content (e.g. truncated/malformed response). Default defensively so
+    // the synthesizer never dereferences `undefined.content` and throws.
+    const safe = (s: TrioStageResult): TrioStageResult => s ? { ...s, content: s.content ?? '' } : s;
+    const d = safe(draftStage);
+    const r = safe(reviewStage);
+    const c = challengeStage ? safe(challengeStage) : null;
+    try {
+      return this.runDeterministicSynthesis(task, d, r, c);
+    } catch (err) {
+      // Synthesis must never crash the orchestrator — degrade gracefully.
+      const message = err instanceof Error ? err.message : String(err);
+      return {
+        output: d.content || r.content || '',
+        analysis: {
+          thought: '',
+          finalResponse: d.content || r.content || '',
+          conflicts: [],
+          uniqueInsights: [],
+          blindSpots: [],
+          confidence: 0,
+        },
+        needsUserEscalation: true,
+        escalationReason: `deterministic synthesis failed: ${message}`,
+      };
+    }
   }
 
   private deriveConsensus(inputs: SynthesisInput[], conflicts: { involvedAgents: string[] }[]): string[] {

@@ -126,9 +126,10 @@ function parseCompletionResult(body: Record<string, unknown>): CompletionResult 
       }
       if (part.functionCall) {
         const fc = part.functionCall as Record<string, unknown>;
+        if (typeof fc.name !== 'string') continue;
         toolCalls.push({
-          id: fc.name as string,
-          name: fc.name as string,
+          id: fc.name,
+          name: fc.name,
           arguments: JSON.stringify(fc.args),
         });
       }
@@ -167,10 +168,11 @@ function parseStreamChunk(data: Record<string, unknown>): StreamChunk | null {
       }
       if (part.functionCall) {
         const fc = part.functionCall as Record<string, unknown>;
+        if (typeof fc.name !== 'string') continue;
         toolCalls = toolCalls ?? [];
         toolCalls.push({
-          id: fc.name as string,
-          name: fc.name as string,
+          id: fc.name,
+          name: fc.name,
           arguments: JSON.stringify(fc.args),
         });
       }

@@ -52,6 +52,7 @@ import type { ComplexityScore } from '../../types/router.js';
 import { TaskRouter } from '../../task-router.js';
 import { CHIMERA_CORE_IDENTITY } from '../../prompts.js';
 import { zodToJsonSchema } from '../../zod-json.js';
+import type { SwarmResult } from '../../agent/swarm-orchestrator.js';
 
 import type {
   DeliberationAnalysis,
@@ -262,6 +263,9 @@ export class DeliberationEngine {
       eventStream: this.deps.eventStream,
       registry: this.deps.registry,
       ...(this.deps.costTracker ? { costTracker: this.deps.costTracker } : {}),
+      ...(this.deps.workspaceRoot ? { workspaceRoot: this.deps.workspaceRoot } : {}),
+      ...(this.deps.toolExecutor ? { toolExecutor: this.deps.toolExecutor } : {}),
+      ...(this.deps.toolRegistry ? { toolRegistry: this.deps.toolRegistry } : {}),
     });
 
     const fusionConfig: FusionConfig = {
@@ -476,7 +480,30 @@ export class DeliberationEngine {
       }));
 
     const tasks = subtasks.length > 0 ? subtasks : [{ id: 'swarm-main', description: cfg.task, priority: 10 }];
-    const result = await swarm.execute(tasks);
+
+    let result: SwarmResult;
+    try {
+      result = await swarm.execute(tasks);
+    } catch (err) {
+      // A swarm failure must never bubble as an unhandled exception — degrade
+      // gracefully so callers (and downstream status resolution) stay safe.
+      const message = err instanceof Error ? err.message : String(err);
+      return {
+        mode: 'swarm',
+        output: '',
+        analysis: { thought: '', finalResponse: '', consensus: [], conflicts: [], uniqueInsights: [], blindSpots: [], confidence: 0 },
+        totalTokens: 0,
+        totalCostUsd: 0,
+        durationMs: Date.now() - startTime,
+        degraded: true,
+        degradationReason: `swarm execution error: ${message}`,
+      };
+    }
+
+    // Empty output with zero completions means nothing usable came back — never
+    // report this as a success; surface it as a degraded result.
+    const emptyOutput = !result.output || result.output.trim().length === 0;
+    const degraded = result.failed > 0 || emptyOutput;
 
     const analysis: DeliberationAnalysis = {
       thought: `Swarm executed ${result.totalAgents} agents (${result.completed} completed, ${result.failed} failed)`,
@@ -485,7 +512,7 @@ export class DeliberationEngine {
       conflicts: result.failed > 0 ? [`${result.failed} agents failed`] : [],
       uniqueInsights: result.clusterResults ?? [],
       blindSpots: [],
-      confidence: result.failed === 0 ? 0.8 : Math.max(0.3, 0.8 - result.failed * 0.1),
+      confidence: result.failed === 0 && !emptyOutput ? 0.8 : Math.max(0.3, 0.8 - result.failed * 0.1),
     };
 
     return {
@@ -495,8 +522,12 @@ export class DeliberationEngine {
       totalTokens: result.totalTokens,
       totalCostUsd: result.totalCostUsd,
       durationMs: result.durationMs,
-      degraded: result.failed > 0,
-      ...(result.failed > 0 ? { degradationReason: `${result.failed}/${result.totalAgents} agents failed` } : {}),
+      degraded,
+      ...(degraded ? {
+        degradationReason: emptyOutput
+          ? 'swarm produced no output (no agent emitted a usable response)'
+          : `${result.failed}/${result.totalAgents} agents failed`,
+      } : {}),
     };
   }
 

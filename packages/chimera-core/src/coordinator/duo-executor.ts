@@ -5,6 +5,9 @@ import type { CostTracker } from '../cost-tracker.js';
 import { ResponseSynthesizer, type SynthesisInput } from '../response-synthesizer.js';
 import { sanitizeWriterOutput, sanitizeReviewerOutput } from './output-sanitizer.js';
 import { TaskRouter } from '../task-router.js';
+import { runAgentToolLoop, countSourceFiles } from './agent-tool-loop.js';
+import { executeProseActions } from './file-write-fallback.js';
+import { taskWantsFiles } from './path-from-task.js';
 import type {
   DuoConfig,
   DuoContext,
@@ -29,11 +32,11 @@ interface DuoExecutorDeps {
   registry: ModelRegistry;
   /** Optional cost tracker. */
   costTracker?: CostTracker;
-  /** Optional workspace root — unused by duo (no tools), accepted for uniformity. */
+  /** Optional workspace root — enables the writer's tool loop (write_file). */
   workspaceRoot?: string;
-  /** Optional tool executor — unused by duo (two reviewers), accepted for uniformity. */
+  /** Optional tool executor — enables the writer's tool loop. */
   toolExecutor?: ToolExecutorInterface;
-  /** Optional tool registry — unused by duo, accepted for uniformity. */
+  /** Optional tool registry — supplies tool definitions to the writer. */
   toolRegistry?: ToolRegistryInterface;
 }
 
@@ -63,11 +66,17 @@ export class DuoExecutor {
   private eventStream: EventStream;
   private registry: ModelRegistry;
   private costTracker: CostTracker | undefined;
+  private workspaceRoot: string | undefined;
+  private toolExecutor: ToolExecutorInterface | undefined;
+  private toolRegistry: ToolRegistryInterface | undefined;
 
   constructor(deps: DuoExecutorDeps) {
     this.eventStream = deps.eventStream;
     this.registry = deps.registry;
     this.costTracker = deps.costTracker;
+    this.workspaceRoot = deps.workspaceRoot;
+    this.toolExecutor = deps.toolExecutor;
+    this.toolRegistry = deps.toolRegistry;
   }
 
   /**
@@ -266,6 +275,67 @@ export class DuoExecutor {
       [{ role: 'user', content: prompt }],
       { temperature: config.temperature, maxTokens: config.maxCompletionTokens, ...(config.reasoning !== undefined ? { reasoning: config.reasoning } : {}) }
     );
+
+    // Writer path: route through the shared agentic tool loop so the writer
+    // can actually call write_file instead of narrating the file in prose.
+    // Falls back to the bare draft when tooling is unavailable (non-file tasks).
+    if (role === 'writer' && this.toolExecutor && this.toolRegistry && this.workspaceRoot) {
+      const wantsFiles = taskWantsFiles(task);
+      try {
+        const loop = await runAgentToolLoop({
+          provider,
+          messages: [{ role: 'user', content: prompt }],
+          options: { temperature: config.temperature, maxTokens: config.maxCompletionTokens },
+          toolExecutor: this.toolExecutor,
+          toolRegistry: this.toolRegistry,
+          eventStream: this.eventStream,
+          workspaceRoot: this.workspaceRoot,
+          sessionId: `duo-${modelId}`,
+          initialContent: r.content,
+          initialToolCalls: r.toolCalls ?? [],
+          maxRounds: Math.max(1, config.maxDepth ?? 4),
+          mode: 'solo',
+          forceMinFiles: 1,
+          wantsFiles,
+          task,
+          systemPrompt: config.context ? `[!] PROJECT CONTEXT [!]\n${config.context}` : undefined,
+          toolDefs: this.toolRegistry
+            ? this.toolRegistry.getAll().map((t) => ({
+                name: t.name,
+                description: t.description,
+                parameters: (t.parameters as unknown as Record<string, unknown>) ?? {},
+              }))
+            : undefined,
+          sanitize: sanitizeWriterOutput,
+        });
+        let content = loop.content || r.content;
+        // Prose fallback: if still no file landed, parse the narration and
+        // execute it for real (mirrors solo-executor).
+        if (wantsFiles && loop.wroteFileCount < 1) {
+          try {
+            const proseFiles = await executeProseActions(content, {
+              eventStream: this.eventStream,
+              toolExecutor: this.toolExecutor,
+              toolRegistry: this.toolRegistry,
+              workspaceRoot: this.workspaceRoot,
+              sessionId: `duo-${modelId}`,
+            });
+            if (proseFiles > 0) content = content || 'Task executed via tools.';
+          } catch {
+            /* best-effort */
+          }
+        }
+        return {
+          content,
+          inputTokens: (r.usage?.inputTokens ?? 0) + loop.inputTokens,
+          outputTokens: (r.usage?.outputTokens ?? 0) + loop.outputTokens,
+          durationMs: Date.now() - start,
+        };
+      } catch {
+        // Tool loop failed — fall through to the bare draft below.
+      }
+    }
+
     return {
       content: r.content,
       inputTokens: r.usage?.inputTokens ?? 0,

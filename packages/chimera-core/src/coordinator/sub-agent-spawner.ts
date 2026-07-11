@@ -4,7 +4,9 @@ import { DynamicConcurrencyEngine, type ConcurrencyOverrides } from '../agent/dy
 import { EventStream } from '../event-stream.js';
 import type { ProviderConfig } from '@chimera/providers';
 import { runToolCalls } from './tool-execution-helper.js';
+import { executeProseActions } from './file-write-fallback.js';
 import type { ToolExecutorInterface, ToolRegistryInterface } from '../session-orchestrator.js';
+import { expectedPathFromTask } from './path-from-task.js';
 
 const DEFAULT_LAUNCH_STAGGER_MS = 100;
 const DEFAULT_BASE_BACKOFF_MS = 1000;
@@ -237,6 +239,26 @@ export class SubAgentSpawner {
           for (const tc of result.toolCalls) {
             messages.push({ role: 'tool', content: JSON.stringify({ toolCallId: tc.id, toolName: tc.name, result: { success: false, error: 'No tool executor configured' } }) } as any);
           }
+        }
+      }
+
+      // Prose fallback: some writer models NARRATE file ops ("### ACTION:
+      // WRITE greeter.js" + a code block) instead of emitting native tool
+      // calls. The tool loop above breaks on zero tool calls, so a narrating
+      // sub-agent would land nothing on disk. Parse that prose and execute it
+      // for real (best-effort — failures never change the success semantics).
+      if (this.toolExecutor && this.workspaceRoot) {
+        try {
+          await executeProseActions(result.content || '', {
+            eventStream: this.eventStream!,
+            toolExecutor: this.toolExecutor,
+            toolRegistry: this.toolRegistry ?? null,
+            workspaceRoot: this.workspaceRoot,
+            sessionId: `hive-${task.id}`,
+            expectedPath: expectedPathFromTask(task.description),
+          });
+        } catch {
+          /* best-effort — do not alter the return value */
         }
       }
 
