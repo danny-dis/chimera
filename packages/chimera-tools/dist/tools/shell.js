@@ -97,12 +97,16 @@ exports.runShellCommandTool = {
         const startTime = Date.now();
         let result;
         try {
-            const execResult = await (0, execa_1.execa)('bash', ['-c', params.command], {
+            const isWindows = process.platform === 'win32';
+            const shellBin = isWindows ? 'cmd.exe' : 'bash';
+            const shellArgs = isWindows ? ['/c', params.command] : ['-c', params.command];
+            const execResult = await (0, execa_1.execa)(shellBin, shellArgs, {
                 cwd: workingDir,
                 timeout,
                 maxBuffer: tool_schema_js_1.MAX_OUTPUT_SIZE,
                 env: filteredEnv,
                 reject: false,
+                windowsHide: isWindows,
             });
             result = {
                 stdout: execResult.stdout,

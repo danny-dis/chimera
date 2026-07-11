@@ -281,6 +281,13 @@ export declare class SessionOrchestrator {
     private mapModeToDeliberationMode;
     private buildDeliberationConfig;
     private deliberationToOrchestratorResult;
+    /**
+     * Did a code/debug task actually land a file on disk?
+     * True only if the session emitted a successful `write_file`/`edit_file`
+     * tool result (exitCode 0). A write that the truncation guard refused
+     * leaves no success event, so it correctly counts as "not landed".
+     */
+    private fileTaskHasLandedFile;
     private finalize;
     private toSynthesisInputs;
     /**

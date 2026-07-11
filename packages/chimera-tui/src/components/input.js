@@ -79,7 +79,7 @@ export const Input = ({ onSubmit, autocomplete, placeholder = 'Type a message or
         };
     }, [disabled]);
     const isCommand = value.startsWith('/');
-    return (<Box borderStyle="round" borderColor={isCommand ? 'yellow' : 'blue'} paddingLeft={1} paddingRight={1}>
+    return (<Box borderStyle="single" borderTop borderColor={zen.border} paddingLeft={1} paddingRight={1}>
       <Text>{'> '}</Text>
       {isCommand ? (<Box>
           <Text color={zen.warning}>{value.split(/\s/)[0]}</Text>

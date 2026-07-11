@@ -12,7 +12,7 @@ import { useLayout } from './hooks/use-layout.js';
 import { zen } from './theme.js';
 import { useFocus } from './hooks/use-focus.js';
 import { runCommand, autocompleteCommand } from './commands/commands.js';
-export const TUI = ({ mode: initialMode = 'code', preset: initialPreset = 'solo', sessionId = 'active', messages: initialMessages = [], agents: initialAgents = [], costData: initialCostData = { currentCost: 0, budget: 10, breakdown: [] }, sessions = [], diffFiles = [], events: initialEvents = [], activeTool, workingDir, instructions, tokenUsage, onSendMessage, onModeChange, onPresetChange, onSessionSelect, onSessionDelete, onExit, }) => {
+export const TUI = ({ mode: initialMode = 'code', preset: initialPreset = 'solo', sessionId = 'active', messages: initialMessages = [], agents: initialAgents = [], costData: initialCostData = { currentCost: 0, budget: 10, breakdown: [] }, sessions = [], diffFiles = [], events: initialEvents = [], activeTool, instructions, tokenUsage, onSendMessage, onModeChange, onPresetChange, onSessionSelect, onSessionDelete, onExit, }) => {
     const [messages, setMessages] = useState(initialMessages);
     const [agents, setAgents] = useState(initialAgents);
     const [costData, setCostData] = useState(initialCostData);
@@ -144,7 +144,7 @@ export const TUI = ({ mode: initialMode = 'code', preset: initialPreset = 'solo'
     const chatHeight = layout.height - statusBarHeight - footerHeight - inputHeight - 2;
     return (React.createElement(Box, { flexDirection: "column", height: layout.height },
         React.createElement(Box, { height: statusBarHeight },
-            React.createElement(StatusBar, { mode: mode, costData: costData, agents: agents, activeTool: activeTool, sidebarVisible: sidebarVisible, workingDir: workingDir })),
+            React.createElement(StatusBar, { mode: mode, agents: agents, activeTool: activeTool, sidebarVisible: sidebarVisible })),
         React.createElement(Box, { flexDirection: "row", flexGrow: 1, padding: 1 },
             React.createElement(Box, { flexDirection: "column", flexGrow: 1 },
                 activeOverlay === 'sessions' ? (React.createElement(SessionBrowser, { sessions: sessions, onSelect: onSessionSelect, onDelete: onSessionDelete })) : activeOverlay === 'diff' ? (React.createElement(DiffViewer, { files: diffFiles })) : activeOverlay === 'agents' ? (React.createElement(AgentDashboard, { agents: agents })) : activeOverlay === 'events' ? (React.createElement(Box, { flexGrow: 1, borderStyle: "round", borderColor: zen.border },
@@ -168,7 +168,7 @@ export const TUI = ({ mode: initialMode = 'code', preset: initialPreset = 'solo'
                         React.createElement(Text, { color: zen.accent }, "/diff"),
                         " for details.")))),
             sidebarVisible && (React.createElement(Box, { flexDirection: "column", width: layout.sidebarWidth, marginLeft: 1, borderStyle: "single", borderColor: zen.border },
-                React.createElement(Sidebar, { sessionId: sessionId, mode: mode, preset: preset, agents: agents, costData: costData, tokenUsage: derivedTokenUsage, workingDir: workingDir, instructions: instructions, contentWidth: layout.sidebarContentWidth, onModeChange: handleModeChange, onPresetChange: handlePresetChange })))),
+                React.createElement(Sidebar, { sessionId: sessionId, mode: mode, preset: preset, agents: agents, costData: costData, tokenUsage: derivedTokenUsage, instructions: instructions, contentWidth: layout.sidebarContentWidth, onModeChange: handleModeChange, onPresetChange: handlePresetChange })))),
         React.createElement(Box, { height: footerHeight, justifyContent: "space-between", borderStyle: "single", borderColor: zen.border, paddingX: 1 },
             React.createElement(Text, { dimColor: true },
                 React.createElement(Text, { color: zen.accent }, "Ctrl+B"),

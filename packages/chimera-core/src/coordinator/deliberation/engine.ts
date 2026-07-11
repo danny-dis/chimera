@@ -51,6 +51,7 @@ import { PresetRouter, getAutoSelectionReason } from './preset-router.js';
 import type { ComplexityScore } from '../../types/router.js';
 import { TaskRouter } from '../../task-router.js';
 import { CHIMERA_CORE_IDENTITY } from '../../prompts.js';
+import { zodToJsonSchema } from '../../zod-json.js';
 
 import type {
   DeliberationAnalysis,
@@ -367,8 +368,33 @@ export class DeliberationEngine {
       }));
     }
 
-    // 4. Execute subtasks in parallel
-    const spawner = new SubAgentSpawner(this.deps.eventStream);
+    // File-writing sub-tasks get tool definitions so hive sub-agents emit
+    // write_file/edit_file tool_calls (landing real files) instead of
+    // narrating code as text. Conversational/analysis tasks don't need tools.
+    const wantsFiles = !TaskRouter.isConversationalTask(cfg.task);
+    let fileTools: Array<{ name: string; description: string; parameters: Record<string, unknown> }> = [];
+    if (wantsFiles && this.deps.toolRegistry) {
+      const WRITE_EDIT = new Set(['write_file', 'edit_file', 'read_file']);
+      for (const tool of this.deps.toolRegistry.getAll()) {
+        if (WRITE_EDIT.has(tool.name)) {
+          fileTools.push({
+            name: tool.name,
+            description: tool.description,
+            parameters: tool.parameters ? (zodToJsonSchema(tool.parameters as any) as Record<string, unknown>) : { type: 'object' },
+          });
+        }
+      }
+    }
+    if (fileTools.length > 0) {
+      subTasks = subTasks.map((st) => ({ ...st, tools: fileTools }));
+    }
+
+    // 4. Execute subtasks in parallel (wire tool executor so sub-agents can write)
+    const spawner = new SubAgentSpawner(this.deps.eventStream, undefined, undefined, undefined, {
+      toolExecutor: this.deps.toolExecutor,
+      toolRegistry: this.deps.toolRegistry,
+      workspaceRoot: this.deps.workspaceRoot,
+    });
     const subResults: SubTaskResult[] = await spawner.executeAll(subTasks);
 
     // 5. Aggregate results

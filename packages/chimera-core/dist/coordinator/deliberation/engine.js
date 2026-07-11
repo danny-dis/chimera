@@ -28,6 +28,7 @@ const llm_router_js_1 = require("../llm-router.js");
 const preset_router_js_1 = require("./preset-router.js");
 const task_router_js_1 = require("../../task-router.js");
 const prompts_js_1 = require("../../prompts.js");
+const zod_json_js_1 = require("../../zod-json.js");
 class DeliberationEngine {
     deps;
     constructor(deps) {
@@ -98,12 +99,12 @@ class DeliberationEngine {
                 soloConfig.eternalCoT = complexity.overall >= 0.5;
             }
             else {
-                // No taskRouter available to classify complexity. For a single
-                // (often small) model, defaulting the thinker ON causes weak models
-                // to over-plan and "ask for clarification" instead of acting.
-                // Default it OFF so the writer executes directly; opt in via
-                // eternalCoT: true when a stronger model is configured.
-                soloConfig.eternalCoT = false;
+                // No taskRouter available to classify complexity. Safe fallback per
+                // the established contract (see repo memory: CoT safe-fallback
+                // eternalCoT default reverted to true): enable the strategic thinker
+                // so a single model still reasons before acting. Opt out via
+                // eternalCoT: false when a weaker model is configured.
+                soloConfig.eternalCoT = true;
             }
         }
         const context = { depth: this.deps.context?.depth ?? 0 };
@@ -273,8 +274,32 @@ class DeliberationEngine {
                 provider: this.deps.providerFactory(cfg.models[i % cfg.models.length]),
             }));
         }
-        // 4. Execute subtasks in parallel
-        const spawner = new sub_agent_spawner_js_1.SubAgentSpawner(this.deps.eventStream);
+        // File-writing sub-tasks get tool definitions so hive sub-agents emit
+        // write_file/edit_file tool_calls (landing real files) instead of
+        // narrating code as text. Conversational/analysis tasks don't need tools.
+        const wantsFiles = !task_router_js_1.TaskRouter.isConversationalTask(cfg.task);
+        let fileTools = [];
+        if (wantsFiles && this.deps.toolRegistry) {
+            const WRITE_EDIT = new Set(['write_file', 'edit_file', 'read_file']);
+            for (const tool of this.deps.toolRegistry.getAll()) {
+                if (WRITE_EDIT.has(tool.name)) {
+                    fileTools.push({
+                        name: tool.name,
+                        description: tool.description,
+                        parameters: tool.parameters ? (0, zod_json_js_1.zodToJsonSchema)(tool.parameters) : { type: 'object' },
+                    });
+                }
+            }
+        }
+        if (fileTools.length > 0) {
+            subTasks = subTasks.map((st) => ({ ...st, tools: fileTools }));
+        }
+        // 4. Execute subtasks in parallel (wire tool executor so sub-agents can write)
+        const spawner = new sub_agent_spawner_js_1.SubAgentSpawner(this.deps.eventStream, undefined, undefined, undefined, {
+            toolExecutor: this.deps.toolExecutor,
+            toolRegistry: this.deps.toolRegistry,
+            workspaceRoot: this.deps.workspaceRoot,
+        });
         const subResults = await spawner.executeAll(subTasks);
         // 5. Aggregate results
         const aggregator = new result_aggregator_js_1.ResultAggregator(mergeProvider);

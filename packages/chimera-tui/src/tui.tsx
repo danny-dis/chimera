@@ -29,7 +29,6 @@ export const TUI: React.FC<TUIProps> = ({
   diffFiles = [],
   events: initialEvents = [],
   activeTool,
-  workingDir,
   instructions,
   tokenUsage,
   onSendMessage,
@@ -191,11 +190,9 @@ export const TUI: React.FC<TUIProps> = ({
       <Box height={statusBarHeight}>
         <StatusBar
           mode={mode}
-          costData={costData}
           agents={agents}
           activeTool={activeTool}
           sidebarVisible={sidebarVisible}
-          workingDir={workingDir}
         />
       </Box>
 
@@ -249,7 +246,6 @@ export const TUI: React.FC<TUIProps> = ({
               agents={agents}
               costData={costData}
               tokenUsage={derivedTokenUsage}
-              workingDir={workingDir}
               instructions={instructions}
               contentWidth={layout.sidebarContentWidth}
               onModeChange={handleModeChange}

@@ -194,11 +194,14 @@ exports.writeFileTool = {
     execute: async (params, context) => {
         const resolved = resolveAndValidate(params.path, context.workspaceRoot);
         let created = false;
+        let existing = '';
         try {
             await fs_1.promises.access(resolved);
             if (!params.overwrite) {
                 throw new Error(`File already exists and overwrite is false: ${params.path}`);
             }
+            // Read the current content so we can defend against truncated re-writes.
+            existing = await fs_1.promises.readFile(resolved, 'utf-8');
         }
         catch (err) {
             const code = err.code;
@@ -211,10 +214,100 @@ exports.writeFileTool = {
             }
         }
         const content = Buffer.from(params.content, 'utf-8');
+        // Small/free models routinely emit a *truncated* tool-call: the content
+        // argument gets cut mid-token, mid-bracket, or with unterminated strings.
+        // Accepting such a write silently destroys data and produces a broken
+        // file. Reject content that is empty or structurally incomplete so the
+        // orchestrator's completion gate can flag the task instead of reporting
+        // a false `done`. This is deliberately conservative (low false-positive):
+        // only obviously-unterminated content is refused.
+        if (params.content.length === 0) {
+            throw new Error('Refusing empty write: content must be non-empty.');
+        }
+        const truncated = contentLooksTruncated(params.content);
+        if (truncated) {
+            throw new Error('Refusing truncated write: content appears incomplete ' +
+                '(unbalanced brackets/quotes or ends mid-token). Re-emit the complete file content.');
+        }
         await fs_1.promises.writeFile(resolved, content);
         return { path: params.path, bytesWritten: content.length, created };
     },
 };
+/**
+ * Heuristic: is `content` likely a truncated tool-call argument?
+ * Conservative by design — never rejects well-formed content. Flags content
+ * with unbalanced delimiters or that ends inside an unterminated string/bracket
+ * (a classic mid-token cut). Whitespace-only trailing content is normal and
+ * allowed.
+ */
+function contentLooksTruncated(s) {
+    const trimmed = s.replace(/\s+$/, '');
+    if (trimmed.length === 0)
+        return true;
+    const openers = { '(': ')', '[': ']', '{': '}' };
+    const stack = [];
+    let i = 0;
+    while (i < trimmed.length) {
+        const ch = trimmed[i];
+        const next = trimmed[i + 1];
+        // Line comment
+        if (ch === '/' && next === '/') {
+            while (i < trimmed.length && trimmed[i] !== '\n')
+                i++;
+            continue;
+        }
+        // Block comment
+        if (ch === '/' && next === '*') {
+            i += 2;
+            while (i < trimmed.length && !(trimmed[i] === '*' && trimmed[i + 1] === '/'))
+                i++;
+            i += 2;
+            continue;
+        }
+        // String / template literal — skip its entire body.
+        if (ch === '"' || ch === "'" || ch === '`') {
+            const q = ch;
+            i++;
+            while (i < trimmed.length) {
+                if (trimmed[i] === '\\') {
+                    i += 2;
+                    continue;
+                }
+                if (trimmed[i] === q) {
+                    i++;
+                    break;
+                }
+                i++;
+            }
+            // Ran off the end without a closing quote -> truncated.
+            if (i >= trimmed.length)
+                return true;
+            continue;
+        }
+        if (ch in openers) {
+            stack.push(ch);
+            i++;
+            continue;
+        }
+        if (ch === ')' || ch === ']' || ch === '}') {
+            const expect = ch === ')' ? '(' : ch === ']' ? '[' : '{';
+            if (stack.pop() !== expect)
+                return true;
+            i++;
+            continue;
+        }
+        i++;
+    }
+    if (stack.length > 0)
+        return true;
+    // Ends mid-token: a line ending in a known statement keyword that requires a
+    // body/value. Conservative — only flags when the final token is such a
+    // keyword followed by nothing closing it.
+    if (/(?:^|[^A-Za-z0-9_$])(return|function|const|let|var|export|import|await|async|if|for|while|class|else|public|private|interface|type|enum)\s*[A-Za-z0-9_$.({[]*$/.test(trimmed)) {
+        return true;
+    }
+    return false;
+}
 // ── list_directory ───────────────────────────────────────────────────────────
 const ListDirectoryParamsSchema = zod_1.z.object({
     path: zod_1.z.string().optional(),

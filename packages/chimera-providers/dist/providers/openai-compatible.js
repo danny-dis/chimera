@@ -227,6 +227,32 @@ class OpenAICompatibleProvider {
             headers: this.headers,
             body: JSON.stringify(body),
         });
+        // Some OpenAI-compatible gateways (e.g. OpenGateway's tencent/hy3 free
+        // route) reject `response_format: {type:"json_object"}` with a 400, even
+        // though they handle tools and normal chat fine. Rather than fail the
+        // whole task, transparently retry once without response_format. This
+        // keeps structured-output requests working on providers that support it
+        // and gracefully degrades on those that don't — no config change needed.
+        if (!response.ok && response.status === 400 && body.response_format) {
+            const retryBody = { ...body };
+            delete retryBody.response_format;
+            const retryResponse = await this.fetchJson('/v1/chat/completions', {
+                method: 'POST',
+                headers: this.headers,
+                body: JSON.stringify(retryBody),
+            });
+            if (retryResponse.ok) {
+                const json = (await retryResponse.json());
+                const result = parseCompletionResult(json);
+                if (!result.content && (!result.toolCalls || result.toolCalls.length === 0)) {
+                    throw new errors_js_1.ProviderError(`Model "${this.model}" returned empty content with no tool calls. This may indicate a content filter, rate limit, or provider issue.`, this.modelInfo.provider);
+                }
+                return { ...result, rawContent: result.content };
+            }
+            // Retry also failed — surface the original 400 error.
+            const errorBody = await response.json().catch(() => null);
+            mapError(response.status, errorBody, this.modelInfo.provider);
+        }
         if (!response.ok) {
             const errorBody = await response.json().catch(() => null);
             mapError(response.status, errorBody, this.modelInfo.provider);

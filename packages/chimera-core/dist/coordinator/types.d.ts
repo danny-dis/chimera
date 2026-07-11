@@ -25,6 +25,17 @@ export interface SubTask {
     type?: SubTaskType;
     /** Optional priority for ordering. */
     priority?: number;
+    /**
+     * Optional tool definitions (OpenAI-style) for file-writing sub-tasks.
+     * When present, the spawner passes them to the sub-agent and executes any
+     * tool_calls it emits (write_file/edit_file) on the workspace, so hive
+     * sub-agents can land real files instead of narrating code as text.
+     */
+    tools?: Array<{
+        name: string;
+        description: string;
+        parameters: Record<string, unknown>;
+    }>;
 }
 export interface SubTaskResult {
     subTaskId: string;

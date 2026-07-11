@@ -11,6 +11,15 @@ const config_loader_js_1 = require("../config-loader.js");
 let tmpDir;
 (0, vitest_1.beforeEach)(async () => {
     tmpDir = await fs_1.promises.mkdtemp(path_1.default.join(os_1.default.tmpdir(), 'chimera-daemon-test-'));
+    // Isolate provider env so autoGenerateConfig only sees what each test sets.
+    for (const k of [
+        'ANTHROPIC_API_KEY', 'ANTHROPIC_MODEL',
+        'OPENAI_API_KEY', 'OPENAI_MODEL',
+        'GOOGLE_API_KEY', 'GOOGLE_MODEL',
+        'OLLAMA_MODEL', 'OPENROUTER_API_KEY', 'OPENROUTER_MODEL', 'OPENROUTER_BASE_URL',
+    ]) {
+        delete process.env[k];
+    }
 });
 (0, vitest_1.afterEach)(async () => {
     await fs_1.promises.rm(tmpDir, { recursive: true, force: true });
@@ -119,10 +128,15 @@ const validConfig = {
             delete process.env.OLLAMA_MODEL;
             const cfg = await (0, config_loader_js_1.autoGenerateConfig)(tmpDir);
             (0, vitest_1.expect)(cfg).not.toBeNull();
-            (0, vitest_1.expect)(cfg.providers).toHaveLength(2);
+            // A single detected provider is auto-assigned to all three roles so the
+            // quality gate runs out-of-the-box (primary=writer, secondary=reviewer,
+            // tertiary=challenger).
+            (0, vitest_1.expect)(cfg.providers).toHaveLength(3);
             (0, vitest_1.expect)(cfg.providers[0].role).toBe('writer');
             (0, vitest_1.expect)(cfg.providers[0].provider).toBe('anthropic');
             (0, vitest_1.expect)(cfg.providers[1].role).toBe('reviewer');
+            (0, vitest_1.expect)(cfg.providers[1].provider).toBe('anthropic');
+            (0, vitest_1.expect)(cfg.providers[2].role).toBe('challenger');
         });
         (0, vitest_1.it)('generates config from multiple providers', async () => {
             process.env.ANTHROPIC_API_KEY = 'test-key';

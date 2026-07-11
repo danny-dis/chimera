@@ -1,5 +1,4 @@
 import { EventStream } from '../event-stream.js';
-import { existsSync, readdirSync, statSync } from 'fs';
 import type { ModelRegistry, ModelEntry } from '@chimera/providers';
 import { zodToJsonSchema } from '../zod-json.js';
 import type { CostTracker } from '../cost-tracker.js';
@@ -7,7 +6,8 @@ import type { ToolExecutorInterface, ToolRegistryInterface } from '../session-or
 import { ResponseSynthesizer, type SynthesisInput } from '../response-synthesizer.js';
 import { sanitizeWriterOutput, sanitizeReviewerOutput } from './output-sanitizer.js';
 import { TaskRouter } from '../task-router.js';
-import { runToolCalls } from './tool-execution-helper.js';
+import { runToolCalls, runAgentToolLoop, countSourceFiles } from './tool-execution-helper.js';
+import { executeProseActions } from './file-write-fallback.js';
 import type {
   SoloConfig,
   SoloContext,
@@ -76,6 +76,16 @@ interface SoloExecutorDeps {
  *   8. Defensive `result.usage?.x ?? 0` access
  *   9. Test coverage — smoke tests live in `__tests__/`
  */
+
+/**
+ * Best-effort extraction of a single target filename from a task string, so a
+ * bare fenced code block can be written to the file the user asked for.
+ */
+function expectedPathFromTask(task: string): string | undefined {
+  const m = task.match(/\b([A-Za-z0-9_\-./]+\.(?:rs|ts|js|jsx|tsx|py|toml|json|md|ya?ml|go|java|cpp|c|rb|php|txt|html|css|sh))\b/);
+  return m ? m[1] : undefined;
+}
+
 export class SoloExecutor {
   private eventStream: EventStream;
   private registry: ModelRegistry;
@@ -119,7 +129,12 @@ export class SoloExecutor {
     const startTime = Date.now();
     let totalTokens = 0;
     let totalCostUsd = 0;
+    let wroteFileCount = 0;
     const selfVerify = config.selfVerify ?? true;
+    // Whether the task wants files created on disk (used for the completion gate).
+    const wantsFiles = /\b(create|scaffold|write|generate|build|implement|make|port|add)\b/i.test(task) ||
+      /write_file|\.(rs|ts|js|py|toml|json|md|ya?ml|go|java|cpp|c|rb|php)$/i.test(task) ||
+      /Cargo\.toml|src[\\/]|\b(src|lib|app|components|tests?)\b[\\/]/i.test(task);
 
     // ── Recursion guard ───────────────────────────────────────────────
     const maxDepth = config.maxDepth ?? 1;
@@ -183,105 +198,60 @@ export class SoloExecutor {
       // turns so the writer can read→write→continue until the task is done.
       let currentToolCalls = res.toolCalls;
       let lastContent = res.content;
+      let draftContentForLoop = draftContent;
       const MAX_TOOL_ROUNDS = Math.max(1, config.maxDepth ?? 4);
       let round = 0;
-      let wroteFileCount = 0;
-      while (
-        currentToolCalls &&
-        currentToolCalls.length > 0 &&
-        this.toolExecutor &&
-        this.workspaceRoot &&
-        round < MAX_TOOL_ROUNDS
-      ) {
-        round++;
-        const toolResults = await runToolCalls({
-          toolCalls: currentToolCalls,
-          toolExecutor: this.toolExecutor,
-          toolRegistry: this.toolRegistry,
-          eventStream: this.eventStream,
-          workspaceRoot: this.workspaceRoot,
-          sessionId: `solo-${config.model}`,
-        });
-        for (const tc of currentToolCalls) {
-          if (tc.name === 'write_file') wroteFileCount++;
-        }
 
-        const provider = providerFactory(config.model);
-        try {
-          const followUp = await this.followUpWithToolResults(
-            provider,
-            config,
-            lastContent,
-            currentToolCalls,
-            toolResults,
-            wroteFileCount,
-          );
-          lastContent = sanitizeWriterOutput(followUp.content);
-          totalTokens += followUp.inputTokens + followUp.outputTokens;
-          const followUpCost = this.computeCost(config.model, followUp.inputTokens, followUp.outputTokens);
-          totalCostUsd += followUpCost;
-          this.recordSpend(config.model, followUpCost);
-          // Continue looping if the model emitted more tool calls.
-          currentToolCalls = followUp.toolCalls ?? [];
-        } catch {
-          currentToolCalls = [];
-        }
+      // Shared bounded LLM→tool→feedback loop (single source of truth).
+      const loop = await runAgentToolLoop({
+        provider: providerFactory(config.model),
+        messages: [{ role: 'user', content: task }],
+        options: { temperature: config.temperature, maxTokens: config.maxCompletionTokens },
+        toolExecutor: this.toolExecutor,
+        toolRegistry: this.toolRegistry,
+        eventStream: this.eventStream,
+        workspaceRoot: this.workspaceRoot,
+        sessionId: `solo-${config.model}`,
+        initialContent: res.content,
+        initialToolCalls: currentToolCalls,
+        maxRounds: MAX_TOOL_ROUNDS,
+        mode: 'solo',
+        forceMinFiles: 1,
+        wantsFiles,
+        task,
+        systemPrompt: config.systemPrompt,
+        toolDefs: this.toolRegistry ? this.listToolDefs() : undefined,
+        sanitize: sanitizeWriterOutput,
+      });
+      round = loop.round;
+      wroteFileCount += loop.wroteFileCount;
+      lastContent = loop.content;
+      totalTokens += loop.inputTokens + loop.outputTokens;
+      if (draftContentForLoop.trim().length === 0 && loop.round > 0) {
+        draftContent = loop.content || 'Task executed via tools.';
+      } else if (loop.round > 0) {
+        draftContent = loop.content || draftContent;
       }
-      // Harness-level guard (ground-truth on disk, not tool-call counts).
-      // Small models sometimes write ONE file then dump the rest as markdown
-      // in their final message — wroteFileCount would be >0 and the old guard
-      // stayed silent, leaving a broken project. Here we count ACTUAL source
-      // files on disk and, for any task that wants creation, keep forcing
-      // write turns until enough real files exist (or we hit a retry cap).
-      const wantsFiles = /\b(create|scaffold|write|generate|build|implement|make|port|add)\b/i.test(task) ||
-        /write_file|Cargo\.toml|src\/|\.rs|\.ts|\.toml|\.json|\.md/i.test(task);
-      const FORCE_MIN_FILES = 3; // a multi-file scaffold must land ≥ this many source files
-      if (wantsFiles && this.toolExecutor && this.workspaceRoot && round > 0) {
-        const countSourceFiles = (dir: string): number => {
-          if (!existsSync(dir)) return 0;
-          let n = 0;
-          for (const entry of readdirSync(dir)) {
-            if (entry === 'target' || entry === 'node_modules' || entry === '.git' ||
-                entry === '.chimera' || entry.startsWith('.')) continue;
-            const full = `${dir}/${entry}`;
-            try {
-              if (statSync(full).isDirectory()) n += countSourceFiles(full);
-              else if (/\.(rs|ts|toml|json|md|ya?ml|lock)$/.test(entry)) n++;
-            } catch { /* ignore unreadable */ }
-          }
-          return n;
-        };
-        let realFiles = countSourceFiles(this.workspaceRoot);
-        let forceAttempts = 0;
-        const MAX_FORCE = 3;
-        while (realFiles < FORCE_MIN_FILES && forceAttempts < MAX_FORCE) {
-          forceAttempts++;
-          try {
-            const forceProvider = providerFactory(config.model);
-            const forced = await this.forceWriteTurn(forceProvider, config, lastContent, task);
-            lastContent = sanitizeWriterOutput(forced.content);
-            totalTokens += forced.inputTokens + forced.outputTokens;
-            const forcedCost = this.computeCost(config.model, forced.inputTokens, forced.outputTokens);
-            totalCostUsd += forcedCost;
-            this.recordSpend(config.model, forcedCost);
-            if (forced.toolCalls && forced.toolCalls.length > 0) {
-              // Re-count write_file calls for accurate reporting.
-              for (const tc of forced.toolCalls) {
-                if (tc.name === 'write_file') wroteFileCount++;
-              }
-              await runToolCalls({
-                toolCalls: forced.toolCalls,
-                toolExecutor: this.toolExecutor,
-                toolRegistry: this.toolRegistry,
-                eventStream: this.eventStream,
-                workspaceRoot: this.workspaceRoot,
-                sessionId: `solo-${config.model}`,
-              });
-            }
+      // Fallback: the model sometimes NARRATES file ops instead of emitting
+      // native tool calls (common on small/free models). Parse that prose and
+      // execute it for real so the task actually lands on disk.
+      let realFiles = countSourceFiles(this.workspaceRoot);
+      if (wantsFiles && realFiles < 1 && this.toolExecutor && this.workspaceRoot) {
+        try {
+          const proseFiles = await executeProseActions(draftContent || lastContent, {
+            eventStream: this.eventStream,
+            toolExecutor: this.toolExecutor,
+            toolRegistry: this.toolRegistry,
+            workspaceRoot: this.workspaceRoot,
+            sessionId: `solo-${config.model}`,
+            expectedPath: expectedPathFromTask(task),
+          });
+          if (proseFiles > 0) {
+            wroteFileCount += proseFiles;
             realFiles = countSourceFiles(this.workspaceRoot);
-          } catch {
-            /* best-effort; do not crash the run */
           }
+        } catch {
+          /* best-effort */
         }
       }
       // If the model never produced a usable closing message but tools ran,
@@ -291,12 +261,38 @@ export class SoloExecutor {
       } else if (round > 0) {
         draftContent = lastContent || draftContent;
       }
+
+      // Post-loop completion fallback (runs for ALL file-writing tasks, even
+      // when the model emitted zero tool calls). Small/free writers often
+      // NARRATE file ops ("### ACTION: WRITE greeter.js" + code block) instead
+      // of calling write_file. Parse that prose and execute it so the task
+      // actually lands on disk; then gate the result on real files.
+      if (wantsFiles && this.toolExecutor && this.workspaceRoot) {
+        const proseSource = draftContent || lastContent;
+        let realFiles = countSourceFiles(this.workspaceRoot);
+        if (realFiles < 1 && proseSource) {
+          try {
+            const proseFiles = await executeProseActions(proseSource, {
+              eventStream: this.eventStream,
+              toolExecutor: this.toolExecutor,
+              toolRegistry: this.toolRegistry,
+              workspaceRoot: this.workspaceRoot,
+              sessionId: `solo-${config.model}`,
+              expectedPath: expectedPathFromTask(task),
+            });
+            for (let i = 0; i < proseFiles; i++) wroteFileCount++;
+            realFiles = countSourceFiles(this.workspaceRoot);
+          } catch {
+            /* best-effort */
+          }
+        }
+      }
     } catch (err) {
       return this.degraded(`draft call failed: ${String(err)}`, totalTokens, totalCostUsd, startTime);
     }
 
     if (!selfVerify) {
-      return this.finalizeSolo(draftContent, totalTokens, totalCostUsd, startTime, 1, thought);
+      return this.finalizeSolo(draftContent, totalTokens, totalCostUsd, startTime, 1, thought, wroteFileCount, wantsFiles);
     }
 
     // Budget check after draft
@@ -324,6 +320,12 @@ export class SoloExecutor {
     // useful to the user.
     const finalResponse = this.chooseBestResponse(draftContent, reviewContent);
 
+    // Completion gate (also applied on the self-verify path): a task that
+    // wanted files on disk must have actually written one. A model can
+    // narrate success ("File written successfully") without ever calling
+    // write_file, so we assert ground truth via wroteFileCount.
+    const missingFiles = wantsFiles && wroteFileCount === 0;
+
     const analysis: Partial<SoloAnalysis> = {
       thought,
       finalResponse,
@@ -331,10 +333,16 @@ export class SoloExecutor {
       conflicts: [],
       uniqueInsights: [reviewContent],
       blindSpots: [],
-      confidence: 0.9, // Higher confidence after self-correction
+      confidence: missingFiles ? 0.1 : 0.9, // Higher confidence after self-correction
     };
 
-    this.safeEmit({ type: 'final_response', status: 'done', cost: totalCostUsd, agentCount: config.eternalCoT ? 3 : 2, output: finalResponse });
+    this.safeEmit({
+      type: 'final_response',
+      status: missingFiles ? 'needs_user' : 'done',
+      cost: totalCostUsd,
+      agentCount: config.eternalCoT ? 3 : 2,
+      output: finalResponse,
+    });
 
     return {
       output: finalResponse,
@@ -342,7 +350,9 @@ export class SoloExecutor {
       totalTokens,
       totalCostUsd,
       durationMs: Date.now() - startTime,
+      // Missing-file is a needs_user signal, not a degraded engine error.
       degraded: false,
+      ...(missingFiles ? { degradationReason: 'task wanted files but none were written to disk' } : {}),
     };
   }
 
@@ -551,8 +561,13 @@ export class SoloExecutor {
     totalCostUsd: number,
     startTime: number,
     agentCount: number,
-    thought: string = ''
+    thought: string = '',
+    filesWritten = 0,
+    wantsFiles = false,
   ): SoloResult {
+    // Completion gate: a task that wanted files on disk must actually have
+    // written at least one, or we report needs_user instead of a false `done`.
+    const missingFiles = wantsFiles && filesWritten === 0;
     const analysis: Partial<SoloAnalysis> = {
       thought,
       finalResponse: output,
@@ -560,16 +575,27 @@ export class SoloExecutor {
       conflicts: [],
       uniqueInsights: [],
       blindSpots: [],
-      confidence: 0.8,
+      confidence: missingFiles ? 0.1 : 0.8,
     };
-    this.safeEmit({ type: 'final_response', status: 'done', cost: totalCostUsd, agentCount, output });
+    this.safeEmit({
+      type: 'final_response',
+      status: missingFiles ? 'needs_user' : 'done',
+      cost: totalCostUsd,
+      agentCount,
+      output,
+    });
     return {
       output,
       analysis,
       totalTokens,
       totalCostUsd,
       durationMs: Date.now() - startTime,
+      // A file-writing task that produced no file is a `needs_user` signal
+      // (the model narrated instead of writing), NOT a degraded engine error.
+      // We keep confidence low so the orchestrator maps it to `needs_user`
+      // rather than the `degraded → error` branch.
       degraded: false,
+      ...(missingFiles ? { degradationReason: 'task wanted files but none were written to disk' } : {}),
     };
   }
 

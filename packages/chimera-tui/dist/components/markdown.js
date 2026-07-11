@@ -203,10 +203,10 @@ const BlockTokenRenderer = ({ token }) => {
             const highlighted = token.lang
                 ? token.lines.map((line) => tokenizeCode(line, token.lang))
                 : token.lines.map((line) => [{ value: line, color: 'white' }]);
-            return (React.createElement(Box, { flexDirection: "column", marginTop: 1, borderStyle: "single", borderColor: zen.muted },
+            return (React.createElement(Box, { flexDirection: "column", marginTop: 1, borderStyle: "single", borderColor: zen.muted, width: "100%" },
                 token.lang && (React.createElement(Box, { paddingLeft: 1 },
                     React.createElement(Text, { dimColor: true }, token.lang))),
-                highlighted.map((tokens, j) => (React.createElement(Box, { key: j, paddingLeft: 1 }, tokens.map((t, k) => (React.createElement(Text, { key: k, color: t.color }, t.value))))))));
+                highlighted.map((tokens, j) => (React.createElement(Box, { key: j, paddingLeft: 1, width: "100%" }, tokens.map((t, k) => (React.createElement(Text, { key: k, color: t.color }, t.value))))))));
         }
         case 'list_item': {
             const bullet = token.ordered ? `${token.index ?? 1}.` : '•';

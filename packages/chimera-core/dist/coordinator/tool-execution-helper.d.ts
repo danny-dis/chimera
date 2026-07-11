@@ -17,6 +17,7 @@
 import { EventStream } from '../event-stream.js';
 import type { ToolExecutorInterface, ToolRegistryInterface } from '../session-orchestrator.js';
 import type { ToolCall, ToolCallResult } from '../types/agent.js';
+export { runAgentToolLoop, countSourceFiles, type RunAgentToolLoopParams, type RunAgentToolLoopResult, type AgentToolLoopMode, type LoopChatMessage, } from './agent-tool-loop.js';
 /** Shape of the security check injected by the orchestrator. */
 export type ToolOutputCheck = (output: string, toolName?: string) => {
     safe: boolean;

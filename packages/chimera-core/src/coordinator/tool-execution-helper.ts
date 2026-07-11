@@ -22,6 +22,17 @@ import type {
 } from '../session-orchestrator.js';
 import type { ToolCall, ToolCallResult } from '../types/agent.js';
 
+// Re-export the shared agent tool loop so callers can import from a single
+// helper module (tool-execution-helper.js) if they prefer.
+export {
+  runAgentToolLoop,
+  countSourceFiles,
+  type RunAgentToolLoopParams,
+  type RunAgentToolLoopResult,
+  type AgentToolLoopMode,
+  type LoopChatMessage,
+} from './agent-tool-loop.js';
+
 /** Shape of the security check injected by the orchestrator. */
 export type ToolOutputCheck = (output: string, toolName?: string) => {
   safe: boolean;

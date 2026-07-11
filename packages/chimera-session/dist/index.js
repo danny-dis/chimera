@@ -1,9 +1,12 @@
 import { promises as fs } from 'fs';
 import path from 'path';
-import { randomBytes } from 'crypto';
+import { randomInt } from 'crypto';
 export { SessionStore as ConversationSessionStore, FileStorageAdapter } from './session-store.js';
 // Session sync protocol — multi-device synchronization
 export { SessionSynchronizer, FileSyncAdapter, createSessionSynchronizer, } from './sync-protocol.js';
+// ── Random session name word pools ───────────────────────────────────────
+// Two words joined by a hyphen produce a readable, memorable session name
+// (e.g. "swift-falcon", "calm-ocean"). Avoids the opaque timestamp+hash id.
 export class CheckpointStore {
     storePath;
     constructor(storePath) {
@@ -14,7 +17,7 @@ export class CheckpointStore {
     }
     generateSessionId() {
         const timestamp = Date.now().toString(36);
-        const random = randomBytes(4).toString('hex');
+        const random = randomInt(0, 0xffffffff).toString(16).padStart(8, '0');
         return `${timestamp}-${random}`;
     }
     async save(checkpoint) {

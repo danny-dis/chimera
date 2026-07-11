@@ -13,7 +13,6 @@ interface SidebarProps {
   agents: Agent[];
   costData: CostData;
   tokenUsage?: { input: number; output: number; total: number };
-  workingDir?: string;
   instructions?: string[];
   contentWidth?: number;
   onModeChange?: (mode: import('@chimera/core').Mode) => void;
@@ -36,7 +35,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
   agents,
   costData,
   tokenUsage,
-  workingDir,
   instructions,
   contentWidth,
   onModeChange,
@@ -98,12 +96,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
       </Section>
 
       {/* Working Directory */}
-      {workingDir && (
-        <Section label="Working Directory">
-          <Text>{truncate(workingDir, (contentWidth ?? 40) - 2)}</Text>
-        </Section>
-      )}
-
       {/* Instructions */}
       {instructions && instructions.length > 0 && (
         <Section label="Instructions">

@@ -8,7 +8,7 @@ const Section = ({ label, color = zen.fg, children, }) => (<Box flexDirection="c
     <Text bold color={color}>{label}</Text>
     {children}
   </Box>);
-export const Sidebar = ({ sessionId, mode, preset, agents, costData, tokenUsage, workingDir, instructions, contentWidth, onModeChange, onPresetChange, }) => {
+export const Sidebar = ({ sessionId, mode, preset, agents, costData, tokenUsage, instructions, contentWidth, onModeChange, onPresetChange, }) => {
     const totalTokens = tokenUsage?.total
         ?? agents.reduce((sum, a) => sum + a.tokenUsage.input + a.tokenUsage.output, 0);
     const inputTokens = tokenUsage?.input
@@ -51,10 +51,6 @@ export const Sidebar = ({ sessionId, mode, preset, agents, costData, tokenUsage,
       </Section>
 
       {/* Working Directory */}
-      {workingDir && (<Section label="Working Directory">
-          <Text>{truncate(workingDir, (contentWidth ?? 40) - 2)}</Text>
-        </Section>)}
-
       {/* Instructions */}
       {instructions && instructions.length > 0 && (<Section label="Instructions">
           {instructions.map((file, i) => (<Box key={i}>

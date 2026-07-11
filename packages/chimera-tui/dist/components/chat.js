@@ -67,8 +67,9 @@ const AnalysisSection = ({ analysis }) => {
  */
 function estimateMessageHeight(message, fitWidth) {
     let rows = 1; // header line (role + timestamp)
-    // Content area: subtract marginLeft=2 from the available width.
-    const contentWidth = Math.max(1, fitWidth - 4);
+    // Content area: subtract the chat box border+padding (4) and the
+    // message bubble's left margin (2) from the available width.
+    const contentWidth = Math.max(1, fitWidth - 6);
     const content = message.content ?? '';
     // Count explicit newlines + estimate wrapping per line.
     const lines = content.split('\n');

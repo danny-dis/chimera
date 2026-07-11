@@ -11,7 +11,6 @@ interface SidebarProps {
         output: number;
         total: number;
     };
-    workingDir?: string;
     instructions?: string[];
     contentWidth?: number;
     onModeChange?: (mode: import('@chimera/core').Mode) => void;

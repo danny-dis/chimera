@@ -79,7 +79,7 @@ export const Input = ({ onSubmit, autocomplete, placeholder = 'Type a message or
         };
     }, [disabled]);
     const isCommand = value.startsWith('/');
-    return (React.createElement(Box, { borderStyle: "round", borderColor: isCommand ? 'yellow' : 'blue', paddingLeft: 1, paddingRight: 1 },
+    return (React.createElement(Box, { borderStyle: "single", borderTop: true, borderColor: zen.border, paddingLeft: 1, paddingRight: 1 },
         React.createElement(Text, null, '> '),
         isCommand ? (React.createElement(Box, null,
             React.createElement(Text, { color: zen.warning }, value.split(/\s/)[0]),

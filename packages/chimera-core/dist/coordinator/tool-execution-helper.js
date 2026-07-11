@@ -16,7 +16,13 @@
  *     are injected by the orchestrator).
  */
 Object.defineProperty(exports, "__esModule", { value: true });
+exports.countSourceFiles = exports.runAgentToolLoop = void 0;
 exports.runToolCalls = runToolCalls;
+// Re-export the shared agent tool loop so callers can import from a single
+// helper module (tool-execution-helper.js) if they prefer.
+var agent_tool_loop_js_1 = require("./agent-tool-loop.js");
+Object.defineProperty(exports, "runAgentToolLoop", { enumerable: true, get: function () { return agent_tool_loop_js_1.runAgentToolLoop; } });
+Object.defineProperty(exports, "countSourceFiles", { enumerable: true, get: function () { return agent_tool_loop_js_1.countSourceFiles; } });
 /**
  * Execute each tool call and return a parallel-shaped result list, matching
  * the orchestrator's `executeToolCalls` contract exactly so results can be

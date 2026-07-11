@@ -95,7 +95,8 @@ function firstDep(deps, key) {
     return Object.prototype.hasOwnProperty.call(deps, key);
 }
 function detectFromPackageJson(pkg) {
-    const testCommand = pickScript(pkg, ['test', 'test:unit', 'vitest', 'jest', 'mocha']);
+    const testScript = pickScript(pkg, ['test', 'test:unit']);
+    const testCommand = testScript ? 'npm test' : pickScript(pkg, ['vitest', 'jest', 'mocha']);
     const buildCommand = pickScript(pkg, ['build', 'compile', 'tsc']);
     const lintCommand = pickScript(pkg, ['lint', 'eslint', 'biome']);
     const deps = { ...(pkg.dependencies ?? {}), ...(pkg.devDependencies ?? {}) };

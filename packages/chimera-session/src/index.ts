@@ -1,6 +1,6 @@
 import { promises as fs } from 'fs';
 import path from 'path';
-import { randomBytes } from 'crypto';
+import { randomInt } from 'crypto';
 import type { ChimeraEvent, Mode } from '@chimera/core';
 
 export type { Session, SessionSummary, ListOptions, StorageAdapter } from './session-store.js';
@@ -46,6 +46,10 @@ export interface CheckpointSummary {
   turnCount: number;
 }
 
+// ── Random session name word pools ───────────────────────────────────────
+// Two words joined by a hyphen produce a readable, memorable session name
+// (e.g. "swift-falcon", "calm-ocean"). Avoids the opaque timestamp+hash id.
+
 export class CheckpointStore {
   private storePath: string;
 
@@ -59,7 +63,7 @@ export class CheckpointStore {
 
   generateSessionId(): string {
     const timestamp = Date.now().toString(36);
-    const random = randomBytes(4).toString('hex');
+    const random = randomInt(0, 0xffffffff).toString(16).padStart(8, '0');
     return `${timestamp}-${random}`;
   }
 

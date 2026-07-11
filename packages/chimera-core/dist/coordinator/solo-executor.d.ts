@@ -17,25 +17,6 @@ interface SoloExecutorDeps {
     /** Optional tool registry — supplies tool definitions to the LLM. */
     toolRegistry?: ToolRegistryInterface;
 }
-/**
- * The simplest executor: one model answers one prompt.
- *
- * It supports two sub-modes:
- *   1. Direct (selfVerify=false): One LLM call.
- *   2. Self-Correction (selfVerify=true): Two sequential LLM calls
- *      (Writer -> Reviewer) using the same model.
- *
- * All 9 fusion patterns are applied:
- *   1. Defensive `safeEmit` — never throws on schema mismatches
- *   2. Factory pattern — `(modelId) => LLMProvider`
- *   3. Config knobs (temperature, maxCompletionTokens, budget, depth)
- *   4. `CostTracker.recordSpend` per call
- *   5. Recursion guard via `SoloContext.depth` + `maxDepth`
- *   6. Degraded fallback — never throws, returns `degraded: true` with reason
- *   7. 5-field analysis output
- *   8. Defensive `result.usage?.x ?? 0` access
- *   9. Test coverage — smoke tests live in `__tests__/`
- */
 export declare class SoloExecutor {
     private eventStream;
     private registry;

@@ -12,7 +12,7 @@ import { useLayout } from './hooks/use-layout.js';
 import { zen } from './theme.js';
 import { useFocus } from './hooks/use-focus.js';
 import { runCommand, autocompleteCommand } from './commands/commands.js';
-export const TUI = ({ mode: initialMode = 'code', preset: initialPreset = 'solo', sessionId = 'active', messages: initialMessages = [], agents: initialAgents = [], costData: initialCostData = { currentCost: 0, budget: 10, breakdown: [] }, sessions = [], diffFiles = [], events: initialEvents = [], activeTool, workingDir, instructions, tokenUsage, onSendMessage, onModeChange, onPresetChange, onSessionSelect, onSessionDelete, onExit, }) => {
+export const TUI = ({ mode: initialMode = 'code', preset: initialPreset = 'solo', sessionId = 'active', messages: initialMessages = [], agents: initialAgents = [], costData: initialCostData = { currentCost: 0, budget: 10, breakdown: [] }, sessions = [], diffFiles = [], events: initialEvents = [], activeTool, instructions, tokenUsage, onSendMessage, onModeChange, onPresetChange, onSessionSelect, onSessionDelete, onExit, }) => {
     const [messages, setMessages] = useState(initialMessages);
     const [agents, setAgents] = useState(initialAgents);
     const [costData, setCostData] = useState(initialCostData);
@@ -143,7 +143,7 @@ export const TUI = ({ mode: initialMode = 'code', preset: initialPreset = 'solo'
     const chatHeight = layout.height - statusBarHeight - footerHeight - inputHeight - 2;
     return (<Box flexDirection="column" height={layout.height}>
       <Box height={statusBarHeight}>
-        <StatusBar mode={mode} costData={costData} agents={agents} activeTool={activeTool} sidebarVisible={sidebarVisible} workingDir={workingDir}/>
+        <StatusBar mode={mode} agents={agents} activeTool={activeTool} sidebarVisible={sidebarVisible}/>
       </Box>
 
       <Box flexDirection="row" flexGrow={1} padding={1}>
@@ -168,7 +168,7 @@ export const TUI = ({ mode: initialMode = 'code', preset: initialPreset = 'solo'
 
         {/* Sidebar (conditional) */}
         {sidebarVisible && (<Box flexDirection="column" width={layout.sidebarWidth} marginLeft={1} borderStyle="single" borderColor={zen.border}>
-            <Sidebar sessionId={sessionId} mode={mode} preset={preset} agents={agents} costData={costData} tokenUsage={derivedTokenUsage} workingDir={workingDir} instructions={instructions} contentWidth={layout.sidebarContentWidth} onModeChange={handleModeChange} onPresetChange={handlePresetChange}/>
+            <Sidebar sessionId={sessionId} mode={mode} preset={preset} agents={agents} costData={costData} tokenUsage={derivedTokenUsage} instructions={instructions} contentWidth={layout.sidebarContentWidth} onModeChange={handleModeChange} onPresetChange={handlePresetChange}/>
           </Box>)}
       </Box>
 

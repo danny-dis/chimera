@@ -1,25 +1,60 @@
+# All providers use FREE-tier models. Three keys configured:
+#   OpenGateway (OPENGOV_*)  · Google (GOOGLE_*)  · Mistral (MISTRAL_*)
+# Role routing picks ONE provider per role (last entry wins per role),
+# so the strongest free model is placed last for each role.
+#
+# Writer  -> OpenGateway tencent/hy3 (free, Novita, built-in reasoning)
+# Reviewer -> Google Gemini 2.5 Flash (free quota)
+# Challenger -> Mistral open-mistral-7b (free)
+
 providers:
-  # Writer: NVIDIA NIM (big free model — llama-3.3-70b, supports response_format)
+  # Writer — OpenGateway tencent/hy3 (free, reasoning model).
   - name: writer
     provider: openai-compatible
-    model: meta/llama-3.1-70b-instruct
-    api_key: ${CHIMERA_CHEAP_API_KEY}
-    base_url: https://integrate.api.nvidia.com
+    model: tencent/hy3
+    api_key: ${OPENGOV_API_KEY}
+    base_url: ${OPENGOV_BASE_URL}
     role: writer
     timeout_ms: 180000
 
-  # Reviewer: NVIDIA NIM (fast free model)
+  # Reviewer — Google Gemini 2.5 Flash (free quota).
   - name: reviewer
-    provider: openai-compatible
-    model: meta/llama-3.1-8b-instruct
-    api_key: ${CHIMERA_CHEAP_API_KEY}
-    base_url: https://integrate.api.nvidia.com
-    role: reviewer
-    timeout_ms: 120000
-
-  # Challenger: Google (Gemini 2.5 Flash - has free quota)
-  - name: challenger
     provider: google
     model: gemini-2.5-flash
     api_key: ${GOOGLE_API_KEY}
+    role: reviewer
+    timeout_ms: 120000
+
+  # Challenger — Mistral open-mistral-7b (free).
+  - name: challenger
+    provider: mistral
+    model: open-mistral-7b
+    api_key: ${MISTRAL_API_KEY}
     role: challenger
+    timeout_ms: 120000
+
+modes:
+  code:
+    enabled: true
+    providers: [writer]
+    reviewer: reviewer
+    challenger: challenger
+    purpose: implement
+  ask:
+    enabled: true
+    providers: [writer]
+  plan:
+    enabled: true
+    providers: [writer]
+  debug:
+    enabled: true
+    providers: [writer]
+    reviewer: reviewer
+  review:
+    enabled: true
+    providers: [reviewer]
+  oal:
+    enabled: true
+    providers: [writer]
+    reviewer: reviewer
+    challenger: challenger

@@ -7,7 +7,7 @@ import { PresetSelector } from './preset-selector.js';
 const Section = ({ label, color = zen.fg, children, }) => (React.createElement(Box, { flexDirection: "column", marginTop: 1 },
     React.createElement(Text, { bold: true, color: color }, label),
     children));
-export const Sidebar = ({ sessionId, mode, preset, agents, costData, tokenUsage, workingDir, instructions, contentWidth, onModeChange, onPresetChange, }) => {
+export const Sidebar = ({ sessionId, mode, preset, agents, costData, tokenUsage, instructions, contentWidth, onModeChange, onPresetChange, }) => {
     const totalTokens = tokenUsage?.total
         ?? agents.reduce((sum, a) => sum + a.tokenUsage.input + a.tokenUsage.output, 0);
     const inputTokens = tokenUsage?.input
@@ -45,8 +45,6 @@ export const Sidebar = ({ sessionId, mode, preset, agents, costData, tokenUsage,
             React.createElement(Text, { dimColor: true },
                 formatCost(costData.currentCost),
                 " spent")),
-        workingDir && (React.createElement(Section, { label: "Working Directory" },
-            React.createElement(Text, null, truncate(workingDir, (contentWidth ?? 40) - 2)))),
         instructions && instructions.length > 0 && (React.createElement(Section, { label: "Instructions" }, instructions.map((file, i) => (React.createElement(Box, { key: i },
             React.createElement(Text, { color: zen.success }, "\u25CF "),
             React.createElement(Text, null, truncate(file, (contentWidth ?? 40) - 4))))))),

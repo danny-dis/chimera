@@ -15,6 +15,7 @@ export const ProviderTypeSchema = z.enum([
   'ollama',
   'openai-compatible',
   'mock',
+  'openrouter',
   'xai',
   'perplexity',
   'cohere',
@@ -81,6 +82,7 @@ function resolveBaseUrl(config: EnvProviderConfig): string {
 
   const urlMap: Record<string, string | undefined> = {
     openai: 'https://api.openai.com',
+    openrouter: 'https://openrouter.ai/api/v1',
     anthropic: 'https://api.anthropic.com',
     google: 'https://generativelanguage.googleapis.com',
     ollama: 'http://localhost:11434',
@@ -256,6 +258,7 @@ export class ProviderFactory {
 
       case 'openai':
       case 'openai-compatible':
+      case 'openrouter':
       case 'xai':
       case 'perplexity':
       case 'cohere':

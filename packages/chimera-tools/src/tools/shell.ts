@@ -107,12 +107,16 @@ export const runShellCommandTool: ToolDefinition<typeof RunShellCommandParamsSch
     let result: { stdout: string; stderr: string; exitCode: number };
 
     try {
-      const execResult = await execa('bash', ['-c', params.command], {
+      const isWindows = process.platform === 'win32';
+      const shellBin = isWindows ? 'cmd.exe' : 'bash';
+      const shellArgs = isWindows ? ['/c', params.command] : ['-c', params.command];
+      const execResult = await execa(shellBin, shellArgs, {
         cwd: workingDir,
         timeout,
         maxBuffer: MAX_OUTPUT_SIZE,
         env: filteredEnv,
         reject: false,
+        windowsHide: isWindows,
       });
       result = {
         stdout: execResult.stdout,

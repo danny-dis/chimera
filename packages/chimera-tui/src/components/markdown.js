@@ -207,11 +207,11 @@ const BlockTokenRenderer = ({ token }) => {
             const highlighted = token.lang
                 ? token.lines.map((line) => tokenizeCode(line, token.lang))
                 : token.lines.map((line) => [{ value: line, color: 'white' }]);
-            return (<Box flexDirection="column" marginTop={1} borderStyle="single" borderColor={zen.muted}>
+            return (<Box flexDirection="column" marginTop={1} borderStyle="single" borderColor={zen.muted} width="100%">
           {token.lang && (<Box paddingLeft={1}>
               <Text dimColor>{token.lang}</Text>
             </Box>)}
-          {highlighted.map((tokens, j) => (<Box key={j} paddingLeft={1}>
+          {highlighted.map((tokens, j) => (<Box key={j} paddingLeft={1} width="100%">
               {tokens.map((t, k) => (<Text key={k} color={t.color}>{t.value}</Text>))}
             </Box>))}
         </Box>);

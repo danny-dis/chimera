@@ -1,4 +1,5 @@
 import { EventStream } from './event-stream.js';
+import * as path from 'path';
 import { CostTracker } from './cost-tracker.js';
 import { TaskRouter } from './task-router.js';
 import { AgentMesh } from './agent-mesh.js';
@@ -36,6 +37,7 @@ import type { ModelRegistry } from '@chimera/providers';
 import { discoverInstructions, buildInstructionContext } from './instruction-discovery.js';
 import { detectProjectContext } from './project-detection.js';
 import { DeliberationEngine } from './coordinator/deliberation/engine.js';
+import { countSourceFiles } from './coordinator/agent-tool-loop.js';
 import type { DeliberationConfig, DeliberationMode, DeliberationResult } from './coordinator/deliberation/types.js';
 import { buildPool, inferCapabilities, coreToolsForTier, contextBudgetForTier } from './coordinator/model-capabilities.js';
 import type { MemoryPersistence } from './memory/memory-persistence.js';
@@ -948,15 +950,35 @@ export class SessionOrchestrator {
       return this.finalize('done', outputs, totalCost, task, resolvedMode);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      this.transition({ status: 'error', error: message });
+      const safeMessage = message && message.length > 0 ? message : 'unknown orchestration error';
+      // If the task wanted files and at least one valid source file already
+      // landed on disk, the deliverable exists — report needs_user (review
+      // needed) instead of a bare error, so users/matrix aren't shown a
+      // confusing failure for work that actually completed.
+      const wantsFiles = /\b(create|scaffold|write|generate|build|implement|make|port|add)\b/i.test(task) ||
+        /\.(rs|ts|js|jsx|tsx|py|toml|json|md|ya?ml|go|java|cpp|c|rb|php|txt|html|css|sh)$/i.test(task);
+      const fileLanded = wantsFiles && countSourceFiles(this._workspaceRoot) > 0;
+      if (fileLanded) {
+        const note = `File(s) written but final synthesis/aggregation failed (${safeMessage}). Needs user review.`;
+        this.transition({ status: 'needs_user', error: note } as never);
+        this.eventStream.append({
+          type: 'final_response',
+          status: 'needs_user',
+          cost: totalCost,
+          agentCount: outputs.length,
+          output: note,
+        });
+        return { status: 'needs_user', output: note, cost: totalCost, agentCount: outputs.length, events: [...this.eventStream.getAll()] };
+      }
+      this.transition({ status: 'error', error: safeMessage });
       this.eventStream.append({
         type: 'final_response',
         status: 'blocked',
         cost: totalCost,
         agentCount: outputs.length,
-        output: `Error: ${message}`,
+        output: `Error: ${safeMessage}`,
       });
-      return { status: 'error', output: `Error: ${message}`, cost: totalCost, agentCount: outputs.length, events: [...this.eventStream.getAll()] };
+      return { status: 'error', output: `Error: ${safeMessage}`, cost: totalCost, agentCount: outputs.length, events: [...this.eventStream.getAll()] };
     } finally {
       // Ensure we never leak a pending timeout signal. The AbortController
       // is single-use and any future readers of executeSignal would see
@@ -1062,6 +1084,10 @@ export class SessionOrchestrator {
       workspaceRoot: this._workspaceRoot,
       toolExecutor: this.toolExecutor,
       toolRegistry: this.toolRegistry,
+      // Provider IDs the factory understands (writer/reviewer/challenger).
+      // Required by the swarm preset (runSwarm) and auto preset to build the
+      // provider pool. Without it, swarm silently degrades to "no providers".
+      availableProviders: ['writer', 'reviewer', 'challenger'],
     });
 
     const config = this.buildDeliberationConfig(task, mode, providers, costCap, preset, complexity, context, conversationHistory);
@@ -1203,6 +1229,15 @@ export class SessionOrchestrator {
         return { ...base, mode: 'auto' };
       case 'merge':
         return { ...base, mode: 'merge', subTaskResults: [], mergeModel: 'default' };
+      case 'swarm':
+        return {
+          ...base,
+          mode: 'swarm',
+          maxAgents: 50,
+          maxConcurrency: 10,
+          clusterSize: 15,
+          staggerDelayMs: 50,
+        };
     }
   }
 
@@ -1211,8 +1246,44 @@ export class SessionOrchestrator {
     task: string,
     mode: Mode,
   ): OrchestratorResult {
-    const status: OrchestratorResult['status'] =
-      delib.degraded ? 'error' : delib.analysis.confidence < 0.3 ? 'needs_user' : 'done';
+    // ── Status resolution ───────────────────────────────────────────
+    // `delib.degraded` is the ONLY source of an `error` status. But an
+    // `error` MUST always carry a human-readable message (never a bare
+    // empty status), and if a valid file already landed on disk, a
+    // post-write synthesis/aggregation failure is DOWNGRADED to
+    // `needs_user` instead of a cryptic bare `error`. This keeps the
+    // trust guarantee: we never report `done` for a broken/missing file,
+    // but we also never silently lose a deliverable that did land.
+    const fileLanded = (mode === 'code' || mode === 'debug') && this.fileTaskHasLandedFile();
+
+    let status: OrchestratorResult['status'];
+    if (delib.degraded) {
+      // A degraded result means a stage (draft/review/challenge/synthesis)
+      // failed. If the file the task wanted was still produced, this is a
+      // partial success the user can review — not a hard failure.
+      status = fileLanded ? 'needs_user' : 'error';
+    } else if (delib.analysis.confidence < 0.3) {
+      status = 'needs_user';
+    } else {
+      status = 'done';
+    }
+
+    // (a) Never emit a bare `error`: always attach a readable message.
+    let output = delib.output ?? '';
+    if (status === 'error' && !output.trim()) {
+      output = delib.degradationReason
+        ? `[chimera] ${delib.degradationReason}`
+        : '[chimera] deliberation degraded but produced no detail.';
+    }
+    // (b) For a downgraded degraded→needs_user, surface the reason so the
+    // matrix (and humans) know a file landed but synthesis/review failed.
+    if (status === 'needs_user' && delib.degraded) {
+      const reason = delib.degradationReason ?? 'deliberation degraded';
+      const tag = fileLanded
+        ? 'file written but synthesis/review failed; review needed'
+        : reason;
+      output = `${output}\n\n[chimera] ${tag}.`;
+    }
 
     const agentCountForMode = (m: DeliberationResult['mode']): number => {
       switch (m) {
@@ -1228,6 +1299,27 @@ export class SessionOrchestrator {
     };
     const agentCount = agentCountForMode(delib.mode);
 
+    // ── File-task completion gate (anti false-success) ───────────────
+    // For code/debug tasks the whole point is a file on disk. Free/small
+    // models often NARRATE the code in prose instead of emitting a tool
+    // call, or emit a truncated write that the tool layer refuses. Either
+    // way, if no write tool actually LANDED (success event), reporting
+    // `done` would be a silent false-success. Route those to needs_user so
+    // the caller knows no file was produced. This is mode-agnostic: it
+    // covers duo/hive/swarm (which have no native tool loop) as well as
+    // solo/trio (whose prose-fallback already emits real tool calls).
+    if ((mode === 'code' || mode === 'debug') && status === 'done') {
+      if (!this.fileTaskHasLandedFile()) {
+        return {
+          status: 'needs_user',
+          output: delib.output + '\n\n[chimera] No file was written — the model narrated the result without producing a file. Needs user attention.',
+          cost: delib.totalCostUsd,
+          agentCount,
+          events: [...this.eventStream.getAll()],
+        };
+      }
+    }
+
     this.transition({ status: 'complete', result: delib.output, cost: delib.totalCostUsd });
 
     this.eventStream.append({
@@ -1242,7 +1334,7 @@ export class SessionOrchestrator {
       status: status === 'error' ? 'blocked' : status,
       cost: delib.totalCostUsd,
       agentCount,
-      output: delib.output,
+      output,
     });
 
     if (this.memory && status === 'done') {
@@ -1276,11 +1368,31 @@ export class SessionOrchestrator {
 
     return {
       status,
-      output: delib.output,
+      output,
       cost: delib.totalCostUsd,
       agentCount,
       events: [...this.eventStream.getAll()],
     };
+  }
+
+  /**
+   * Did a code/debug task actually land a file on disk?
+   * True only if the session emitted a successful `write_file`/`edit_file`
+   * tool result (exitCode 0). A write that the truncation guard refused
+   * leaves no success event, so it correctly counts as "not landed".
+   */
+  private fileTaskHasLandedFile(): boolean {
+    const events = this.eventStream.getAll();
+    for (const ev of events) {
+      const t = (ev as { type?: string })?.type;
+      if (t === 'tool_call_result') {
+        const result = (ev as { result?: { tool?: string; exitCode?: number } }).result;
+        if ((result?.tool === 'write_file' || result?.tool === 'edit_file') && result?.exitCode === 0) {
+          return true;
+        }
+      }
+    }
+    return false;
   }
 
   private finalize(
@@ -2108,10 +2220,14 @@ export class SessionOrchestrator {
         }
       }
 
-      const EDIT_TOOLS = new Set(['edit', 'write', 'create_file']);
-      if (result.success && EDIT_TOOLS.has(tc.name) && tc.arguments.filePath) {
+      const EDIT_TOOLS = new Set(['edit_file', 'write_file', 'edit_block', 'search_replace']);
+      const editFilePath = (tc.arguments.path ?? tc.arguments.filePath) as string | undefined;
+      if (result.success && EDIT_TOOLS.has(tc.name) && editFilePath) {
         try {
-          const lintResult = await this.linter.lintFile(tc.arguments.filePath as string);
+          const lintTarget = path.isAbsolute(editFilePath)
+            ? editFilePath
+            : path.resolve(this._workspaceRoot, editFilePath);
+          const lintResult = await this.linter.lintFile(lintTarget);
           if (!lintResult.passed && lintResult.errors.length > 0) {
             this.eventStream.append({
               type: 'lint_warning',

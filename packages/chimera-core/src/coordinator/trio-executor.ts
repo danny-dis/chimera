@@ -1,4 +1,5 @@
 import { EventStream } from '../event-stream.js';
+import { existsSync, readdirSync, statSync } from 'fs';
 import type { LLMProvider, ToolExecutorInterface, ToolRegistryInterface } from '../session-orchestrator.js';
 import type { ModelRegistry, ModelEntry } from '@chimera/providers';
 import type { CostTracker } from '../cost-tracker.js';
@@ -8,7 +9,8 @@ import { buildMessages } from '../prompts.js';
 import { zodToJsonSchema } from '../zod-json.js';
 import { sanitizeWriterOutput, sanitizeReviewerOutput } from './output-sanitizer.js';
 import { TaskRouter } from '../task-router.js';
-import { runToolCalls } from './tool-execution-helper.js';
+import { runAgentToolLoop } from './tool-execution-helper.js';
+import { executeProseActions } from './file-write-fallback.js';
 import type { Mode, ToolCall } from '../types/agent.js';
 import type {
   TrioConfig,
@@ -27,6 +29,12 @@ export type {
   TrioAnalysis,
   TrioProviderFactory,
 } from './trio-types.js';
+
+/** Best-effort extraction of a single target filename from a task string. */
+function expectedPathFromTask(task: string): string | undefined {
+  const m = task.match(/\b([A-Za-z0-9_\-./]+\.(?:rs|ts|js|jsx|tsx|py|toml|json|md|ya?ml|go|java|cpp|c|rb|php|txt|html|css|sh))\b/);
+  return m ? m[1] : undefined;
+}
 
 interface TrioExecutorDeps {
   eventStream: EventStream;
@@ -169,42 +177,35 @@ export class TrioExecutor {
 
       // ── Writer tool execution round-trip ─────────────────────────────
       // Writer is the only stage that edits files. If it emitted tool calls
-      // and a tool executor is available, execute them and feed the results
-      // back into the writer for one follow-up turn. No infinite loop.
+      // and a tool executor is available, execute them via the shared
+      // runAgentToolLoop (single source of truth for the LLM→tool→feedback
+      // loop), then feed the final content back as the draft.
       const draftToolCalls: ToolCall[] | undefined = draftResult.toolCalls;
       if (draftToolCalls && draftToolCalls.length > 0 && this.toolExecutor && this.workspaceRoot) {
-        const toolResults = await runToolCalls({
-          toolCalls: draftToolCalls,
+        const loop = await runAgentToolLoop({
+          provider: draftProvider,
+          messages: [{ role: 'user', content: this.buildDraftPrompt(task, config.context) }],
+          options: { temperature: config.temperature, maxTokens: config.maxCompletionTokens, ...(config.reasoning !== undefined ? { reasoning: config.reasoning } : {}) },
           toolExecutor: this.toolExecutor,
           toolRegistry: this.toolRegistry,
           eventStream: this.eventStream,
           workspaceRoot: this.workspaceRoot,
           sessionId: `trio-${config.writer}`,
+          initialContent: draftResult.content,
+          initialToolCalls: draftToolCalls,
+          maxRounds: 1,
+          mode: 'trio',
+          sanitize: sanitizeWriterOutput,
         });
-
-        const followUp = await draftProvider.complete(
-          [
-            { role: 'user' as const, content: this.buildDraftPrompt(task, config.context) },
-            {
-              role: 'assistant' as const,
-              content: draftResult.content,
-              tool_calls: draftToolCalls.map((tc) => ({ id: tc.id, name: tc.name, arguments: tc.arguments })),
-            } as unknown as { role: 'assistant'; content: string; tool_calls: Array<{ id: string; name: string; arguments: Record<string, unknown> }> },
-            ...toolResults.map((tr) => ({
-              role: 'tool' as const,
-              content: JSON.stringify(tr.result.result),
-              tool_call_id: tr.result.toolCallId,
-            })),
-            { role: 'user' as const, content: 'Continue. Incorporate the tool results and finish the task.' },
-          ],
-          { temperature: config.temperature, maxTokens: config.maxCompletionTokens, ...(config.reasoning !== undefined ? { reasoning: config.reasoning } : {}) }
-        );
-        const fuInput = followUp.usage?.inputTokens ?? 0;
-        const fuOutput = followUp.usage?.outputTokens ?? 0;
-        draftContent = sanitizeWriterOutput(followUp.content);
-        // Fold follow-up token usage into the draft stage counts.
-        inputTokensForDraft = inputTokens + fuInput;
-        outputTokensForDraft = outputTokens + fuOutput;
+        if (loop.round > 0) {
+          draftContent = sanitizeWriterOutput(loop.content);
+          // Fold the loop's follow-up token usage into the draft stage counts.
+          inputTokensForDraft = inputTokens + loop.inputTokens;
+          outputTokensForDraft = outputTokens + loop.outputTokens;
+        } else {
+          inputTokensForDraft = inputTokens;
+          outputTokensForDraft = outputTokens;
+        }
       } else {
         inputTokensForDraft = inputTokens;
         outputTokensForDraft = outputTokens;
@@ -222,6 +223,24 @@ export class TrioExecutor {
       const cost = this.computeCost(config.writer, inputTokensForDraft, outputTokensForDraft);
       totalCostUsd += cost;
       this.recordSpend(config.writer, cost);
+
+      // Fallback: small/free writers often NARRATE file ops ("### ACTION: WRITE
+      // greeter.js" + code block) instead of emitting native tool calls. Parse
+      // that prose and execute it so the task actually lands on disk.
+      if (this.toolExecutor && this.workspaceRoot) {
+        try {
+          await executeProseActions(draftContent, {
+            eventStream: this.eventStream,
+            toolExecutor: this.toolExecutor,
+            toolRegistry: this.toolRegistry,
+            workspaceRoot: this.workspaceRoot,
+            sessionId: `trio-${config.writer}`,
+            expectedPath: expectedPathFromTask(task),
+          });
+        } catch {
+          /* best-effort */
+        }
+      }
     } catch (err) {
       return this.degraded(`draft stage failed: ${String(err)}`, totalTokens, totalCostUsd, startTime, false, stages, worktreePath);
     }
@@ -474,6 +493,34 @@ export class TrioExecutor {
     }
 
     this.safeEmit({ type: 'quality_gate_parallel_completed', reviewerId: config.reviewer, challengerId: config.challenger ?? '', reviewerStatus: 'fulfilled', challengerStatus: challengeStage ? 'fulfilled' : 'fulfilled', durationMs: Date.now() - startTime });
+
+    // Completion gate: a task that wants files on disk must have actually
+    // written at least one, or we escalate to needs_user instead of a false
+    // `done` (small/free models sometimes narrate instead of writing).
+    const wantsFiles = /\b(create|scaffold|write|generate|build|implement|make|port|add)\b/i.test(task) ||
+      /write_file|\.(rs|ts|js|py|toml|json|md|ya?ml|go|java|cpp|c|rb|php)$/i.test(task) ||
+      /Cargo\.toml|src[\\/]|\b(src|lib|app|components|tests?)\b[\\/]/i.test(task);
+    if (wantsFiles && this.workspaceRoot) {
+      const countSourceFiles = (dir: string): number => {
+        if (!existsSync(dir)) return 0;
+        let n = 0;
+        for (const entry of readdirSync(dir)) {
+          if (entry === 'target' || entry === 'node_modules' || entry === '.git' ||
+              entry === '.chimera' || entry.startsWith('.')) continue;
+          const full = `${dir}/${entry}`;
+          try {
+            if (statSync(full).isDirectory()) n += countSourceFiles(full);
+            else if (/\.(rs|ts|toml|json|md|ya?ml|lock)$/.test(entry)) n++;
+          } catch { /* ignore */ }
+        }
+        return n;
+      };
+      if (countSourceFiles(this.workspaceRoot) === 0) {
+        needsUserEscalation = true;
+        escalationReason = 'task wanted files but none were written to disk';
+      }
+    }
+
     this.safeEmit({
       type: 'final_response',
       status: needsUserEscalation ? 'needs_user' : 'done',

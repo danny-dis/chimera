@@ -2,6 +2,63 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.FusionExecutor = void 0;
 /**
+ * Extract a JSON object from model output that may be wrapped in markdown
+ * fences (```json ... ```) and/or preceded by prose. Falls back to locating
+ * the first balanced `{...}` block. Throws if no valid JSON object is found.
+ */
+function extractJsonObject(raw) {
+    if (!raw)
+        throw new Error('empty content');
+    const candidates = [];
+    // 1) Whole-string parse.
+    candidates.push(raw.trim());
+    // 2) Strip a ```json / ``` fenced block.
+    const fence = raw.match(/```(?:json)?\s*([\s\S]*?)```/i);
+    if (fence)
+        candidates.push(fence[1].trim());
+    // 3) Every balanced {...} substring (handles multiple blocks / prose).
+    for (let i = 0; i < raw.length; i++) {
+        if (raw[i] !== '{')
+            continue;
+        let depth = 0;
+        let inStr = false;
+        let esc = false;
+        for (let j = i; j < raw.length; j++) {
+            const ch = raw[j];
+            if (inStr) {
+                if (esc)
+                    esc = false;
+                else if (ch === '\\')
+                    esc = true;
+                else if (ch === '"')
+                    inStr = false;
+            }
+            else if (ch === '"')
+                inStr = true;
+            else if (ch === '{')
+                depth++;
+            else if (ch === '}') {
+                depth--;
+                if (depth === 0) {
+                    candidates.push(raw.slice(i, j + 1));
+                    break;
+                }
+            }
+        }
+    }
+    for (const c of candidates) {
+        try {
+            const parsed = JSON.parse(c);
+            if (typeof parsed === 'object' && parsed !== null)
+                return parsed;
+        }
+        catch {
+            /* try next candidate */
+        }
+    }
+    throw new Error('no JSON object found');
+}
+/**
  * Multi-model deliberation (Fusion mode).
  * Parallel panel of models generates answers, then a judge synthesizes.
  */
@@ -162,7 +219,7 @@ class FusionExecutor {
                 const judgeRes = await judgeProvider.complete([{ role: 'user', content: prompt }], { responseFormat: 'json_object', temperature: config.temperature, maxTokens: config.maxCompletionTokens, ...(config.reasoning !== undefined ? { reasoning: config.reasoning } : {}) });
                 let parsed;
                 try {
-                    parsed = JSON.parse(judgeRes.content);
+                    parsed = extractJsonObject(judgeRes.content);
                 }
                 catch {
                     this.safeEmit({ type: 'fusion_judge_parse_error', raw: judgeRes.content });

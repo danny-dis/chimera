@@ -104,8 +104,9 @@ export const Input: React.FC<InputProps> = ({
 
   return (
     <Box
-      borderStyle="round"
-      borderColor={isCommand ? 'yellow' : 'blue'}
+      borderStyle="single"
+      borderTop
+      borderColor={zen.border}
       paddingLeft={1}
       paddingRight={1}
     >

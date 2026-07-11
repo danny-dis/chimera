@@ -2,6 +2,7 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.SubAgentSpawner = void 0;
 const async_semaphore_js_1 = require("../agent/async-semaphore.js");
+const tool_execution_helper_js_1 = require("./tool-execution-helper.js");
 const DEFAULT_LAUNCH_STAGGER_MS = 100;
 const DEFAULT_BASE_BACKOFF_MS = 1000;
 const DEFAULT_MAX_BACKOFF_MS = 30_000;
@@ -21,10 +22,13 @@ class SubAgentSpawner {
     eventStream;
     concurrencyEngine;
     rateLimitStates = new Map();
+    toolExecutor;
+    toolRegistry;
+    workspaceRoot;
     baseBackoffMs;
     maxBackoffMs;
     maxRetries;
-    constructor(eventStreamOrConfig, config, concurrencyEngine, backoffConfig) {
+    constructor(eventStreamOrConfig, config, concurrencyEngine, backoffConfig, toolDeps) {
         if (eventStreamOrConfig && typeof eventStreamOrConfig.append === 'function') {
             this.eventStream = eventStreamOrConfig;
             this.config = { ...DEFAULT_CONFIG, ...config };
@@ -33,6 +37,9 @@ class SubAgentSpawner {
             this.config = { ...DEFAULT_CONFIG, ...eventStreamOrConfig };
         }
         this.concurrencyEngine = concurrencyEngine;
+        this.toolExecutor = toolDeps?.toolExecutor;
+        this.toolRegistry = toolDeps?.toolRegistry;
+        this.workspaceRoot = toolDeps?.workspaceRoot;
         this.baseBackoffMs = backoffConfig?.baseBackoffMs ?? DEFAULT_BASE_BACKOFF_MS;
         this.maxBackoffMs = backoffConfig?.maxBackoffMs ?? DEFAULT_MAX_BACKOFF_MS;
         this.maxRetries = backoffConfig?.maxRetries ?? DEFAULT_MAX_RETRIES;
@@ -117,18 +124,76 @@ class SubAgentSpawner {
     async executeOne(task) {
         const start = Date.now();
         try {
-            const result = await this.withTimeout(task.provider.complete([
-                {
-                    role: 'system',
-                    content: '[!] #CORE SUB-AGENT DIRECTIVE# [!]\n>>> FOCUS: ATOMIC TASK EXECUTION <<<\n\nIDENTITY: You are a specialized sub-agent. Your existence is dedicated to the precise execution of the assigned sub-task.\n\n# MANDATES #\n1. PRECISION: Complete the sub-task EXACTLY as described. \n2. BREVITY: Output ONLY the result. NO preamble. NO filler. NO explanations. \n3. INTEGRITY: If the context is insufficient, state "INSUFFICIENT CONTEXT" and list requirements.\n\n[!] AS YOU WISH [!]',
-                },
+            // System prompt — append a tool-use directive when this sub-task
+            // carries tool definitions (file-writing tasks). This is what makes
+            // hive sub-agents emit write_file/edit_file tool_calls instead of
+            // narrating code as text.
+            let systemContent = '[!] #CORE SUB-AGENT DIRECTIVE# [!]\n>>> FOCUS: ATOMIC TASK EXECUTION <<<\n\nIDENTITY: You are a specialized sub-agent. Your existence is dedicated to the precise execution of the assigned sub-task.\n\n# MANDATES #\n1. PRECISION: Complete the sub-task EXACTLY as described. \n2. BREVITY: Output ONLY the result. NO preamble. NO filler. NO explanations. \n3. INTEGRITY: If the context is insufficient, state "INSUFFICIENT CONTEXT" and list requirements.';
+            if (task.tools && task.tools.length > 0) {
+                // When file tools are present, writing the file IS the result. The
+                // BREVITY mandate above must NOT be read as "print code as text" —
+                // that would land nothing on disk. Make the file write mandatory.
+                systemContent =
+                    '[!] #CORE SUB-AGENT DIRECTIVE# [!]\n>>> FOCUS: ATOMIC TASK EXECUTION <<<\n\nIDENTITY: You are a specialized sub-agent. Your existence is dedicated to the precise execution of the assigned sub-task.\n\n# MANDATES #\n1. PRECISION: Complete the sub-task EXACTLY as described. \n2. INTEGRITY: If the context is insufficient, state "INSUFFICIENT CONTEXT" and list requirements.\n\n# TOOL USE (MANDATORY) #\nYou have file tools (write_file / edit_file / read_file). When the task requires creating or editing a file, you MUST call write_file (or edit_file) with the exact path and the FULL file content. This is the ONLY way the file reaches disk — never output file contents as text, never summarize the code, never describe what you would write. The task is complete ONLY when the file exists on disk. After the tool returns success, output a one-line confirmation (e.g. "Wrote greeter.js").';
+            }
+            const messages = [
+                { role: 'system', content: systemContent },
                 {
                     role: 'user',
                     content: task.context
                         ? `TASK: ${task.description}\n\n<CONTEXT_RESOURCES>\n${task.context}\n</CONTEXT_RESOURCES>`
                         : `TASK: ${task.description}`,
                 },
-            ], { temperature: 0.3 }), this.config.taskTimeoutMs);
+            ];
+            const options = { temperature: 0.3 };
+            if (task.tools && task.tools.length > 0) {
+                options.tools = task.tools;
+                options.toolChoice = 'auto';
+            }
+            // Bounded tool loop: call → execute tools → feed results back.
+            const MAX_TOOL_ROUNDS = 3;
+            let result;
+            let lastAssistant;
+            for (let round = 0; round <= MAX_TOOL_ROUNDS; round++) {
+                result = await this.withTimeout(task.provider.complete(messages, options), this.config.taskTimeoutMs);
+                const toolCalls = result?.toolCalls ?? [];
+                if (toolCalls.length === 0)
+                    break;
+                // Record assistant message (with tool_calls) for the follow-up turn.
+                lastAssistant = {
+                    role: 'assistant',
+                    content: result.content || '',
+                    tool_calls: result.toolCalls.map((tc) => ({
+                        id: tc.id,
+                        type: 'function',
+                        function: { name: tc.name, arguments: tc.arguments },
+                    })),
+                };
+                messages.push(lastAssistant);
+                // Execute the tool calls against the workspace (if executor wired).
+                if (this.toolExecutor && this.workspaceRoot) {
+                    const toolResults = await (0, tool_execution_helper_js_1.runToolCalls)({
+                        toolCalls: result.toolCalls.map((tc) => ({ id: tc.id, name: tc.name, arguments: typeof tc.arguments === 'string' ? JSON.parse(tc.arguments) : tc.arguments })),
+                        toolExecutor: this.toolExecutor,
+                        toolRegistry: this.toolRegistry ?? null,
+                        eventStream: this.eventStream,
+                        workspaceRoot: this.workspaceRoot,
+                        sessionId: `hive-${task.id}`,
+                    });
+                    for (const tr of toolResults) {
+                        messages.push({
+                            role: 'tool',
+                            content: JSON.stringify(tr.result),
+                        });
+                    }
+                }
+                else {
+                    // No executor wired — record the request but cannot act.
+                    for (const tc of result.toolCalls) {
+                        messages.push({ role: 'tool', content: JSON.stringify({ toolCallId: tc.id, toolName: tc.name, result: { success: false, error: 'No tool executor configured' } }) });
+                    }
+                }
+            }
             return {
                 subTaskId: task.id,
                 status: 'success',

@@ -20,6 +20,57 @@ export type {
   FusionAnalysis,
 } from './fusion-types.js';
 
+/**
+ * Extract a JSON object from model output that may be wrapped in markdown
+ * fences (```json ... ```) and/or preceded by prose. Falls back to locating
+ * the first balanced `{...}` block. Throws if no valid JSON object is found.
+ */
+function extractJsonObject(raw: string): Record<string, unknown> {
+  if (!raw) throw new Error('empty content');
+  const candidates: string[] = [];
+
+  // 1) Whole-string parse.
+  candidates.push(raw.trim());
+
+  // 2) Strip a ```json / ``` fenced block.
+  const fence = raw.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  if (fence) candidates.push(fence[1].trim());
+
+  // 3) Every balanced {...} substring (handles multiple blocks / prose).
+  for (let i = 0; i < raw.length; i++) {
+    if (raw[i] !== '{') continue;
+    let depth = 0;
+    let inStr = false;
+    let esc = false;
+    for (let j = i; j < raw.length; j++) {
+      const ch = raw[j];
+      if (inStr) {
+        if (esc) esc = false;
+        else if (ch === '\\') esc = true;
+        else if (ch === '"') inStr = false;
+      } else if (ch === '"') inStr = true;
+      else if (ch === '{') depth++;
+      else if (ch === '}') {
+        depth--;
+        if (depth === 0) {
+          candidates.push(raw.slice(i, j + 1));
+          break;
+        }
+      }
+    }
+  }
+
+  for (const c of candidates) {
+    try {
+      const parsed = JSON.parse(c);
+      if (typeof parsed === 'object' && parsed !== null) return parsed as Record<string, unknown>;
+    } catch {
+      /* try next candidate */
+    }
+  }
+  throw new Error('no JSON object found');
+}
+
 interface FusionExecutorDeps {
   eventStream: EventStream;
   registry: ModelRegistry;
@@ -232,7 +283,7 @@ export class FusionExecutor {
 
         let parsed: Record<string, unknown>;
         try {
-          parsed = JSON.parse(judgeRes.content);
+          parsed = extractJsonObject(judgeRes.content);
         } catch {
           this.safeEmit({ type: 'fusion_judge_parse_error', raw: judgeRes.content });
           return this.degraded('judge returned non-JSON output', totalTokens, totalCostUsd, startTime);

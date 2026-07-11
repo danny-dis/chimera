@@ -2,6 +2,7 @@ import type { SubTask, SubTaskResult, CoordinatorConfig } from './types.js';
 import { DynamicConcurrencyEngine, type ConcurrencyOverrides } from '../agent/dynamic-concurrency-engine.js';
 import { EventStream } from '../event-stream.js';
 import type { ProviderConfig } from '@chimera/providers';
+import type { ToolExecutorInterface, ToolRegistryInterface } from '../session-orchestrator.js';
 export interface SpawnerBackoffConfig {
     baseBackoffMs?: number;
     maxBackoffMs?: number;
@@ -16,10 +17,17 @@ export declare class SubAgentSpawner {
     private eventStream?;
     private concurrencyEngine?;
     private rateLimitStates;
+    private toolExecutor?;
+    private toolRegistry?;
+    private workspaceRoot?;
     private baseBackoffMs;
     private maxBackoffMs;
     private maxRetries;
-    constructor(eventStreamOrConfig?: EventStream | Partial<CoordinatorConfig>, config?: Partial<CoordinatorConfig>, concurrencyEngine?: DynamicConcurrencyEngine, backoffConfig?: SpawnerBackoffConfig);
+    constructor(eventStreamOrConfig?: EventStream | Partial<CoordinatorConfig>, config?: Partial<CoordinatorConfig>, concurrencyEngine?: DynamicConcurrencyEngine, backoffConfig?: SpawnerBackoffConfig, toolDeps?: {
+        toolExecutor?: ToolExecutorInterface;
+        toolRegistry?: ToolRegistryInterface;
+        workspaceRoot?: string;
+    });
     /**
      * Execute all sub-tasks respecting dependencies and concurrency limits.
      */

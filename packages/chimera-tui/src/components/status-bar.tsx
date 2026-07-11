@@ -1,33 +1,22 @@
 import React, { useState, useEffect } from 'react';
 import { Box, Text } from 'ink';
+import { createRequire } from 'node:module';
 import type { Mode } from '@chimera/core';
-import type { Agent, CostData, ToolActivity } from '../types.js';
+import type { Agent, ToolActivity } from '../types.js';
 import Spinner from 'ink-spinner';
-import { statusSymbols, budgetColor, formatTime } from './tui-utils.js';
+import { statusSymbols, formatTime } from './tui-utils.js';
 import { zen, MODE_META } from '../theme.js';
 
-// ── Mini cost bar (10 chars wide) ───────────────────────────────────────
+// ── Version (read at module load so the bar always matches package.json) ──
 
-const MiniCostBar: React.FC<{ used: number; total: number; width?: number }> = ({
-  used,
-  total,
-  width = 10,
-}) => {
-  if (total <= 0) return null;
-
-  const ratio = Math.min(used / total, 1);
-  const filled = Math.round(ratio * width);
-  const empty = width - filled;
-
-  const color = budgetColor(ratio);
-
-  return (
-    <Box>
-      <Text color={color}>{'█'.repeat(filled)}</Text>
-      <Text dimColor>{'░'.repeat(empty)}</Text>
-    </Box>
-  );
-};
+const require = createRequire(import.meta.url);
+const CHIMERA_VERSION: string = (() => {
+  try {
+    return require('../../package.json').version as string;
+  } catch {
+    return '0.0.0';
+  }
+})();
 
 // ── Clock ────────────────────────────────────────────────────────────────
 
@@ -48,47 +37,27 @@ const Clock: React.FC = () => {
 
 interface StatusBarProps {
   mode: Mode;
-  costData: CostData;
   agents: Agent[];
   activeTool?: ToolActivity;
   sidebarVisible?: boolean;
-  workingDir?: string;
 }
 
 // ── Component ────────────────────────────────────────────────────────────
 
 export const StatusBar: React.FC<StatusBarProps> = ({
   mode,
-  costData,
   agents,
   activeTool,
   sidebarVisible = false,
-  workingDir,
 }) => {
-  const ratio = costData.budget > 0 ? costData.currentCost / costData.budget : 0;
-  const costColor = budgetColor(ratio);
-
-  const projectName = workingDir
-    ? workingDir.split(/[/\\]/).filter(Boolean).pop() ?? 'CHIMERA'
-    : 'CHIMERA';
-
   return (
     <Box borderStyle="single" borderColor={zen.border} paddingX={1} justifyContent="space-between">
       {/* Brand + mode */}
       <Box marginRight={1}>
-        <Text bold color={zen.info}>{projectName} </Text>
-        <Text dimColor>v0.0.1</Text>
+        <Text bold color={zen.info}>CHIMERA</Text>
+        <Text dimColor> v{CHIMERA_VERSION}</Text>
         <Text> </Text>
         <Text color={zen.accent} bold>{MODE_META[mode]?.icon ?? '?'} {mode}</Text>
-      </Box>
-
-      {/* Cost */}
-      <Box marginRight={1}>
-        <Text color={costColor} bold>
-          ${costData.currentCost.toFixed(4)}
-        </Text>
-        <Text dimColor> / ${costData.budget.toFixed(2)} </Text>
-        <MiniCostBar used={costData.currentCost} total={costData.budget} />
       </Box>
 
       {/* Agent statuses */}

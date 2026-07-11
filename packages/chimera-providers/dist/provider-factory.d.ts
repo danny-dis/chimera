@@ -1,23 +1,23 @@
 import { z } from 'zod';
 import { ProviderConfig } from './model-adapter.js';
 import { ModelProvider } from './types/provider.js';
-export declare const ProviderTypeSchema: z.ZodEnum<["openai", "anthropic", "google", "ollama", "openai-compatible", "mock", "xai", "perplexity", "cohere", "mistral", "meta", "deepseek", "qwen", "moonshot"]>;
+export declare const ProviderTypeSchema: z.ZodEnum<["openai", "anthropic", "google", "ollama", "openai-compatible", "mock", "openrouter", "xai", "perplexity", "cohere", "mistral", "meta", "deepseek", "qwen", "moonshot"]>;
 declare const EnvProviderConfigSchema: z.ZodObject<{
-    provider: z.ZodEnum<["openai", "anthropic", "google", "ollama", "openai-compatible", "mock", "xai", "perplexity", "cohere", "mistral", "meta", "deepseek", "qwen", "moonshot"]>;
+    provider: z.ZodEnum<["openai", "anthropic", "google", "ollama", "openai-compatible", "mock", "openrouter", "xai", "perplexity", "cohere", "mistral", "meta", "deepseek", "qwen", "moonshot"]>;
     model: z.ZodString;
     baseUrl: z.ZodOptional<z.ZodString>;
     apiKey: z.ZodOptional<z.ZodString>;
     projectId: z.ZodOptional<z.ZodString>;
     timeoutMs: z.ZodOptional<z.ZodNumber>;
 }, "strip", z.ZodTypeAny, {
-    provider: "deepseek" | "qwen" | "moonshot" | "google" | "openai" | "anthropic" | "mistral" | "meta" | "cohere" | "xai" | "perplexity" | "ollama" | "mock" | "openai-compatible";
+    provider: "deepseek" | "qwen" | "moonshot" | "google" | "openai" | "anthropic" | "mistral" | "meta" | "cohere" | "xai" | "perplexity" | "ollama" | "mock" | "openai-compatible" | "openrouter";
     model: string;
     timeoutMs?: number | undefined;
     baseUrl?: string | undefined;
     apiKey?: string | undefined;
     projectId?: string | undefined;
 }, {
-    provider: "deepseek" | "qwen" | "moonshot" | "google" | "openai" | "anthropic" | "mistral" | "meta" | "cohere" | "xai" | "perplexity" | "ollama" | "mock" | "openai-compatible";
+    provider: "deepseek" | "qwen" | "moonshot" | "google" | "openai" | "anthropic" | "mistral" | "meta" | "cohere" | "xai" | "perplexity" | "ollama" | "mock" | "openai-compatible" | "openrouter";
     model: string;
     timeoutMs?: number | undefined;
     baseUrl?: string | undefined;

@@ -8,6 +8,15 @@ let tmpDir: string;
 
 beforeEach(async () => {
   tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'chimera-daemon-test-'));
+  // Isolate provider env so autoGenerateConfig only sees what each test sets.
+  for (const k of [
+    'ANTHROPIC_API_KEY', 'ANTHROPIC_MODEL',
+    'OPENAI_API_KEY', 'OPENAI_MODEL',
+    'GOOGLE_API_KEY', 'GOOGLE_MODEL',
+    'OLLAMA_MODEL', 'OPENROUTER_API_KEY', 'OPENROUTER_MODEL', 'OPENROUTER_BASE_URL',
+  ]) {
+    delete process.env[k];
+  }
 });
 
 afterEach(async () => {
@@ -145,10 +154,15 @@ describe('config-loader', () => {
 
       const cfg = await autoGenerateConfig(tmpDir);
       expect(cfg).not.toBeNull();
-      expect(cfg!.providers).toHaveLength(2);
+      // A single detected provider is auto-assigned to all three roles so the
+      // quality gate runs out-of-the-box (primary=writer, secondary=reviewer,
+      // tertiary=challenger).
+      expect(cfg!.providers).toHaveLength(3);
       expect(cfg!.providers[0].role).toBe('writer');
       expect(cfg!.providers[0].provider).toBe('anthropic');
       expect(cfg!.providers[1].role).toBe('reviewer');
+      expect(cfg!.providers[1].provider).toBe('anthropic');
+      expect(cfg!.providers[2].role).toBe('challenger');
     });
 
     it('generates config from multiple providers', async () => {
