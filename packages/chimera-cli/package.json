@@ -1,6 +1,6 @@
 {
   "name": "@chimera/cli",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "description": "Chimera CLI — terminal-native parallel multi-agent coding platform",
   "license": "MIT",
   "repository": {

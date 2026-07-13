@@ -1,6 +1,6 @@
 {
   "name": "@chimera/core",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "description": "Core orchestrator, event stream, and agent mesh coordination",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",

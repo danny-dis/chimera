@@ -1,6 +1,6 @@
 {
   "name": "@chimera/providers",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "description": "Provider abstraction layer with LiteLLM integration and fallback chains",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
