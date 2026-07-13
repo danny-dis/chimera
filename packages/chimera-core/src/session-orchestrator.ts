@@ -492,17 +492,25 @@ export class SessionOrchestrator {
     // Validate mode+preset combination (skip validation for 'auto' preset)
     const resolvedPreset = preset ?? this.mapModeToDeliberationMode(mode);
     if (preset && preset !== 'auto') {
+      // swarm is an analysis-only preset (no tool loop — it aggregates text,
+      // never writes files). For code/debug tasks it would narrate code and
+      // then fail the file-landing gate as needs_user. Remap to trio (which
+      // writes files) so a beginner picking swarm on a code task still ships
+      // a file. swarm stays valid for review/plan where it belongs.
+      const effectivePreset = (preset === 'swarm' && (mode === 'code' || mode === 'debug'))
+        ? 'trio'
+        : preset;
       const allowed = VALID_MODE_PRESET_COMBOS[mode];
-      if (allowed && !allowed.includes(preset)) {
+      if (allowed && !allowed.includes(effectivePreset)) {
         this.eventStream.append({
           type: 'mode_preset_warning',
           mode,
-          preset,
+          preset: effectivePreset,
           resolvedPreset,
-          reason: `Preset "${preset}" is not optimal for mode "${mode}". Allowed: [${allowed.join(', ')}]. Using "${resolvedPreset}" instead.`,
+          reason: `Preset "${preset}" is not optimal for mode "${mode}". Allowed: [${allowed.join(', ')}]. Using "${effectivePreset}" instead.`,
         });
-        // Downgrade to the mode's default preset
-        params.preset = this.mapModeToDeliberationMode(mode);
+        // Downgrade to the mode's default / remapped preset
+        params.preset = effectivePreset;
       }
     }
 

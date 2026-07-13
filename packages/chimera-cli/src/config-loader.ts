@@ -274,7 +274,7 @@ function detectProvidersFromEnv(): DetectedProvider[] {
     });
   }
 
-  // Ollama (no key required)
+  // Ollama (no key required) — set OLLAMA_MODEL to override auto-detection
   const ollamaModel = getEnv('OLLAMA_MODEL');
   if (ollamaModel) {
     providers.push({
@@ -358,10 +358,15 @@ async function detectProvidersFromEnvAsync(): Promise<DetectedProvider[]> {
     });
   }
 
-  // Ollama
-  const ollamaModel = getEnv('OLLAMA_MODEL');
+  // Ollama — zero-config: if a local Ollama server is running, use it with
+  // whatever model the user already pulled. No env var, no key, no config.
+  const ollamaModel = getEnv('OLLAMA_MODEL') ?? (await detectLocalOllamaModel());
   if (ollamaModel) {
-    providers.push({ name: 'ollama', provider: 'ollama', model: ollamaModel });
+    providers.push({
+      name: 'ollama',
+      provider: 'ollama',
+      model: ollamaModel,
+    });
   }
 
   // Per-role env vars override
@@ -610,4 +615,24 @@ export function hasLegacyEnvVars(): boolean {
  */
 export function detectAvailableProviders(): DetectedProvider[] {
   return detectProvidersFromEnv();
+}
+
+/**
+ * Zero-config local provider: probe a running Ollama server and return the
+ * first pulled model name, or undefined if none is reachable. Model-agnostic
+ * — uses whatever the user already has locally, so a beginner with
+ * `ollama pull llama3` running needs no env var, key, or config.
+ */
+async function detectLocalOllamaModel(): Promise<string | undefined> {
+  try {
+    const res = await fetch('http://localhost:11434/api/tags', {
+      signal: AbortSignal.timeout(5_000),
+    });
+    if (!res.ok) return undefined;
+    const data = (await res.json()) as { models?: Array<{ name: string }> };
+    return data.models?.[0]?.name;
+  } catch {
+    // ponytail: best-effort probe; server down / not installed = no local model
+    return undefined;
+  }
 }
