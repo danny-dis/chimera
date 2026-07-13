@@ -3,6 +3,8 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.expectedPathFromTask = expectedPathFromTask;
 exports.taskWantsFiles = taskWantsFiles;
 exports.fileLandedOnDisk = fileLandedOnDisk;
+exports.snapshotTarget = snapshotTarget;
+exports.targetChanged = targetChanged;
 /**
  * Shared, single-source `expectedPathFromTask` — previously duplicated verbatim
  * in solo/trio/fusion executors and the sub-agent spawner. Per the project's
@@ -51,5 +53,41 @@ function fileLandedOnDisk(task, workspaceRoot) {
         return false;
     const abs = (0, path_1.isAbsolute)(rel) ? rel : (0, path_1.resolve)(workspaceRoot, rel);
     return (0, fs_1.existsSync)(abs);
+}
+/**
+ * Stat of the task's expected target file at run start. null = file missing
+ * (new-file task) or no target extractable. Used to detect real mutations:
+ * a task that EDITs an existing file must change its mtime/size, not merely
+ * leave the pre-existing file in place (which `fileLandedOnDisk` falsely
+ * reports as "landed").
+ */
+function snapshotTarget(task, workspaceRoot) {
+    const rel = expectedPathFromTask(task);
+    if (!rel)
+        return null;
+    const abs = (0, path_1.isAbsolute)(rel) ? rel : (0, path_1.resolve)(workspaceRoot, rel);
+    try {
+        const s = (0, fs_1.statSync)(abs);
+        return { mtime: s.mtimeMs, size: s.size };
+    }
+    catch {
+        return null;
+    }
+}
+/**
+ * Did the task's target file actually change on disk vs `before` (a snapshot
+ * taken at run start)? Handles three cases: new file created (before=null,
+ * after exists), existing file modified (mtime/size differ), deleted
+ * (before set, after missing). This is the correct completion gate for BOTH
+ * new-file and edit tasks — unlike `fileLandedOnDisk`, which is always true
+ * for an edit of a pre-existing file and thus yields a false `done`.
+ */
+function targetChanged(task, workspaceRoot, before) {
+    const after = snapshotTarget(task, workspaceRoot);
+    if (before === null)
+        return after !== null;
+    if (after === null)
+        return false;
+    return before.mtime !== after.mtime || before.size !== after.size;
 }
 //# sourceMappingURL=path-from-task.js.map

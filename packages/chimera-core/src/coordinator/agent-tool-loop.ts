@@ -20,6 +20,7 @@
  */
 
 import { existsSync, readdirSync, statSync } from 'fs';
+import { isAbsolute, resolve } from 'path';
 import type { EventStream } from '../event-stream.js';
 import type {
   LLMProvider,
@@ -29,6 +30,18 @@ import type {
 import type { ToolCall } from '../types/agent.js';
 import { runToolCalls } from './tool-execution-helper.js';
 import { expectedPathFromTask, fileLandedOnDisk } from './path-from-task.js';
+
+/** Disk state of a file: mtime+size, or null if missing. Used to verify a
+ *  write/edit tool call actually mutated the target (not a no-op/failed call). */
+function statFile(root: string, rel: string): { mtime: number; size: number } | null {
+  try {
+    const abs = isAbsolute(rel) ? rel : resolve(root, rel);
+    const s = statSync(abs);
+    return { mtime: s.mtimeMs, size: s.size };
+  } catch {
+    return null;
+  }
+}
 
 /** Loose chat message shape — callers append richer fields per `mode`. */
 export interface LoopChatMessage {
@@ -241,8 +254,18 @@ export async function runAgentToolLoop(
 
   while (canLoop && currentToolCalls.length > 0 && round < maxRounds) {
     round++;
+
+    // Snapshot write/edit targets BEFORE execution. We count only REAL disk
+    // mutations (below, after runToolCalls), not tool-call sightings — a model
+    // can emit write_file/edit_file that fails or is a no-op (identical
+    // content), which must NOT count as "landed" or the run reports a false
+    // `done`. ponytail: ground truth is disk state, not tool-call count.
+    const preStat = new Map<string, { mtime: number; size: number } | null>();
     for (const tc of currentToolCalls) {
-      if (tc && typeof tc.name === 'string' && (tc.name === 'write_file' || tc.name === 'edit_file')) wroteFileCount++;
+      if (tc && typeof tc.name === 'string' && (tc.name === 'write_file' || tc.name === 'edit_file')) {
+        const p = (tc.arguments as { path?: string } | undefined)?.path;
+        if (typeof p === 'string') preStat.set(p, statFile(workspaceRoot!, p));
+      }
     }
 
     messages.push(assistantMessage(mode, assistantContent, currentToolCalls));
@@ -257,6 +280,21 @@ export async function runAgentToolLoop(
     });
 
     for (const tr of toolResults) messages.push(toolResultMessage(mode, tr));
+
+    // Count only write/edit tool calls whose target file actually changed on
+    // disk (created, or mtime/size differs from the pre-execution snapshot).
+    for (const tc of currentToolCalls) {
+      if (tc && typeof tc.name === 'string' && (tc.name === 'write_file' || tc.name === 'edit_file')) {
+        const p = (tc.arguments as { path?: string } | undefined)?.path;
+        if (typeof p === 'string') {
+          const before = preStat.get(p) ?? null;
+          const after = statFile(workspaceRoot!, p);
+          if (after && (!before || before.mtime !== after.mtime || before.size !== after.size)) {
+            wroteFileCount++;
+          }
+        }
+      }
+    }
 
     // Surface persistent write failures (after runToolCalls' single retry) on
     // the event stream instead of only burying them in the tool-result
@@ -332,8 +370,14 @@ export async function runAgentToolLoop(
         outputTokens += (forced as any).usage?.outputTokens ?? 0;
         lastContent = forcedContent;
         if (forced.toolCalls && forced.toolCalls.length > 0) {
+          // Disk-verify forced writes too: snapshot targets, count only real
+          // mutations (a no-op/failed forced write must NOT count as landed).
+          const forcedPre = new Map<string, { mtime: number; size: number } | null>();
           for (const tc of forced.toolCalls) {
-            if (tc.name === 'write_file') wroteFileCount++;
+            if (tc.name === 'write_file' || tc.name === 'edit_file') {
+              const p = (tc.arguments as { path?: string } | undefined)?.path;
+              if (typeof p === 'string') forcedPre.set(p, statFile(workspaceRoot!, p));
+            }
           }
           await runToolCalls({
             toolCalls: forced.toolCalls,
@@ -343,6 +387,18 @@ export async function runAgentToolLoop(
             workspaceRoot: workspaceRoot!,
             sessionId,
           });
+          for (const tc of forced.toolCalls) {
+            if (tc.name === 'write_file' || tc.name === 'edit_file') {
+              const p = (tc.arguments as { path?: string } | undefined)?.path;
+              if (typeof p === 'string') {
+                const before = forcedPre.get(p) ?? null;
+                const after = statFile(workspaceRoot!, p);
+                if (after && (!before || before.mtime !== after.mtime || before.size !== after.size)) {
+                  wroteFileCount++;
+                }
+              }
+            }
+          }
         }
         realFiles = countSourceFiles(workspaceRoot!);
       } catch {

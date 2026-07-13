@@ -57,6 +57,7 @@ class DuoExecutor {
      */
     async executeWithAnalysis(task, config, providerFactory, context = { depth: 0 }) {
         const startTime = Date.now();
+        const targetBefore = this.workspaceRoot ? (0, path_from_task_js_1.snapshotTarget)(task, this.workspaceRoot) : null;
         const sources = [];
         let totalTokens = 0;
         let totalCostUsd = 0;
@@ -169,6 +170,8 @@ class DuoExecutor {
             blindSpots: [],
             confidence: sourceB ? 0.9 : 0.8,
         };
+        const wantsFilesFinal = (0, path_from_task_js_1.taskWantsFiles)(task);
+        const fileUnchanged = wantsFilesFinal && this.workspaceRoot && !(0, path_from_task_js_1.targetChanged)(task, this.workspaceRoot, targetBefore);
         return {
             output: finalResponse,
             analysis,
@@ -178,12 +181,13 @@ class DuoExecutor {
             durationMs: Date.now() - startTime,
             degraded,
             degradationReason: degraded ? degradationReason : undefined,
-            needsUserEscalation: false,
+            needsUserEscalation: fileUnchanged,
         };
     }
     // ── private helpers ───────────────────────────────────────────────
     async callPeer(role, modelId, task, config, providerFactory, draft) {
         const start = Date.now();
+        const targetBefore = this.workspaceRoot ? (0, path_from_task_js_1.snapshotTarget)(task, this.workspaceRoot) : null;
         const provider = providerFactory(modelId);
         const prompt = role === 'writer'
             ? this.buildPeerPrompt(role, task, config.context)
@@ -226,7 +230,7 @@ class DuoExecutor {
                 // narration and execute it for real (mirrors solo-executor). Gate on
                 // disk landing (not wroteFileCount — a failed emit would wrongly
                 // suppress this), so a missing file is always rescued.
-                if (wantsFiles && !(0, path_from_task_js_1.fileLandedOnDisk)(task, this.workspaceRoot)) {
+                if (wantsFiles && !(0, path_from_task_js_1.targetChanged)(task, this.workspaceRoot, targetBefore)) {
                     try {
                         const proseFiles = await (0, file_write_fallback_js_1.executeProseActions)(content, {
                             eventStream: this.eventStream,

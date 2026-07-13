@@ -27,4 +27,27 @@ export declare function taskWantsFiles(task: string): boolean;
  * wrongly suppress the prose safety-net.
  */
 export declare function fileLandedOnDisk(task: string, workspaceRoot: string): boolean;
+/**
+ * Stat of the task's expected target file at run start. null = file missing
+ * (new-file task) or no target extractable. Used to detect real mutations:
+ * a task that EDITs an existing file must change its mtime/size, not merely
+ * leave the pre-existing file in place (which `fileLandedOnDisk` falsely
+ * reports as "landed").
+ */
+export declare function snapshotTarget(task: string, workspaceRoot: string): {
+    mtime: number;
+    size: number;
+} | null;
+/**
+ * Did the task's target file actually change on disk vs `before` (a snapshot
+ * taken at run start)? Handles three cases: new file created (before=null,
+ * after exists), existing file modified (mtime/size differ), deleted
+ * (before set, after missing). This is the correct completion gate for BOTH
+ * new-file and edit tasks — unlike `fileLandedOnDisk`, which is always true
+ * for an edit of a pre-existing file and thus yields a false `done`.
+ */
+export declare function targetChanged(task: string, workspaceRoot: string, before: {
+    mtime: number;
+    size: number;
+} | null): boolean;
 //# sourceMappingURL=path-from-task.d.ts.map

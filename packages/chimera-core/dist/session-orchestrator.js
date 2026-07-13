@@ -275,6 +275,11 @@ class SessionOrchestrator {
     }
     async execute(params) {
         const { task, mode, providers, preset, costCap = 10, conversationHistory } = params;
+        // Snapshot the task's target file on disk BEFORE deliberation runs, so
+        // the completion gate can tell a real edit (mtime/size change) from a
+        // no-op: an edit of a pre-existing file always "exists", which would be
+        // a false `done`. Mere disk existence is not delivery.
+        const targetBefore = this._workspaceRoot ? (0, path_from_task_js_1.snapshotTarget)(task, this._workspaceRoot) : null;
         const outputs = [];
         let totalCost = 0;
         // Single per-execute AbortController. Composed with a 5-minute hard
@@ -447,7 +452,7 @@ class SessionOrchestrator {
             if (this._registry) {
                 try {
                     const delibResult = await this.executeWithDeliberation(task, resolvedMode, providers, costCap, preset, complexity, memoryContext, conversationHistory);
-                    return this.deliberationToOrchestratorResult(delibResult, task, resolvedMode);
+                    return this.deliberationToOrchestratorResult(delibResult, task, resolvedMode, targetBefore);
                 }
                 catch (err) {
                     const msg = err instanceof Error ? err.message : String(err);
@@ -950,7 +955,7 @@ class SessionOrchestrator {
                 };
         }
     }
-    deliberationToOrchestratorResult(delib, task, mode) {
+    deliberationToOrchestratorResult(delib, task, mode, targetBefore) {
         // ── Status resolution ───────────────────────────────────────────
         // `delib.degraded` is the ONLY source of an `error` status. But an
         // `error` MUST always carry a human-readable message (never a bare
@@ -959,7 +964,14 @@ class SessionOrchestrator {
         // `needs_user` instead of a cryptic bare `error`. This keeps the
         // trust guarantee: we never report `done` for a broken/missing file,
         // but we also never silently lose a deliverable that did land.
-        const fileLanded = (mode === 'code' || mode === 'debug') && this.fileTaskHasLandedFile(task);
+        // Change-aware delivery check: the target file must have been MODIFIED
+        // on disk (mtime/size vs run start), not merely still exist. An edit of
+        // a pre-existing file always exists, so existence alone is a false
+        // `done`. `targetChanged` is the ground-truth gate for both new-file and
+        // edit tasks.
+        const fileChanged = this._workspaceRoot
+            ? (mode === 'code' || mode === 'debug') && (0, path_from_task_js_1.targetChanged)(task, this._workspaceRoot, targetBefore)
+            : false;
         // Only file-producing modes (code/debug) escalate a degraded no-file
         // result to a hard `error`: that is the anti-false-success guarantee — a
         // missing app must be flagged. For conversational/analysis modes
@@ -972,20 +984,21 @@ class SessionOrchestrator {
             // A landed file is the deliverable; a degraded post-write review must
             // not override a completed build. Keep `done` (the skipped review is
             // noted below) and only escalate to `error`/`needs_user` when no file
-            // landed. This preserves the anti-false-success guarantee (no file is
-            // never reported done) while not masking a real deliverable.
-            status = fileLanded ? 'done' : (expectsFile ? 'error' : 'needs_user');
+            // was actually modified. This preserves the anti-false-success
+            // guarantee while not masking a real deliverable.
+            status = fileChanged ? 'done' : (expectsFile ? 'error' : 'needs_user');
         }
         else if (delib.analysis.confidence < 0.3) {
             // A low confidence here usually means the executor's file-write counter
-            // never ticked (e.g. the fix landed via the prose-to-action fallback or
-            // an edit_file that the counter missed). If the task's expected output
-            // file actually landed on disk, the deliverable is real — report `done`
-            // rather than a false `needs_user`. Otherwise escalate for human review.
-            status = fileLanded ? 'done' : 'needs_user';
+            // never ticked. If the task's expected output file was actually
+            // MODIFIED on disk, the deliverable is real — report `done` rather than
+            // a false `needs_user`. Otherwise escalate for human review.
+            status = fileChanged ? 'done' : 'needs_user';
         }
         else {
-            status = 'done';
+            // Change-aware: a code/debug task that did not modify its target (the
+            // model narrated instead of editing) must NOT report `done`.
+            status = fileChanged ? 'done' : (expectsFile ? 'needs_user' : 'done');
         }
         // (a) Never emit a bare `error`: always attach a readable message.
         let output = delib.output ?? '';
@@ -998,14 +1011,14 @@ class SessionOrchestrator {
         // matrix (and humans) know a file landed but synthesis/review failed.
         if (status === 'needs_user' && delib.degraded) {
             const reason = delib.degradationReason ?? 'deliberation degraded';
-            const tag = fileLanded
+            const tag = fileChanged
                 ? 'file written but synthesis/review failed; review needed'
                 : reason;
             output = `${output}\n\n[chimera] ${tag}.`;
         }
         // Landed file + degraded review: the deliverable is done; surface the
         // skipped review as info, not a status override.
-        if (status === 'done' && fileLanded && delib.degraded) {
+        if (status === 'done' && fileChanged && delib.degraded) {
             const reason = delib.degradationReason ?? 'deliberation degraded';
             output = `${output}\n\n[chimera] file written; optional synthesis/review was skipped (${reason}). Review recommended.`;
         }
@@ -1032,7 +1045,7 @@ class SessionOrchestrator {
         // covers duo/hive/swarm (which have no native tool loop) as well as
         // solo/trio (whose prose-fallback already emits real tool calls).
         if ((mode === 'code' || mode === 'debug') && status === 'done') {
-            if (!this.fileTaskHasLandedFile(task)) {
+            if (!fileChanged) {
                 return {
                     status: 'needs_user',
                     output: delib.output + '\n\n[chimera] No file was written — the model narrated the result without producing a file. Needs user attention.',

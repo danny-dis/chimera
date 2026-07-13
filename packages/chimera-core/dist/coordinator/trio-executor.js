@@ -1,7 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.TrioExecutor = void 0;
-const fs_1 = require("fs");
 const response_synthesizer_js_1 = require("../response-synthesizer.js");
 const prompts_js_1 = require("../prompts.js");
 const zod_json_js_1 = require("../zod-json.js");
@@ -69,6 +68,10 @@ class TrioExecutor {
      */
     async executeWithAnalysis(task, config, providerFactory, context = { depth: 0 }) {
         const startTime = Date.now();
+        // Snapshot the target file's on-disk state BEFORE any tool runs, so the
+        // completion gate can detect a real edit (mtime/size change) — not merely
+        // the pre-existing file still being present (which would be a false done).
+        const targetBefore = this.workspaceRoot ? (0, path_from_task_js_1.snapshotTarget)(task, this.workspaceRoot) : null;
         const stages = [];
         let totalTokens = 0;
         let totalCostUsd = 0;
@@ -182,7 +185,7 @@ class TrioExecutor {
             // "no real file landed on disk" (not wroteFileCount — a failed emit would
             // wrongly suppress this), so we don't clobber a file that genuinely landed
             // but always rescue a missing one.
-            if (this.toolExecutor && this.workspaceRoot && !(0, path_from_task_js_1.fileLandedOnDisk)(task, this.workspaceRoot)) {
+            if (this.toolExecutor && this.workspaceRoot && !(0, path_from_task_js_1.targetChanged)(task, this.workspaceRoot, targetBefore)) {
                 try {
                     await (0, file_write_fallback_js_1.executeProseActions)(draftContent, {
                         eventStream: this.eventStream,
@@ -413,28 +416,14 @@ class TrioExecutor {
         // `done` (small/free models sometimes narrate instead of writing).
         const wantsFiles = (0, path_from_task_js_1.taskWantsFiles)(task);
         if (wantsFiles && this.workspaceRoot) {
-            const countSourceFiles = (dir) => {
-                if (!(0, fs_1.existsSync)(dir))
-                    return 0;
-                let n = 0;
-                for (const entry of (0, fs_1.readdirSync)(dir)) {
-                    if (entry === 'target' || entry === 'node_modules' || entry === '.git' ||
-                        entry === '.chimera' || entry.startsWith('.'))
-                        continue;
-                    const full = `${dir}/${entry}`;
-                    try {
-                        if ((0, fs_1.statSync)(full).isDirectory())
-                            n += countSourceFiles(full);
-                        else if (/\.(rs|ts|toml|json|md|ya?ml|lock)$/.test(entry))
-                            n++;
-                    }
-                    catch { /* ignore */ }
-                }
-                return n;
-            };
-            if (countSourceFiles(this.workspaceRoot) === 0) {
+            // Completion gate: a file-writing task must have actually MODIFIED its
+            // target on disk (mtime/size change vs run start), not merely left a
+            // pre-existing file in place. Repo-wide file counts are wrong here: an
+            // edit of an existing file would always show "files present" and report
+            // a false `done`. `targetChanged` catches real edits (and new files).
+            if (!(0, path_from_task_js_1.targetChanged)(task, this.workspaceRoot, targetBefore)) {
                 needsUserEscalation = true;
-                escalationReason = 'task wanted files but none were written to disk';
+                escalationReason = 'task wanted files but the target was not modified on disk';
             }
         }
         this.safeEmit({

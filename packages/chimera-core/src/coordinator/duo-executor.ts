@@ -7,7 +7,7 @@ import { sanitizeWriterOutput, sanitizeReviewerOutput } from './output-sanitizer
 import { TaskRouter } from '../task-router.js';
 import { runAgentToolLoop, countSourceFiles } from './agent-tool-loop.js';
 import { executeProseActions } from './file-write-fallback.js';
-import { taskWantsFiles, fileLandedOnDisk } from './path-from-task.js';
+import { taskWantsFiles, snapshotTarget, targetChanged } from './path-from-task.js';
 import type {
   DuoConfig,
   DuoContext,
@@ -104,6 +104,7 @@ export class DuoExecutor {
     context: DuoContext = { depth: 0 }
   ): Promise<DuoResult> {
     const startTime = Date.now();
+    const targetBefore = this.workspaceRoot ? snapshotTarget(task, this.workspaceRoot) : null;
     const sources: DuoSource[] = [];
     let totalTokens = 0;
     let totalCostUsd = 0;
@@ -242,6 +243,8 @@ export class DuoExecutor {
       confidence: sourceB ? 0.9 : 0.8,
     };
 
+    const wantsFilesFinal = taskWantsFiles(task);
+    const fileUnchanged = wantsFilesFinal && this.workspaceRoot && !targetChanged(task, this.workspaceRoot, targetBefore);
     return {
       output: finalResponse,
       analysis,
@@ -251,7 +254,7 @@ export class DuoExecutor {
       durationMs: Date.now() - startTime,
       degraded,
       degradationReason: degraded ? degradationReason : undefined,
-      needsUserEscalation: false,
+      needsUserEscalation: fileUnchanged,
     };
   }
 
@@ -266,6 +269,7 @@ export class DuoExecutor {
     draft?: string
   ): Promise<{ content: string; inputTokens: number; outputTokens: number; durationMs: number }> {
     const start = Date.now();
+    const targetBefore = this.workspaceRoot ? snapshotTarget(task, this.workspaceRoot) : null;
     const provider: LLMProvider = providerFactory(modelId);
     const prompt = role === 'writer'
       ? this.buildPeerPrompt(role, task, config.context)
@@ -313,7 +317,7 @@ export class DuoExecutor {
         // narration and execute it for real (mirrors solo-executor). Gate on
         // disk landing (not wroteFileCount — a failed emit would wrongly
         // suppress this), so a missing file is always rescued.
-        if (wantsFiles && !fileLandedOnDisk(task, this.workspaceRoot)) {
+        if (wantsFiles && !targetChanged(task, this.workspaceRoot, targetBefore)) {
           try {
             const proseFiles = await executeProseActions(content, {
               eventStream: this.eventStream,
