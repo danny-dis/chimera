@@ -62,7 +62,12 @@ function mapMessages(messages: Message[]): { role: string; content: string; tool
       return { ...base, tool_calls: toolCalls };
     }
     if (msg.role === 'tool') {
-      return { ...base, tool_call_id: msg.toolResultId };
+      if (msg.toolResultId) return { ...base, tool_call_id: msg.toolResultId };
+      // NIM's Rust server (serde) 400s on `role:"tool"` without tool_call_id.
+      // Demote to a plain user message so the result is still seen rather
+      // than failing the whole call. ponytail: thread the real id from the
+      // tool event to keep strict OpenAI tool-call pairing.
+      return { role: 'user', content: msg.content };
     }
     return base;
   });

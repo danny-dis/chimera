@@ -969,7 +969,12 @@ class SessionOrchestrator {
         const expectsFile = mode === 'code' || mode === 'debug';
         let status;
         if (delib.degraded) {
-            status = fileLanded ? 'needs_user' : (expectsFile ? 'error' : 'needs_user');
+            // A landed file is the deliverable; a degraded post-write review must
+            // not override a completed build. Keep `done` (the skipped review is
+            // noted below) and only escalate to `error`/`needs_user` when no file
+            // landed. This preserves the anti-false-success guarantee (no file is
+            // never reported done) while not masking a real deliverable.
+            status = fileLanded ? 'done' : (expectsFile ? 'error' : 'needs_user');
         }
         else if (delib.analysis.confidence < 0.3) {
             // A low confidence here usually means the executor's file-write counter
@@ -997,6 +1002,12 @@ class SessionOrchestrator {
                 ? 'file written but synthesis/review failed; review needed'
                 : reason;
             output = `${output}\n\n[chimera] ${tag}.`;
+        }
+        // Landed file + degraded review: the deliverable is done; surface the
+        // skipped review as info, not a status override.
+        if (status === 'done' && fileLanded && delib.degraded) {
+            const reason = delib.degradationReason ?? 'deliberation degraded';
+            output = `${output}\n\n[chimera] file written; optional synthesis/review was skipped (${reason}). Review recommended.`;
         }
         const agentCountForMode = (m) => {
             switch (m) {
@@ -1114,7 +1125,10 @@ class SessionOrchestrator {
     }
     finalize(status, outputs, totalCost, task, mode) {
         const synthesis = this.synthesizer.synthesize(this.toSynthesisInputs(outputs));
-        const resolvedStatus = synthesis.needsUserEscalation ? 'needs_user' : status;
+        // A landed file is the deliverable; a degraded synthesis must not
+        // override it. Only escalate to needs_user when no file landed.
+        const landedFile = task && mode && (mode === 'code' || mode === 'debug') && this.fileTaskHasLandedFile(task);
+        const resolvedStatus = synthesis.needsUserEscalation && !landedFile ? 'needs_user' : status;
         this.transition({ status: 'complete', result: synthesis.unifiedResponse, cost: totalCost });
         // Map internal synthesis to external deliberation analysis shape
         const analysis = {

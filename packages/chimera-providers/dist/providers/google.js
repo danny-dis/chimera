@@ -61,9 +61,35 @@ function mapTools(tools) {
             functionDeclarations: tools.map((tool) => ({
                 name: tool.name,
                 description: tool.description,
-                parameters: tool.parameters,
+                parameters: sanitizeGoogleSchema(tool.parameters),
             })),
         }];
+}
+// Google's function_declarations use an OpenAPI v3 subset that rejects
+// OpenAI-style schema keys (e.g. `additionalProperties` → 400 "Unknown name
+// additionalProperties"). Strip those keys recursively so tool calls work.
+function sanitizeGoogleSchema(node) {
+    if (Array.isArray(node))
+        return node.map(sanitizeGoogleSchema);
+    if (node && typeof node === 'object') {
+        const obj = node;
+        const cleaned = {};
+        for (const [k, v] of Object.entries(obj)) {
+            if (k === 'additionalProperties' ||
+                k === 'default' ||
+                k === 'examples' ||
+                k === '$schema' ||
+                k === '$defs' ||
+                k === 'definitions' ||
+                k === '$ref' ||
+                k === 'title') {
+                continue;
+            }
+            cleaned[k] = sanitizeGoogleSchema(v);
+        }
+        return cleaned;
+    }
+    return node;
 }
 function parseCompletionResult(body) {
     const candidates = body.candidates;
