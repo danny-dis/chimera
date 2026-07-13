@@ -53,14 +53,20 @@ function parseCompletionResult(body) {
     let toolCalls;
     const rawToolCalls = message?.tool_calls;
     if (rawToolCalls?.length) {
-        toolCalls = rawToolCalls.map((tc) => {
+        toolCalls = rawToolCalls
+            .map((tc) => {
             const fn = tc.function;
+            if (!fn || typeof fn.name !== 'string')
+                return null;
             return {
-                id: tc.id,
+                id: tc.id ?? '',
                 name: fn.name,
-                arguments: fn.arguments,
+                arguments: fn.arguments ?? '',
             };
-        });
+        })
+            .filter((tc) => tc !== null);
+        if (toolCalls.length === 0)
+            toolCalls = undefined;
     }
     const usage = body.usage;
     const tokenUsage = {

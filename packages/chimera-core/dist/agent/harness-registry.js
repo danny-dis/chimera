@@ -68,6 +68,15 @@ exports.HarnessRegistry = HarnessRegistry;
  */
 function createDefaultHarnessRegistry() {
     const registry = new HarnessRegistry();
+    // Imported lazily to avoid a circular dependency with @chimera/providers.
+    const makeOpenAIProvider = async (config, fallbackBaseUrl) => {
+        const { OpenAICompatibleProvider } = await import('@chimera/providers');
+        return new OpenAICompatibleProvider({
+            baseUrl: config.baseUrl ?? fallbackBaseUrl,
+            apiKey: config.apiKey ?? '',
+            model: config.model ?? 'gpt-4o',
+        });
+    };
     // Chimera native harness
     registry.register({
         id: 'chimera',
@@ -76,15 +85,22 @@ function createDefaultHarnessRegistry() {
         supportsSessionResume: true,
         supportsMcp: true,
         supportsHooks: true,
-        factory: async (config) => {
-            // Import dynamically to avoid circular dependencies
-            const { OpenAICompatibleProvider } = await import('@chimera/providers');
-            return new OpenAICompatibleProvider({
-                baseUrl: config.baseUrl ?? 'https://api.openai.com/v1',
-                apiKey: config.apiKey ?? '',
-                model: config.model ?? 'gpt-4o',
-            });
-        },
+        factory: (config) => makeOpenAIProvider(config, 'https://api.openai.com/v1'),
+    });
+    // Hermes local gateway (OpenAI-compatible). Lets Chimera run on the same
+    // backend this profile uses — the registry advertised it, now it exists.
+    registry.register({
+        id: 'hermes',
+        displayName: 'Hermes Gateway',
+        description: 'OpenAI-compatible Hermes gateway (custom provider)',
+        requiresCli: 'hermes-gateway',
+        supportsSessionResume: false,
+        supportsMcp: false,
+        supportsHooks: false,
+        // ponytail: baseUrl default points at the local gateway; the harness is
+        // HTTP-only. codex/claude-code/opencode need a subprocess provider and
+        // sandbox — out of scope here, so they stay unregistered + honest errors.
+        factory: (config) => makeOpenAIProvider(config, 'http://127.0.0.1:3000/v1'),
     });
     return registry;
 }

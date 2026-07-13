@@ -49,6 +49,7 @@ export interface SwarmResult {
     totalCostUsd: number;
     durationMs: number;
     clusterResults: string[];
+    errors?: string[];
 }
 export interface ProviderPoolEntry {
     id: string;

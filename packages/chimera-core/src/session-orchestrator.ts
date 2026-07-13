@@ -1,5 +1,6 @@
 import { EventStream } from './event-stream.js';
 import * as path from 'path';
+import { existsSync } from 'fs';
 import { CostTracker } from './cost-tracker.js';
 import { TaskRouter } from './task-router.js';
 import { AgentMesh } from './agent-mesh.js';
@@ -9,6 +10,7 @@ import { buildMessages, buildConversationalMessages, buildWorkflowGeneratorPromp
 import { AuditLog } from './security/audit-log.js';
 import { BiomeLinter } from './coordinator/biome-linter.js';
 import { sanitizeWriterOutput, sanitizeReviewerOutput } from './coordinator/output-sanitizer.js';
+import { expectedPathFromTask } from './coordinator/path-from-task.js';
 import type { LongTermMemory } from './memory/long-term-memory.js';
 import { Mode, type ToolCall, type ToolCallResult } from './types/agent.js';
 import { zodToJsonSchema } from './zod-json.js';
@@ -230,8 +232,13 @@ const TOOL_OUTPUT_MAX_BYTES = 8 * 1024;
 const TOOL_OUTPUT_MAX_LINES = 200;
 const TOOL_OUTPUT_TRUNCATION_MARKER = '\n\n[... truncated, see event log for full output ...]';
 
-/** 5-minute hard cap on a single execute() invocation. */
-const EXECUTE_TIMEOUT_MS = 60_000 * 5;
+/**
+ * Hard cap on a single execute() invocation. Defaults to 5 minutes. The
+ * CHIMERA_EXECUTE_TIMEOUT_MS env var overrides it so long, unattended
+ * multi-agent runs (swarm/hive with slow free models) are not aborted by a
+ * fixed wall-clock guard. Interactive use leaves it at the default.
+ */
+const EXECUTE_TIMEOUT_MS = Number(process.env.CHIMERA_EXECUTE_TIMEOUT_MS ?? 60_000 * 5);
 
 type AbortSignalAny = (signals: AbortSignal[]) => AbortSignal;
 type AbortSignalTimeout = (ms: number) => AbortSignal;
@@ -1237,6 +1244,10 @@ export class SessionOrchestrator {
           maxConcurrency: 10,
           clusterSize: 15,
           staggerDelayMs: 50,
+          // Match the per-agent timeout to the orchestrator's execute timeout
+          // (env-overridable) so a long unattended swarm run is not killed at
+          // the agent level before the orchestrator's own guard fires.
+          taskTimeoutMs: EXECUTE_TIMEOUT_MS,
         };
     }
   }
@@ -1254,16 +1265,25 @@ export class SessionOrchestrator {
     // `needs_user` instead of a cryptic bare `error`. This keeps the
     // trust guarantee: we never report `done` for a broken/missing file,
     // but we also never silently lose a deliverable that did land.
-    const fileLanded = (mode === 'code' || mode === 'debug') && this.fileTaskHasLandedFile();
+    const fileLanded = (mode === 'code' || mode === 'debug') && this.fileTaskHasLandedFile(task);
+    // Only file-producing modes (code/debug) escalate a degraded no-file
+    // result to a hard `error`: that is the anti-false-success guarantee — a
+    // missing app must be flagged. For conversational/analysis modes
+    // (ask/plan/review/oal/auto), a degraded result (e.g. a free model
+    // returning empty content on one call) is a weak/empty answer the user
+    // should review, not a harness crash, so it maps to `needs_user`.
+    const expectsFile = mode === 'code' || mode === 'debug';
 
     let status: OrchestratorResult['status'];
     if (delib.degraded) {
-      // A degraded result means a stage (draft/review/challenge/synthesis)
-      // failed. If the file the task wanted was still produced, this is a
-      // partial success the user can review — not a hard failure.
-      status = fileLanded ? 'needs_user' : 'error';
+      status = fileLanded ? 'needs_user' : (expectsFile ? 'error' : 'needs_user');
     } else if (delib.analysis.confidence < 0.3) {
-      status = 'needs_user';
+      // A low confidence here usually means the executor's file-write counter
+      // never ticked (e.g. the fix landed via the prose-to-action fallback or
+      // an edit_file that the counter missed). If the task's expected output
+      // file actually landed on disk, the deliverable is real — report `done`
+      // rather than a false `needs_user`. Otherwise escalate for human review.
+      status = fileLanded ? 'done' : 'needs_user';
     } else {
       status = 'done';
     }
@@ -1309,7 +1329,7 @@ export class SessionOrchestrator {
     // covers duo/hive/swarm (which have no native tool loop) as well as
     // solo/trio (whose prose-fallback already emits real tool calls).
     if ((mode === 'code' || mode === 'debug') && status === 'done') {
-      if (!this.fileTaskHasLandedFile()) {
+      if (!this.fileTaskHasLandedFile(task)) {
         return {
           status: 'needs_user',
           output: delib.output + '\n\n[chimera] No file was written — the model narrated the result without producing a file. Needs user attention.',
@@ -1381,7 +1401,7 @@ export class SessionOrchestrator {
    * tool result (exitCode 0). A write that the truncation guard refused
    * leaves no success event, so it correctly counts as "not landed".
    */
-  private fileTaskHasLandedFile(): boolean {
+  private fileTaskHasLandedFile(task: string): boolean {
     const events = this.eventStream.getAll();
     for (const ev of events) {
       const t = (ev as { type?: string })?.type;
@@ -1391,6 +1411,18 @@ export class SessionOrchestrator {
           return true;
         }
       }
+    }
+    // Ground-truth fallback: a success event is not the only way a file
+    // lands. The prose-to-action fallback (executeProseActions) and
+    // edit_file flows write the file directly, and their success event may
+    // not carry the exact (tool/exitCode) shape this check reads. If the
+    // task's expected output file actually exists on disk, the deliverable
+    // landed — trust disk over event bookkeeping so a correctly written file
+    // is not mis-escalated to needs_user.
+    const rel = expectedPathFromTask(task);
+    if (rel) {
+      const abs = path.isAbsolute(rel) ? rel : path.resolve(this._workspaceRoot, rel);
+      if (existsSync(abs)) return true;
     }
     return false;
   }

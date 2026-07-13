@@ -79,6 +79,7 @@ class SwarmOrchestrator extends events_1.EventEmitter {
         const semaphore = new async_semaphore_js_1.AsyncSemaphore(this.config.maxConcurrency);
         const completedResults = [];
         const failedTasks = [];
+        const agentErrors = [];
         const executeTask = async (task) => {
             await semaphore.acquire();
             const agentId = [...this.agents.entries()].find(([_, a]) => a.taskId === task.id && a.status === 'queued')?.[0];
@@ -87,41 +88,60 @@ class SwarmOrchestrator extends events_1.EventEmitter {
                 return;
             }
             const agent = this.agents.get(agentId);
-            const provider = this.selectProvider();
-            if (!provider) {
+            const primaryProvider = this.selectProvider();
+            if (!primaryProvider || typeof primaryProvider.provider?.complete !== 'function') {
                 agent.status = 'failed';
-                agent.error = 'No available provider';
+                agent.error = !primaryProvider ? 'No available provider' : 'Provider missing a usable complete()';
                 failedTasks.push(task.id);
                 semaphore.release();
                 return;
             }
             agent.status = 'running';
-            agent.providerId = provider.id;
             agent.startedAt = Date.now();
-            provider.activeCount++;
-            this.emit('agent_started', { agentId, taskId: task.id, providerId: provider.id });
-            try {
-                const result = await this.withTimeout(provider.provider.complete([{ role: 'user', content: task.context ? `TASK: ${task.description}\n\nCONTEXT:\n${task.context}` : `TASK: ${task.description}` }], { temperature: 0.3 }), this.config.taskTimeoutMs);
-                agent.status = 'completed';
-                agent.result = result.content;
-                agent.completedAt = Date.now();
-                agent.tokensUsed = (result.usage?.inputTokens ?? 0) + (result.usage?.outputTokens ?? 0);
-                const cost = this.estimateCost(provider.id, agent.tokensUsed);
-                agent.costUsd = cost;
-                completedResults.push({ taskId: task.id, output: result.content });
-                this.emit('agent_completed', { agentId, taskId: task.id, tokensUsed: agent.tokensUsed });
+            this.emit('agent_started', { agentId, taskId: task.id, providerId: primaryProvider.id });
+            // Try the provider pool in sequence so a single broken/failed provider
+            // (e.g. a 401 auth error) does not sink the whole swarm. The first one
+            // that returns usable content wins.
+            const pool = [primaryProvider, ...this.providerPool.filter((p) => p.id !== primaryProvider.id)];
+            let lastErr;
+            let completed = false;
+            for (const provider of pool) {
+                if (typeof provider.provider?.complete !== 'function')
+                    continue;
+                agent.providerId = provider.id;
+                provider.activeCount++;
+                try {
+                    const result = await this.withTimeout(provider.provider.complete([
+                        { role: 'system', content: 'You are a swarm sub-agent. Execute the task and return only the result.' },
+                        { role: 'user', content: task.context ? `TASK: ${task.description}\n\nCONTEXT:\n${task.context}` : `TASK: ${task.description}` },
+                    ], { temperature: 0.3 }), this.config.taskTimeoutMs);
+                    agent.status = 'completed';
+                    agent.result = result.content;
+                    agent.completedAt = Date.now();
+                    agent.tokensUsed = (result.usage?.inputTokens ?? 0) + (result.usage?.outputTokens ?? 0);
+                    const cost = this.estimateCost(provider.id, agent.tokensUsed);
+                    agent.costUsd = cost;
+                    completedResults.push({ taskId: task.id, output: result.content });
+                    this.emit('agent_completed', { agentId, taskId: task.id, tokensUsed: agent.tokensUsed });
+                    completed = true;
+                    break;
+                }
+                catch (err) {
+                    lastErr = err;
+                    agentErrors.push(`agent ${agentId} via ${provider.id}: ${err instanceof Error ? err.message : String(err)}`);
+                    this.emit('agent_failed', { agentId, taskId: task.id, error: err instanceof Error ? err.message : String(err) });
+                }
+                finally {
+                    provider.activeCount--;
+                }
             }
-            catch (err) {
+            if (!completed) {
                 agent.status = 'failed';
-                agent.error = err instanceof Error ? err.message : String(err);
+                agent.error = lastErr instanceof Error ? lastErr.message : String(lastErr);
                 agent.completedAt = Date.now();
                 failedTasks.push(task.id);
-                this.emit('agent_failed', { agentId, taskId: task.id, error: agent.error });
             }
-            finally {
-                provider.activeCount--;
-                semaphore.release();
-            }
+            semaphore.release();
         };
         // Staggered launch
         const promises = [];
@@ -155,6 +175,7 @@ class SwarmOrchestrator extends events_1.EventEmitter {
             totalCostUsd: totalCost,
             durationMs: Date.now() - startTime,
             clusterResults,
+            ...(agentErrors.length > 0 ? { errors: agentErrors } : {}),
         };
     }
     /**

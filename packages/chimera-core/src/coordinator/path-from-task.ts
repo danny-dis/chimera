@@ -28,3 +28,21 @@ export function taskWantsFiles(task: string): boolean {
   if (/Cargo\.toml|src[\\/]|\b(src|lib|app|components|tests?)\b[\\/]/i.test(task)) return true;
   return false;
 }
+
+import { existsSync } from 'fs';
+import { isAbsolute, resolve } from 'path';
+
+/**
+ * Ground-truth check: did the task's expected output file actually land on
+ * disk? Used to gate the prose-fallback so it runs whenever the file is
+ * MISSING — not when the writer merely *emitted* a (possibly failed) write
+ * tool call. Fixes the false-skip: `wroteFileCount` increments on emit before
+ * execution (agent-tool-loop.ts), so a call that didn't persist would
+ * wrongly suppress the prose safety-net.
+ */
+export function fileLandedOnDisk(task: string, workspaceRoot: string): boolean {
+  const rel = expectedPathFromTask(task);
+  if (!rel) return false;
+  const abs = isAbsolute(rel) ? rel : resolve(workspaceRoot, rel);
+  return existsSync(abs);
+}

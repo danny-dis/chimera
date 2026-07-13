@@ -142,6 +142,8 @@ export interface SwarmDeliberationConfig extends DeliberationConfigBase {
   clusterSize?: number;
   /** Delay between agent launches in ms. Default 50. */
   staggerDelayMs?: number;
+  /** Per-agent completion timeout in ms. Defaults to the orchestrator's execute timeout. */
+  taskTimeoutMs?: number;
 }
 
 export type DeliberationConfig =

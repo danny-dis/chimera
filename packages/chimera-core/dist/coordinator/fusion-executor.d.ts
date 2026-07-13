@@ -1,4 +1,5 @@
 import { EventStream } from '../event-stream.js';
+import type { ToolExecutorInterface, ToolRegistryInterface } from '../session-orchestrator.js';
 import type { ModelRegistry } from '@chimera/providers';
 import type { CostTracker } from '../cost-tracker.js';
 import type { FusionConfig, FusionContext, FusionResultV2, FusionProviderFactory } from './fusion-types.js';
@@ -7,6 +8,9 @@ interface FusionExecutorDeps {
     eventStream: EventStream;
     registry: ModelRegistry;
     costTracker?: CostTracker;
+    toolExecutor?: ToolExecutorInterface;
+    toolRegistry?: ToolRegistryInterface;
+    workspaceRoot?: string;
 }
 /**
  * Multi-model deliberation (Fusion mode).
@@ -16,6 +20,9 @@ export declare class FusionExecutor {
     private eventStream;
     private registry;
     private costTracker;
+    private toolExecutor;
+    private toolRegistry;
+    private workspaceRoot;
     constructor(deps: FusionExecutorDeps);
     execute(task: string, config: FusionConfig, providerFactory: FusionProviderFactory, context?: FusionContext): Promise<string>;
     executeWithAnalysis(task: string, config: FusionConfig, providerFactory: FusionProviderFactory, context?: FusionContext): Promise<FusionResultV2>;

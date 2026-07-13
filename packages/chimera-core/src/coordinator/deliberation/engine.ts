@@ -445,6 +445,7 @@ export class DeliberationEngine {
         maxConcurrency: cfg.maxConcurrency ?? 10,
         clusterSize: cfg.clusterSize ?? 15,
         staggerDelayMs: cfg.staggerDelayMs ?? 50,
+        taskTimeoutMs: cfg.taskTimeoutMs ?? 120_000,
       },
       eventStream: this.deps.eventStream,
       costTracker: this.deps.costTracker,

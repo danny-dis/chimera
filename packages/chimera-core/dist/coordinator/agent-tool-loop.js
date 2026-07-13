@@ -24,6 +24,7 @@ exports.countSourceFiles = countSourceFiles;
 exports.runAgentToolLoop = runAgentToolLoop;
 const fs_1 = require("fs");
 const tool_execution_helper_js_1 = require("./tool-execution-helper.js");
+const path_from_task_js_1 = require("./path-from-task.js");
 /**
  * Count real source files on disk under `dir` (skips build/cache dirs).
  * Used by the completion gate so we assert ground truth, not tool-call counts.
@@ -56,7 +57,9 @@ function assistantMessage(mode, content, toolCalls) {
         return {
             role: 'assistant',
             content,
-            tool_calls: toolCalls.map((tc) => ({
+            tool_calls: toolCalls
+                .filter((tc) => tc && typeof tc.name === 'string')
+                .map((tc) => ({
                 id: tc.id,
                 name: tc.name,
                 arguments: tc.arguments,
@@ -67,7 +70,9 @@ function assistantMessage(mode, content, toolCalls) {
     return {
         role: 'assistant',
         content,
-        toolCalls: toolCalls.map((tc) => ({
+        toolCalls: toolCalls
+            .filter((tc) => tc && typeof tc.name === 'string')
+            .map((tc) => ({
             id: tc.id,
             name: tc.name,
             arguments: typeof tc.arguments === 'string' ? tc.arguments : JSON.stringify(tc.arguments),
@@ -115,7 +120,7 @@ async function runAgentToolLoop(params) {
     while (canLoop && currentToolCalls.length > 0 && round < maxRounds) {
         round++;
         for (const tc of currentToolCalls) {
-            if (tc.name === 'write_file')
+            if (tc && typeof tc.name === 'string' && (tc.name === 'write_file' || tc.name === 'edit_file'))
                 wroteFileCount++;
         }
         messages.push(assistantMessage(mode, assistantContent, currentToolCalls));
@@ -129,6 +134,18 @@ async function runAgentToolLoop(params) {
         });
         for (const tr of toolResults)
             messages.push(toolResultMessage(mode, tr));
+        // Surface persistent write failures (after runToolCalls' single retry) on
+        // the event stream instead of only burying them in the tool-result
+        // transcript — so `writeErrors` are observable to the caller/matrix.
+        for (const tr of toolResults) {
+            if (!tr.result.result.success && /write|edit|create/.test(tr.toolName)) {
+                eventStream.append({
+                    type: 'tool_call_failed',
+                    tool: tr.toolName,
+                    error: tr.result.result.error ?? 'write failed',
+                });
+            }
+        }
         const nudge = mode === 'trio'
             ? CONTINUE_NUDGE
             : (wroteFileCount === 0 ? FILE_NUDGE : CONTINUE_NUDGE);
@@ -141,24 +158,39 @@ async function runAgentToolLoop(params) {
         assistantContent = nextContent;
         currentToolCalls = r.toolCalls ?? [];
     }
-    // ── Force-min-files gate (solo only) ──────────────────────────────────
+    // ── Force-min-files gate ────────────────────────────────────────────
+    // When the task wants files on disk but the writer ended a turn with NO
+    // tool call (pure narration like "I'll follow the plan…") the bounded loop
+    // above never executed — its entry guard requires `currentToolCalls.length
+    // > 0`. That single-shot narration then becomes the final output and the
+    // run terminates as `needs_user`. This gate re-injects a forced write-file
+    // turn so the model MUST call write_file. It is mode-agnostic (solo/duo/
+    // trio/fusion all route their writer through this loop) and is NOT gated on
+    // `forceMinFiles` being supplied — any `wantsFiles` task that landed zero
+    // files gets the guarantee.
     let realFiles = 0;
-    const wantForce = mode === 'solo' && forceMinFiles !== undefined && wantsFiles === true &&
-        canLoop && round > 0;
+    const targetPath = task ? (0, path_from_task_js_1.expectedPathFromTask)(task) : undefined;
+    const wantForce = wantsFiles === true && !(0, path_from_task_js_1.fileLandedOnDisk)(task ?? '', workspaceRoot) && canLoop;
     if (wantForce) {
         realFiles = countSourceFiles(workspaceRoot);
+        const MAX_FORCE = forceMinFiles ?? 3;
         let forceAttempts = 0;
-        const MAX_FORCE = 3;
-        while (realFiles < forceMinFiles && forceAttempts < MAX_FORCE) {
+        while (!(0, path_from_task_js_1.fileLandedOnDisk)(task ?? '', workspaceRoot) && forceAttempts < MAX_FORCE) {
             forceAttempts++;
             const forceMessages = [];
             if (systemPrompt)
                 forceMessages.push({ role: 'system', content: systemPrompt });
+            const targetLine = targetPath
+                ? `You MUST call write_file to apply the fix to \`${targetPath}\`; do not merely narrate the change. `
+                : 'You MUST call write_file to apply the fix to the file the task names; do not merely narrate the change. ';
             forceMessages.push({
                 role: 'user',
-                content: 'Your previous response did not create any files. The task REQUIRES you to create files on disk. ' +
-                    'Re-read the task and immediately call write_file for EVERY file it lists, using the exact relative paths. ' +
-                    `Do not describe or summarize — produce the tool calls now.\n\nTASK: ${task ?? ''}\n\n` +
+                content: 'Your previous response did not create or modify any files (it only described what you would do). ' +
+                    'The task REQUIRES you to actually call write_file. ' +
+                    targetLine +
+                    'Re-read the task and immediately call write_file using the exact relative path. ' +
+                    'Do NOT summarize, explain, or describe the change in prose — produce the tool call now.\n\n' +
+                    `TASK: ${task ?? ''}\n\n` +
                     `PREVIOUS OUTPUT (for reference, do not copy):\n${lastContent.slice(0, 2000)}`,
             });
             try {
@@ -188,7 +220,7 @@ async function runAgentToolLoop(params) {
             }
         }
     }
-    else if (mode === 'solo' && workspaceRoot) {
+    else if (workspaceRoot) {
         realFiles = countSourceFiles(workspaceRoot);
     }
     return {

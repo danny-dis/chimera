@@ -3,6 +3,9 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.DuoExecutor = void 0;
 const output_sanitizer_js_1 = require("./output-sanitizer.js");
 const task_router_js_1 = require("../task-router.js");
+const agent_tool_loop_js_1 = require("./agent-tool-loop.js");
+const file_write_fallback_js_1 = require("./file-write-fallback.js");
+const path_from_task_js_1 = require("./path-from-task.js");
 /**
  * Two-model sequential deliberation with **deterministic** synthesis.
  *
@@ -29,10 +32,16 @@ class DuoExecutor {
     eventStream;
     registry;
     costTracker;
+    workspaceRoot;
+    toolExecutor;
+    toolRegistry;
     constructor(deps) {
         this.eventStream = deps.eventStream;
         this.registry = deps.registry;
         this.costTracker = deps.costTracker;
+        this.workspaceRoot = deps.workspaceRoot;
+        this.toolExecutor = deps.toolExecutor;
+        this.toolRegistry = deps.toolRegistry;
     }
     /**
      * Run a duo deliberation and return the synthesized response as a
@@ -180,6 +189,70 @@ class DuoExecutor {
             ? this.buildPeerPrompt(role, task, config.context)
             : this.buildReviewPrompt(task, draft, config.context);
         const r = await provider.complete([{ role: 'user', content: prompt }], { temperature: config.temperature, maxTokens: config.maxCompletionTokens, ...(config.reasoning !== undefined ? { reasoning: config.reasoning } : {}) });
+        // Writer path: route through the shared agentic tool loop so the writer
+        // can actually call write_file instead of narrating the file in prose.
+        // Falls back to the bare draft when tooling is unavailable (non-file tasks).
+        if (role === 'writer' && this.toolExecutor && this.toolRegistry && this.workspaceRoot) {
+            const wantsFiles = (0, path_from_task_js_1.taskWantsFiles)(task);
+            try {
+                const loop = await (0, agent_tool_loop_js_1.runAgentToolLoop)({
+                    provider,
+                    messages: [{ role: 'user', content: prompt }],
+                    options: { temperature: config.temperature, maxTokens: config.maxCompletionTokens },
+                    toolExecutor: this.toolExecutor,
+                    toolRegistry: this.toolRegistry,
+                    eventStream: this.eventStream,
+                    workspaceRoot: this.workspaceRoot,
+                    sessionId: `duo-${modelId}`,
+                    initialContent: r.content,
+                    initialToolCalls: r.toolCalls ?? [],
+                    maxRounds: Math.max(1, config.maxDepth ?? 4),
+                    mode: 'solo',
+                    forceMinFiles: 1,
+                    wantsFiles,
+                    task,
+                    systemPrompt: config.context ? `[!] PROJECT CONTEXT [!]\n${config.context}` : undefined,
+                    toolDefs: this.toolRegistry
+                        ? this.toolRegistry.getAll().map((t) => ({
+                            name: t.name,
+                            description: t.description,
+                            parameters: t.parameters ?? {},
+                        }))
+                        : undefined,
+                    sanitize: output_sanitizer_js_1.sanitizeWriterOutput,
+                });
+                let content = loop.content || r.content;
+                // Prose fallback: if the file still hasn't landed on disk, parse the
+                // narration and execute it for real (mirrors solo-executor). Gate on
+                // disk landing (not wroteFileCount — a failed emit would wrongly
+                // suppress this), so a missing file is always rescued.
+                if (wantsFiles && !(0, path_from_task_js_1.fileLandedOnDisk)(task, this.workspaceRoot)) {
+                    try {
+                        const proseFiles = await (0, file_write_fallback_js_1.executeProseActions)(content, {
+                            eventStream: this.eventStream,
+                            toolExecutor: this.toolExecutor,
+                            toolRegistry: this.toolRegistry,
+                            workspaceRoot: this.workspaceRoot,
+                            sessionId: `duo-${modelId}`,
+                        });
+                        if (proseFiles > 0)
+                            content = content || 'Task executed via tools.';
+                    }
+                    catch {
+                        /* best-effort */
+                    }
+                }
+                return {
+                    content,
+                    inputTokens: (r.usage?.inputTokens ?? 0) + loop.inputTokens,
+                    outputTokens: (r.usage?.outputTokens ?? 0) + loop.outputTokens,
+                    durationMs: Date.now() - start,
+                };
+            }
+            catch {
+                // Tool loop failed — fall through to the bare draft below.
+            }
+        }
         return {
             content: r.content,
             inputTokens: r.usage?.inputTokens ?? 0,

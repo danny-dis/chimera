@@ -18,6 +18,7 @@ export declare class BudgetEnforcer {
     private config;
     private spentBySession;
     constructor(config: BudgetConfig, costTracker: ProviderCostTracker);
+    private safeSessionCost;
     check(taskEstimate: number, sessionId: string): BudgetCheckResult;
     recordSpend(sessionId: string, cost: number): void;
     updateConfig(config: Partial<BudgetConfig>): void;

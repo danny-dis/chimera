@@ -82,6 +82,8 @@ function parseCompletionResult(body) {
             }
             if (part.functionCall) {
                 const fc = part.functionCall;
+                if (typeof fc.name !== 'string')
+                    continue;
                 toolCalls.push({
                     id: fc.name,
                     name: fc.name,
@@ -118,6 +120,8 @@ function parseStreamChunk(data) {
             }
             if (part.functionCall) {
                 const fc = part.functionCall;
+                if (typeof fc.name !== 'string')
+                    continue;
                 toolCalls = toolCalls ?? [];
                 toolCalls.push({
                     id: fc.name,

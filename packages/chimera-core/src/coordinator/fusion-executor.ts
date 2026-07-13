@@ -367,12 +367,32 @@ export class FusionExecutor {
           { responseFormat: 'json_object', temperature: config.temperature, maxTokens: config.maxCompletionTokens, ...(config.reasoning !== undefined ? { reasoning: config.reasoning } : {}) }
         );
 
-        let parsed: Record<string, unknown>;
+        let parsed: Record<string, unknown> | null = null;
         try {
           parsed = extractJsonObject(judgeRes.content);
         } catch {
+          // Judge returned prose/free text instead of JSON. Tolerate it: use
+          // the raw reply as the synthesized review rather than degrading the
+          // whole fusion run (the judge's prose is still a coherent verdict).
           this.safeEmit({ type: 'fusion_judge_parse_error', raw: judgeRes.content });
-          return this.degraded('judge returned non-JSON output', totalTokens, totalCostUsd, startTime);
+          parsed = null;
+        }
+
+        if (!parsed) {
+          analysis = {
+            thought: 'Judge returned non-JSON prose; using verbatim reply as the review.',
+            finalResponse: judgeRes.content.trim() || judgeRes.content,
+            consensus: [],
+            conflicts: [],
+            uniqueInsights: [],
+            blindSpots: [],
+            confidence: 0.6,
+          };
+          totalTokens += (judgeRes.usage?.inputTokens ?? 0) + (judgeRes.usage?.outputTokens ?? 0);
+          const cost = this.computeCost(judgeModel, judgeRes.usage?.inputTokens ?? 0, judgeRes.usage?.outputTokens ?? 0);
+          totalCostUsd += cost;
+          this.recordSpend(judgeModel, cost);
+          break;
         }
 
         analysis = {

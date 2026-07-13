@@ -5,13 +5,13 @@ import type { ModelRegistry, ModelEntry } from '@chimera/providers';
 import type { CostTracker } from '../cost-tracker.js';
 import type { WorktreeIsolation, WorktreeInfo } from '../agent/worktree-isolation.js';
 import { ResponseSynthesizer, type SynthesisInput } from '../response-synthesizer.js';
-import { buildMessages } from '../prompts.js';
+import { buildMessages, CHIMERA_CORE_IDENTITY } from '../prompts.js';
 import { zodToJsonSchema } from '../zod-json.js';
 import { sanitizeWriterOutput, sanitizeReviewerOutput } from './output-sanitizer.js';
 import { TaskRouter } from '../task-router.js';
 import { runAgentToolLoop } from './tool-execution-helper.js';
 import { executeProseActions } from './file-write-fallback.js';
-import { taskWantsFiles } from './path-from-task.js';
+import { taskWantsFiles, fileLandedOnDisk } from './path-from-task.js';
 import type { Mode, ToolCall } from '../types/agent.js';
 import type {
   TrioConfig,
@@ -202,8 +202,13 @@ export class TrioExecutor {
           sessionId: `trio-${config.writer}`,
           initialContent: draftResult.content,
           initialToolCalls: draftToolCalls,
-          maxRounds: 1,
+          maxRounds: Math.max(1, config.maxDepth ?? 4),
           mode: 'trio',
+          forceMinFiles: 1,
+          wantsFiles: taskWantsFiles(task),
+          task,
+          systemPrompt: CHIMERA_CORE_IDENTITY,
+          toolDefs: toolDefs,
           sanitize: sanitizeWriterOutput,
         });
         if (loop.round > 0) {
@@ -236,9 +241,10 @@ export class TrioExecutor {
 
       // Fallback: small/free writers often NARRATE file ops instead of emitting
       // native tool calls. Parse that prose and execute it for real. Gate on
-      // "no real write landed" (draftWroteFiles) so we don't clobber a file the
-      // writer already fixed via a genuine tool call.
-      if (this.toolExecutor && this.workspaceRoot && draftWroteFiles < 1) {
+      // "no real file landed on disk" (not wroteFileCount — a failed emit would
+      // wrongly suppress this), so we don't clobber a file that genuinely landed
+      // but always rescue a missing one.
+      if (this.toolExecutor && this.workspaceRoot && !fileLandedOnDisk(task, this.workspaceRoot)) {
         try {
           await executeProseActions(draftContent, {
             eventStream: this.eventStream,

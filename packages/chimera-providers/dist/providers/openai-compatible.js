@@ -15,14 +15,16 @@ function mapMessages(messages) {
     return messages.map((msg) => {
         const base = { role: msg.role, content: msg.content };
         if (msg.role === 'assistant' && msg.toolCalls?.length) {
-            return {
-                ...base,
-                tool_calls: msg.toolCalls.map((tc) => ({
-                    id: tc.id,
-                    type: 'function',
-                    function: { name: tc.name, arguments: tc.arguments },
-                })),
-            };
+            const toolCalls = msg.toolCalls
+                .filter((tc) => tc && typeof tc.name === 'string')
+                .map((tc) => ({
+                id: tc.id,
+                type: 'function',
+                function: { name: tc.name, arguments: tc.arguments },
+            }));
+            if (toolCalls.length === 0)
+                return base;
+            return { ...base, tool_calls: toolCalls };
         }
         if (msg.role === 'tool') {
             return { ...base, tool_call_id: msg.toolResultId };
@@ -56,14 +58,20 @@ function parseCompletionResult(body) {
     let toolCalls;
     const rawToolCalls = message?.tool_calls;
     if (rawToolCalls?.length) {
-        toolCalls = rawToolCalls.map((tc) => {
+        toolCalls = rawToolCalls
+            .map((tc) => {
             const fn = tc.function;
+            if (!fn || typeof fn.name !== 'string')
+                return null;
             return {
-                id: tc.id,
+                id: tc.id ?? '',
                 name: fn.name,
-                arguments: fn.arguments,
+                arguments: fn.arguments ?? '',
             };
-        });
+        })
+            .filter((tc) => tc !== null);
+        if (toolCalls.length === 0)
+            toolCalls = undefined;
     }
     const usage = body.usage;
     const tokenUsage = {

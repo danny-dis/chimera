@@ -76,6 +76,20 @@ export function parseProseActions(text: string, expectedPath?: string): ToolCall
     if (path && content) calls.push({ id: mkId(), name: 'write_file', arguments: { path, content } });
   }
 
+  // 4c) Inline-arg form: write_file('path', 'content') / write_file("path", "content")
+  //     where the content lives INSIDE the call parens (no separate fenced block).
+  //     Common on helperbot-style narration. Single/double quoted; non-greedy so
+  //     the first closing quote ends the arg. ponytail: ceiling = content with
+  //     embedded quotes/parens won't parse cleanly; rare for code-file writes.
+  const inlineArgRe = /write_file\(\s*['"]([^'"]+)['"]\s*,\s*['"]([\s\S]*?)['"]\s*\)/gi;
+  while ((m = inlineArgRe.exec(text))) {
+    const path = m[1].trim();
+    const content = m[2];
+    if (path && content && !calls.some((c) => c.arguments.path === path)) {
+      calls.push({ id: mkId(), name: 'write_file', arguments: { path, content } });
+    }
+  }
+
   // 4b) Inline prose that names a file then shows a fenced block, e.g.
   //     "Here is the corrected bug.js:" / "Updated src/app.ts:" / "Fixed foo.py"
   //     + a ```...``` block. Common for debug/edit-existing narration where the

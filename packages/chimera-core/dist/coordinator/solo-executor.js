@@ -5,6 +5,9 @@ const zod_json_js_1 = require("../zod-json.js");
 const output_sanitizer_js_1 = require("./output-sanitizer.js");
 const task_router_js_1 = require("../task-router.js");
 const tool_execution_helper_js_1 = require("./tool-execution-helper.js");
+const path_from_task_js_1 = require("./path-from-task.js");
+const fs_1 = require("fs");
+const path_1 = require("path");
 const file_write_fallback_js_1 = require("./file-write-fallback.js");
 /**
  * System prompt injected for `code` / tool-driven tasks. Small instruction-
@@ -84,9 +87,15 @@ class SoloExecutor {
         let wroteFileCount = 0;
         const selfVerify = config.selfVerify ?? true;
         // Whether the task wants files created on disk (used for the completion gate).
-        const wantsFiles = /\b(create|scaffold|write|generate|build|implement|make|port|add)\b/i.test(task) ||
-            /write_file|\.(rs|ts|js|py|toml|json|md|ya?ml|go|java|cpp|c|rb|php)$/i.test(task) ||
-            /Cargo\.toml|src[\\/]|\b(src|lib|app|components|tests?)\b[\\/]/i.test(task);
+        const wantsFiles = (0, path_from_task_js_1.taskWantsFiles)(task);
+        // Capture the pre-existing target file content (if any) so the prose
+        // fallback can detect "the model only NARRATED the fix" — a write tool may
+        // have been *called* yet failed to land, leaving the file at its seed/old
+        // content. Counting tool calls is not enough; we compare on-disk bytes.
+        const targetPath = expectedPathFromTask(task);
+        const seedContent = targetPath && (0, fs_1.existsSync)((0, path_1.join)(this.workspaceRoot, targetPath))
+            ? (0, fs_1.readFileSync)((0, path_1.join)(this.workspaceRoot, targetPath), 'utf-8')
+            : null;
         // ── Recursion guard ───────────────────────────────────────────────
         const maxDepth = config.maxDepth ?? 1;
         if (context.depth >= maxDepth) {
@@ -172,8 +181,15 @@ class SoloExecutor {
             // Fallback: the model sometimes NARRATES file ops instead of emitting
             // native tool calls (common on small/free models). Parse that prose and
             // execute it for real so the task actually lands on disk.
-            let realFiles = (0, tool_execution_helper_js_1.countSourceFiles)(this.workspaceRoot);
-            if (wantsFiles && realFiles < 1 && this.toolExecutor && this.workspaceRoot) {
+            // Gate on the TARGET FILE having actually changed on disk — not on
+            // whether a source file merely exists (a seeded/buggy file satisfies
+            // that) and not on wroteFileCount (a write tool may have been *called*
+            // yet failed to land, leaving the file at its seed/old content).
+            const targetNow = targetPath && (0, fs_1.existsSync)((0, path_1.join)(this.workspaceRoot, targetPath))
+                ? (0, fs_1.readFileSync)((0, path_1.join)(this.workspaceRoot, targetPath), 'utf-8')
+                : null;
+            const targetUnchanged = targetPath ? (targetNow === seedContent) : (wroteFileCount < 1);
+            if (wantsFiles && targetUnchanged && this.toolExecutor && this.workspaceRoot) {
                 try {
                     const proseFiles = await (0, file_write_fallback_js_1.executeProseActions)(draftContent || lastContent, {
                         eventStream: this.eventStream,
@@ -185,7 +201,6 @@ class SoloExecutor {
                     });
                     if (proseFiles > 0) {
                         wroteFileCount += proseFiles;
-                        realFiles = (0, tool_execution_helper_js_1.countSourceFiles)(this.workspaceRoot);
                     }
                 }
                 catch {

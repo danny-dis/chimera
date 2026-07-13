@@ -67,6 +67,7 @@ export declare class TrioExecutor {
     executeWithAnalysis(task: string, config: TrioConfig, providerFactory: TrioProviderFactory, context?: TrioContext): Promise<TrioResult>;
     private runLlmSynthesizer;
     private runDeterministicSynthesis;
+    private safeDeterministicSynthesis;
     private deriveConsensus;
     private buildDraftPrompt;
     private buildReviewPrompt;

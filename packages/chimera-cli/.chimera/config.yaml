@@ -1,0 +1,19 @@
+providers:
+  - name: primary
+    provider: openai-compatible
+    model: meta/llama-3.1-8b-instruct
+    api_key: \${CHIMERA_CHEAP_API_KEY}
+    base_url: https://integrate.api.nvidia.com
+    role: writer
+  - name: secondary
+    provider: openai-compatible
+    model: meta/llama-3.1-8b-instruct
+    api_key: \${CHIMERA_CHEAP_API_KEY}
+    base_url: https://integrate.api.nvidia.com
+    role: reviewer
+  - name: tertiary
+    provider: openai-compatible
+    model: meta/llama-3.1-8b-instruct
+    api_key: \${CHIMERA_CHEAP_API_KEY}
+    base_url: https://integrate.api.nvidia.com
+    role: challenger

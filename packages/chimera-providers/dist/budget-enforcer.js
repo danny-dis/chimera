@@ -16,8 +16,21 @@ class BudgetEnforcer {
         this.costTracker = costTracker;
         this.config = BudgetConfigSchema.parse(config);
     }
+    // ponytail: cost tracker throws "Session not found" when the orchestrator
+    // never startSession()'d this id (hive/fusion mid-flight cost calls). A
+    // missing session = no spend recorded yet = cost 0, which is fail-safe
+    // (0 <= budget => allow, never a false stop). Keeps the tracker's throw
+    // contract intact for direct callers that rely on it.
+    safeSessionCost(sessionId) {
+        try {
+            return this.costTracker.getSessionCost(sessionId);
+        }
+        catch {
+            return 0;
+        }
+    }
     check(taskEstimate, sessionId) {
-        const sessionCost = this.costTracker.getSessionCost(sessionId);
+        const sessionCost = this.safeSessionCost(sessionId);
         const dayTotal = this.costTracker.getDayTotalAll();
         const taskResult = this.evaluate(taskEstimate, taskEstimate, this.config.perTask, 'task');
         const sessionResult = this.evaluate(sessionCost + taskEstimate, sessionCost + taskEstimate, this.config.perSession, 'session');
@@ -34,7 +47,7 @@ class BudgetEnforcer {
         this.config = BudgetConfigSchema.parse(merged);
     }
     getBudgetStatus(sessionId) {
-        const sessionCost = this.costTracker.getSessionCost(sessionId);
+        const sessionCost = this.safeSessionCost(sessionId);
         const dayTotal = this.costTracker.getDayTotalAll();
         const sessionSpent = this.spentBySession.get(sessionId) ?? 0;
         return {

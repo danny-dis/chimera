@@ -9,6 +9,7 @@ const output_sanitizer_js_1 = require("./output-sanitizer.js");
 const task_router_js_1 = require("../task-router.js");
 const tool_execution_helper_js_1 = require("./tool-execution-helper.js");
 const file_write_fallback_js_1 = require("./file-write-fallback.js");
+const path_from_task_js_1 = require("./path-from-task.js");
 /** Best-effort extraction of a single target filename from a task string. */
 function expectedPathFromTask(task) {
     const m = task.match(/\b([A-Za-z0-9_\-./]+\.(?:rs|ts|js|jsx|tsx|py|toml|json|md|ya?ml|go|java|cpp|c|rb|php|txt|html|css|sh))\b/);
@@ -102,8 +103,15 @@ class TrioExecutor {
             let inputTokensForDraft = 0;
             let outputTokensForDraft = 0;
             const draftProvider = providerFactory(config.writer);
+            // A malformed tool registration (empty/undefined name) must never
+            // reach the provider: its adapter derefs `tool.name` and would throw
+            // `Cannot read properties of undefined (reading 'name')`. Filter any
+            // such definition out at the source so a bad tool can't crash the
+            // whole draft stage (see debug/trio matrix failure).
             const toolDefs = this.toolRegistry
-                ? this.toolRegistry.getAll().map((t) => ({
+                ? this.toolRegistry.getAll()
+                    .filter((t) => Boolean(t?.name))
+                    .map((t) => ({
                     name: t.name,
                     description: t.description,
                     parameters: (t.parameters ? (0, zod_json_js_1.zodToJsonSchema)(t.parameters) : {}),
@@ -113,6 +121,7 @@ class TrioExecutor {
             const inputTokens = draftResult.usage?.inputTokens ?? 0;
             const outputTokens = draftResult.usage?.outputTokens ?? 0;
             let draftContent = (0, output_sanitizer_js_1.sanitizeWriterOutput)(draftResult.content);
+            let draftWroteFiles = 0;
             // ── Writer tool execution round-trip ─────────────────────────────
             // Writer is the only stage that edits files. If it emitted tool calls
             // and a tool executor is available, execute them via the shared
@@ -131,12 +140,18 @@ class TrioExecutor {
                     sessionId: `trio-${config.writer}`,
                     initialContent: draftResult.content,
                     initialToolCalls: draftToolCalls,
-                    maxRounds: 1,
+                    maxRounds: Math.max(1, config.maxDepth ?? 4),
                     mode: 'trio',
+                    forceMinFiles: 1,
+                    wantsFiles: (0, path_from_task_js_1.taskWantsFiles)(task),
+                    task,
+                    systemPrompt: prompts_js_1.CHIMERA_CORE_IDENTITY,
+                    toolDefs: toolDefs,
                     sanitize: output_sanitizer_js_1.sanitizeWriterOutput,
                 });
                 if (loop.round > 0) {
                     draftContent = (0, output_sanitizer_js_1.sanitizeWriterOutput)(loop.content);
+                    draftWroteFiles = loop.wroteFileCount;
                     // Fold the loop's follow-up token usage into the draft stage counts.
                     inputTokensForDraft = inputTokens + loop.inputTokens;
                     outputTokensForDraft = outputTokens + loop.outputTokens;
@@ -162,10 +177,12 @@ class TrioExecutor {
             const cost = this.computeCost(config.writer, inputTokensForDraft, outputTokensForDraft);
             totalCostUsd += cost;
             this.recordSpend(config.writer, cost);
-            // Fallback: small/free writers often NARRATE file ops ("### ACTION: WRITE
-            // greeter.js" + code block) instead of emitting native tool calls. Parse
-            // that prose and execute it so the task actually lands on disk.
-            if (this.toolExecutor && this.workspaceRoot) {
+            // Fallback: small/free writers often NARRATE file ops instead of emitting
+            // native tool calls. Parse that prose and execute it for real. Gate on
+            // "no real file landed on disk" (not wroteFileCount — a failed emit would
+            // wrongly suppress this), so we don't clobber a file that genuinely landed
+            // but always rescue a missing one.
+            if (this.toolExecutor && this.workspaceRoot && !(0, path_from_task_js_1.fileLandedOnDisk)(task, this.workspaceRoot)) {
                 try {
                     await (0, file_write_fallback_js_1.executeProseActions)(draftContent, {
                         eventStream: this.eventStream,
@@ -372,7 +389,7 @@ class TrioExecutor {
             }
             else {
                 // All synthesizers failed — fall back to deterministic
-                const det = this.runDeterministicSynthesis(task, draftStage, reviewStage, challengeStage);
+                const det = this.safeDeterministicSynthesis(task, draftStage, reviewStage, challengeStage);
                 analysis = det.analysis;
                 finalResponse = det.output;
                 needsUserEscalation = det.needsUserEscalation;
@@ -381,7 +398,7 @@ class TrioExecutor {
         }
         else {
             // Deterministic synthesis (no LLM call)
-            const det = this.runDeterministicSynthesis(task, draftStage, reviewStage, challengeStage);
+            const det = this.safeDeterministicSynthesis(task, draftStage, reviewStage, challengeStage);
             analysis = det.analysis;
             finalResponse = det.output;
             needsUserEscalation = det.needsUserEscalation;
@@ -394,9 +411,7 @@ class TrioExecutor {
         // Completion gate: a task that wants files on disk must have actually
         // written at least one, or we escalate to needs_user instead of a false
         // `done` (small/free models sometimes narrate instead of writing).
-        const wantsFiles = /\b(create|scaffold|write|generate|build|implement|make|port|add)\b/i.test(task) ||
-            /write_file|\.(rs|ts|js|py|toml|json|md|ya?ml|go|java|cpp|c|rb|php)$/i.test(task) ||
-            /Cargo\.toml|src[\\/]|\b(src|lib|app|components|tests?)\b[\\/]/i.test(task);
+        const wantsFiles = (0, path_from_task_js_1.taskWantsFiles)(task);
         if (wantsFiles && this.workspaceRoot) {
             const countSourceFiles = (dir) => {
                 if (!(0, fs_1.existsSync)(dir))
@@ -516,6 +531,35 @@ class TrioExecutor {
             needsUserEscalation: result.needsUserEscalation,
             escalationReason: result.escalationReason,
         };
+    }
+    safeDeterministicSynthesis(task, draftStage, reviewStage, challengeStage) {
+        // Stage content may be undefined when a model returned no parseable
+        // content (e.g. truncated/malformed response). Default defensively so
+        // the synthesizer never dereferences `undefined.content` and throws.
+        const safe = (s) => s ? { ...s, content: s.content ?? '' } : s;
+        const d = safe(draftStage);
+        const r = safe(reviewStage);
+        const c = challengeStage ? safe(challengeStage) : null;
+        try {
+            return this.runDeterministicSynthesis(task, d, r, c);
+        }
+        catch (err) {
+            // Synthesis must never crash the orchestrator — degrade gracefully.
+            const message = err instanceof Error ? err.message : String(err);
+            return {
+                output: d.content || r.content || '',
+                analysis: {
+                    thought: '',
+                    finalResponse: d.content || r.content || '',
+                    conflicts: [],
+                    uniqueInsights: [],
+                    blindSpots: [],
+                    confidence: 0,
+                },
+                needsUserEscalation: true,
+                escalationReason: `deterministic synthesis failed: ${message}`,
+            };
+        }
     }
     deriveConsensus(inputs, conflicts) {
         const conflictedAgentIds = new Set(conflicts.flatMap((c) => c.involvedAgents));

@@ -36,6 +36,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.SessionOrchestrator = void 0;
 const event_stream_js_1 = require("./event-stream.js");
 const path = __importStar(require("path"));
+const fs_1 = require("fs");
 const cost_tracker_js_1 = require("./cost-tracker.js");
 const task_router_js_1 = require("./task-router.js");
 const agent_mesh_js_1 = require("./agent-mesh.js");
@@ -45,6 +46,7 @@ const prompts_js_1 = require("./prompts.js");
 const audit_log_js_1 = require("./security/audit-log.js");
 const biome_linter_js_1 = require("./coordinator/biome-linter.js");
 const output_sanitizer_js_1 = require("./coordinator/output-sanitizer.js");
+const path_from_task_js_1 = require("./coordinator/path-from-task.js");
 const zod_json_js_1 = require("./zod-json.js");
 /**
  * Cross-mode validation: which presets are valid for each mode.
@@ -84,8 +86,13 @@ const DEFAULT_CACHE_CONTROL = { type: 'ephemeral', ttl: '5m' };
 const TOOL_OUTPUT_MAX_BYTES = 8 * 1024;
 const TOOL_OUTPUT_MAX_LINES = 200;
 const TOOL_OUTPUT_TRUNCATION_MARKER = '\n\n[... truncated, see event log for full output ...]';
-/** 5-minute hard cap on a single execute() invocation. */
-const EXECUTE_TIMEOUT_MS = 60_000 * 5;
+/**
+ * Hard cap on a single execute() invocation. Defaults to 5 minutes. The
+ * CHIMERA_EXECUTE_TIMEOUT_MS env var overrides it so long, unattended
+ * multi-agent runs (swarm/hive with slow free models) are not aborted by a
+ * fixed wall-clock guard. Interactive use leaves it at the default.
+ */
+const EXECUTE_TIMEOUT_MS = Number(process.env.CHIMERA_EXECUTE_TIMEOUT_MS ?? 60_000 * 5);
 const AbortSignalAny = AbortSignal.any;
 const AbortSignalTimeout = AbortSignal.timeout;
 /**
@@ -928,6 +935,10 @@ class SessionOrchestrator {
                     maxConcurrency: 10,
                     clusterSize: 15,
                     staggerDelayMs: 50,
+                    // Match the per-agent timeout to the orchestrator's execute timeout
+                    // (env-overridable) so a long unattended swarm run is not killed at
+                    // the agent level before the orchestrator's own guard fires.
+                    taskTimeoutMs: EXECUTE_TIMEOUT_MS,
                 };
         }
     }
@@ -940,16 +951,25 @@ class SessionOrchestrator {
         // `needs_user` instead of a cryptic bare `error`. This keeps the
         // trust guarantee: we never report `done` for a broken/missing file,
         // but we also never silently lose a deliverable that did land.
-        const fileLanded = (mode === 'code' || mode === 'debug') && this.fileTaskHasLandedFile();
+        const fileLanded = (mode === 'code' || mode === 'debug') && this.fileTaskHasLandedFile(task);
+        // Only file-producing modes (code/debug) escalate a degraded no-file
+        // result to a hard `error`: that is the anti-false-success guarantee — a
+        // missing app must be flagged. For conversational/analysis modes
+        // (ask/plan/review/oal/auto), a degraded result (e.g. a free model
+        // returning empty content on one call) is a weak/empty answer the user
+        // should review, not a harness crash, so it maps to `needs_user`.
+        const expectsFile = mode === 'code' || mode === 'debug';
         let status;
         if (delib.degraded) {
-            // A degraded result means a stage (draft/review/challenge/synthesis)
-            // failed. If the file the task wanted was still produced, this is a
-            // partial success the user can review — not a hard failure.
-            status = fileLanded ? 'needs_user' : 'error';
+            status = fileLanded ? 'needs_user' : (expectsFile ? 'error' : 'needs_user');
         }
         else if (delib.analysis.confidence < 0.3) {
-            status = 'needs_user';
+            // A low confidence here usually means the executor's file-write counter
+            // never ticked (e.g. the fix landed via the prose-to-action fallback or
+            // an edit_file that the counter missed). If the task's expected output
+            // file actually landed on disk, the deliverable is real — report `done`
+            // rather than a false `needs_user`. Otherwise escalate for human review.
+            status = fileLanded ? 'done' : 'needs_user';
         }
         else {
             status = 'done';
@@ -993,7 +1013,7 @@ class SessionOrchestrator {
         // covers duo/hive/swarm (which have no native tool loop) as well as
         // solo/trio (whose prose-fallback already emits real tool calls).
         if ((mode === 'code' || mode === 'debug') && status === 'done') {
-            if (!this.fileTaskHasLandedFile()) {
+            if (!this.fileTaskHasLandedFile(task)) {
                 return {
                     status: 'needs_user',
                     output: delib.output + '\n\n[chimera] No file was written — the model narrated the result without producing a file. Needs user attention.',
@@ -1058,7 +1078,7 @@ class SessionOrchestrator {
      * tool result (exitCode 0). A write that the truncation guard refused
      * leaves no success event, so it correctly counts as "not landed".
      */
-    fileTaskHasLandedFile() {
+    fileTaskHasLandedFile(task) {
         const events = this.eventStream.getAll();
         for (const ev of events) {
             const t = ev?.type;
@@ -1068,6 +1088,19 @@ class SessionOrchestrator {
                     return true;
                 }
             }
+        }
+        // Ground-truth fallback: a success event is not the only way a file
+        // lands. The prose-to-action fallback (executeProseActions) and
+        // edit_file flows write the file directly, and their success event may
+        // not carry the exact (tool/exitCode) shape this check reads. If the
+        // task's expected output file actually exists on disk, the deliverable
+        // landed — trust disk over event bookkeeping so a correctly written file
+        // is not mis-escalated to needs_user.
+        const rel = (0, path_from_task_js_1.expectedPathFromTask)(task);
+        if (rel) {
+            const abs = path.isAbsolute(rel) ? rel : path.resolve(this._workspaceRoot, rel);
+            if ((0, fs_1.existsSync)(abs))
+                return true;
         }
         return false;
     }

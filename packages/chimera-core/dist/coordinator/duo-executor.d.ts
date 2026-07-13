@@ -10,11 +10,11 @@ interface DuoExecutorDeps {
     registry: ModelRegistry;
     /** Optional cost tracker. */
     costTracker?: CostTracker;
-    /** Optional workspace root — unused by duo (no tools), accepted for uniformity. */
+    /** Optional workspace root — enables the writer's tool loop (write_file). */
     workspaceRoot?: string;
-    /** Optional tool executor — unused by duo (two reviewers), accepted for uniformity. */
+    /** Optional tool executor — enables the writer's tool loop. */
     toolExecutor?: ToolExecutorInterface;
-    /** Optional tool registry — unused by duo, accepted for uniformity. */
+    /** Optional tool registry — supplies tool definitions to the writer. */
     toolRegistry?: ToolRegistryInterface;
 }
 /**
@@ -43,6 +43,9 @@ export declare class DuoExecutor {
     private eventStream;
     private registry;
     private costTracker;
+    private workspaceRoot;
+    private toolExecutor;
+    private toolRegistry;
     constructor(deps: DuoExecutorDeps);
     /**
      * Run a duo deliberation and return the synthesized response as a

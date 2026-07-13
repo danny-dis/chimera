@@ -7,7 +7,7 @@ import { sanitizeWriterOutput, sanitizeReviewerOutput } from './output-sanitizer
 import { TaskRouter } from '../task-router.js';
 import { runAgentToolLoop, countSourceFiles } from './agent-tool-loop.js';
 import { executeProseActions } from './file-write-fallback.js';
-import { taskWantsFiles } from './path-from-task.js';
+import { taskWantsFiles, fileLandedOnDisk } from './path-from-task.js';
 import type {
   DuoConfig,
   DuoContext,
@@ -309,9 +309,11 @@ export class DuoExecutor {
           sanitize: sanitizeWriterOutput,
         });
         let content = loop.content || r.content;
-        // Prose fallback: if still no file landed, parse the narration and
-        // execute it for real (mirrors solo-executor).
-        if (wantsFiles && loop.wroteFileCount < 1) {
+        // Prose fallback: if the file still hasn't landed on disk, parse the
+        // narration and execute it for real (mirrors solo-executor). Gate on
+        // disk landing (not wroteFileCount — a failed emit would wrongly
+        // suppress this), so a missing file is always rescued.
+        if (wantsFiles && !fileLandedOnDisk(task, this.workspaceRoot)) {
           try {
             const proseFiles = await executeProseActions(content, {
               eventStream: this.eventStream,

@@ -28,6 +28,7 @@ import type {
 } from '../session-orchestrator.js';
 import type { ToolCall } from '../types/agent.js';
 import { runToolCalls } from './tool-execution-helper.js';
+import { expectedPathFromTask, fileLandedOnDisk } from './path-from-task.js';
 
 /** Loose chat message shape — callers append richer fields per `mode`. */
 export interface LoopChatMessage {
@@ -241,7 +242,7 @@ export async function runAgentToolLoop(
   while (canLoop && currentToolCalls.length > 0 && round < maxRounds) {
     round++;
     for (const tc of currentToolCalls) {
-      if (tc && typeof tc.name === 'string' && tc.name === 'write_file') wroteFileCount++;
+      if (tc && typeof tc.name === 'string' && (tc.name === 'write_file' || tc.name === 'edit_file')) wroteFileCount++;
     }
 
     messages.push(assistantMessage(mode, assistantContent, currentToolCalls));
@@ -284,25 +285,41 @@ export async function runAgentToolLoop(
     currentToolCalls = r.toolCalls ?? [];
   }
 
-  // ── Force-min-files gate (solo only) ──────────────────────────────────
+  // ── Force-min-files gate ────────────────────────────────────────────
+  // When the task wants files on disk but the writer ended a turn with NO
+  // tool call (pure narration like "I'll follow the plan…") the bounded loop
+  // above never executed — its entry guard requires `currentToolCalls.length
+  // > 0`. That single-shot narration then becomes the final output and the
+  // run terminates as `needs_user`. This gate re-injects a forced write-file
+  // turn so the model MUST call write_file. It is mode-agnostic (solo/duo/
+  // trio/fusion all route their writer through this loop) and is NOT gated on
+  // `forceMinFiles` being supplied — any `wantsFiles` task that landed zero
+  // files gets the guarantee.
   let realFiles = 0;
+  const targetPath = task ? expectedPathFromTask(task) : undefined;
   const wantForce =
-    mode === 'solo' && forceMinFiles !== undefined && wantsFiles === true && canLoop;
+    wantsFiles === true && !fileLandedOnDisk(task ?? '', workspaceRoot!) && canLoop;
 
   if (wantForce) {
     realFiles = countSourceFiles(workspaceRoot!);
+    const MAX_FORCE = forceMinFiles ?? 3;
     let forceAttempts = 0;
-    const MAX_FORCE = 3;
-    while (realFiles < (forceMinFiles as number) && forceAttempts < MAX_FORCE) {
+    while (!fileLandedOnDisk(task ?? '', workspaceRoot!) && forceAttempts < MAX_FORCE) {
       forceAttempts++;
       const forceMessages: LoopChatMessage[] = [];
       if (systemPrompt) forceMessages.push({ role: 'system', content: systemPrompt });
+      const targetLine = targetPath
+        ? `You MUST call write_file to apply the fix to \`${targetPath}\`; do not merely narrate the change. `
+        : 'You MUST call write_file to apply the fix to the file the task names; do not merely narrate the change. ';
       forceMessages.push({
         role: 'user',
         content:
-          'Your previous response did not create any files. The task REQUIRES you to create files on disk. ' +
-          'Re-read the task and immediately call write_file for EVERY file it lists, using the exact relative paths. ' +
-          `Do not describe or summarize — produce the tool calls now.\n\nTASK: ${task ?? ''}\n\n` +
+          'Your previous response did not create or modify any files (it only described what you would do). ' +
+          'The task REQUIRES you to actually call write_file. ' +
+          targetLine +
+          'Re-read the task and immediately call write_file using the exact relative path. ' +
+          'Do NOT summarize, explain, or describe the change in prose — produce the tool call now.\n\n' +
+          `TASK: ${task ?? ''}\n\n` +
           `PREVIOUS OUTPUT (for reference, do not copy):\n${lastContent.slice(0, 2000)}`,
       });
       try {
@@ -332,7 +349,7 @@ export async function runAgentToolLoop(
         /* best-effort; do not crash the run */
       }
     }
-  } else if (mode === 'solo' && workspaceRoot) {
+  } else if (workspaceRoot) {
     realFiles = countSourceFiles(workspaceRoot);
   }
 

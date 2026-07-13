@@ -1,0 +1,8 @@
+{
+  "status": "needs_user",
+  "output": "I'll follow the plan: observe first, then correct minimally. Starting with directory listing and reading the file.",
+  "landedBugJs": "function subtract(a, b) {\n  return a + b; // BUG: should subtract\n}\nmodule.exports = subtract;\n",
+  "workdirList": [
+    "bug.js"
+  ]
+}

@@ -1,6 +1,10 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.FusionExecutor = void 0;
+const output_sanitizer_js_1 = require("./output-sanitizer.js");
+const agent_tool_loop_js_1 = require("./agent-tool-loop.js");
+const file_write_fallback_js_1 = require("./file-write-fallback.js");
+const path_from_task_js_1 = require("./path-from-task.js");
 /**
  * Extract a JSON object from model output that may be wrapped in markdown
  * fences (```json ... ```) and/or preceded by prose. Falls back to locating
@@ -58,6 +62,10 @@ function extractJsonObject(raw) {
     }
     throw new Error('no JSON object found');
 }
+function expectedPathFromTask(task) {
+    const m = task.match(/\b([A-Za-z0-9_\-./]+\.(?:rs|ts|js|jsx|tsx|py|toml|json|md|ya?ml|go|java|cpp|c|rb|php|txt|html|css|sh))\b/);
+    return m ? m[1] : undefined;
+}
 /**
  * Multi-model deliberation (Fusion mode).
  * Parallel panel of models generates answers, then a judge synthesizes.
@@ -66,10 +74,16 @@ class FusionExecutor {
     eventStream;
     registry;
     costTracker;
+    toolExecutor;
+    toolRegistry;
+    workspaceRoot;
     constructor(deps) {
         this.eventStream = deps.eventStream;
         this.registry = deps.registry;
         this.costTracker = deps.costTracker;
+        this.toolExecutor = deps.toolExecutor;
+        this.toolRegistry = deps.toolRegistry;
+        this.workspaceRoot = deps.workspaceRoot;
     }
     async execute(task, config, providerFactory, context = { depth: 0 }) {
         const result = await this.executeWithAnalysis(task, config, providerFactory, context);
@@ -126,12 +140,80 @@ class FusionExecutor {
                 const perspective = perspectives[index % perspectives.length];
                 finalTask = `PERSPECTIVE: ${perspective}\n\nTASK: ${task}`;
             }
-            const res = await provider.complete([{ role: 'user', content: finalTask }], { temperature: config.temperature, maxTokens: config.maxCompletionTokens, ...(config.reasoning !== undefined ? { reasoning: config.reasoning } : {}) });
+            const toolDefs = this.toolRegistry
+                ? this.toolRegistry.getAll().map((t) => ({
+                    name: t.name,
+                    description: t.description,
+                    parameters: t.parameters ?? {},
+                }))
+                : undefined;
+            const res = await provider.complete([{ role: 'user', content: finalTask }], {
+                temperature: config.temperature,
+                maxTokens: config.maxCompletionTokens,
+                ...(config.reasoning !== undefined ? { reasoning: config.reasoning } : {}),
+                ...(this.toolExecutor && this.workspaceRoot && toolDefs ? { tools: toolDefs } : {}),
+            });
+            // Writer-panel path: route through the shared agentic tool loop so the
+            // panel agent actually calls write_file instead of narrating the file in
+            // prose. Falls back to the bare draft when tooling is unavailable
+            // (non-file tasks, or deps not wired).
+            let content = res.content;
+            let extraInput = res.usage?.inputTokens ?? 0;
+            let extraOutput = res.usage?.outputTokens ?? 0;
+            if (this.toolExecutor && this.toolRegistry && this.workspaceRoot) {
+                const wantsFiles = (0, path_from_task_js_1.taskWantsFiles)(task);
+                try {
+                    const loop = await (0, agent_tool_loop_js_1.runAgentToolLoop)({
+                        provider,
+                        messages: [{ role: 'user', content: finalTask }],
+                        options: { temperature: config.temperature, maxTokens: config.maxCompletionTokens },
+                        toolExecutor: this.toolExecutor,
+                        toolRegistry: this.toolRegistry,
+                        eventStream: this.eventStream,
+                        workspaceRoot: this.workspaceRoot,
+                        sessionId: `fusion-${modelId}`,
+                        initialContent: res.content,
+                        initialToolCalls: res.toolCalls ?? [],
+                        maxRounds: Math.max(1, config.maxDepth ?? 4),
+                        mode: 'solo',
+                        forceMinFiles: 1,
+                        wantsFiles,
+                        task,
+                        toolDefs,
+                        sanitize: output_sanitizer_js_1.sanitizeWriterOutput,
+                    });
+                    content = loop.content || res.content;
+                    extraInput = (res.usage?.inputTokens ?? 0) + loop.inputTokens;
+                    extraOutput = (res.usage?.outputTokens ?? 0) + loop.outputTokens;
+                    // Prose fallback: if still no file landed, parse the narration and
+                    // execute it for real (mirrors solo/duo).
+                    if (wantsFiles && loop.wroteFileCount < 1) {
+                        try {
+                            const proseFiles = await (0, file_write_fallback_js_1.executeProseActions)(content, {
+                                eventStream: this.eventStream,
+                                toolExecutor: this.toolExecutor,
+                                toolRegistry: this.toolRegistry,
+                                workspaceRoot: this.workspaceRoot,
+                                sessionId: `fusion-${modelId}`,
+                                expectedPath: expectedPathFromTask(task),
+                            });
+                            if (proseFiles > 0)
+                                content = content || 'Task executed via tools.';
+                        }
+                        catch {
+                            /* best-effort */
+                        }
+                    }
+                }
+                catch {
+                    // Tool loop failed — fall through to the bare draft below.
+                }
+            }
             return {
                 modelId,
-                content: res.content,
-                inputTokens: res.usage?.inputTokens ?? 0,
-                outputTokens: res.usage?.outputTokens ?? 0,
+                content,
+                inputTokens: extraInput,
+                outputTokens: extraOutput,
                 durationMs: Date.now() - start,
             };
         }));
@@ -217,13 +299,32 @@ class FusionExecutor {
             try {
                 const judgeProvider = providerFactory(judgeModel);
                 const judgeRes = await judgeProvider.complete([{ role: 'user', content: prompt }], { responseFormat: 'json_object', temperature: config.temperature, maxTokens: config.maxCompletionTokens, ...(config.reasoning !== undefined ? { reasoning: config.reasoning } : {}) });
-                let parsed;
+                let parsed = null;
                 try {
                     parsed = extractJsonObject(judgeRes.content);
                 }
                 catch {
+                    // Judge returned prose/free text instead of JSON. Tolerate it: use
+                    // the raw reply as the synthesized review rather than degrading the
+                    // whole fusion run (the judge's prose is still a coherent verdict).
                     this.safeEmit({ type: 'fusion_judge_parse_error', raw: judgeRes.content });
-                    return this.degraded('judge returned non-JSON output', totalTokens, totalCostUsd, startTime);
+                    parsed = null;
+                }
+                if (!parsed) {
+                    analysis = {
+                        thought: 'Judge returned non-JSON prose; using verbatim reply as the review.',
+                        finalResponse: judgeRes.content.trim() || judgeRes.content,
+                        consensus: [],
+                        conflicts: [],
+                        uniqueInsights: [],
+                        blindSpots: [],
+                        confidence: 0.6,
+                    };
+                    totalTokens += (judgeRes.usage?.inputTokens ?? 0) + (judgeRes.usage?.outputTokens ?? 0);
+                    const cost = this.computeCost(judgeModel, judgeRes.usage?.inputTokens ?? 0, judgeRes.usage?.outputTokens ?? 0);
+                    totalCostUsd += cost;
+                    this.recordSpend(judgeModel, cost);
+                    break;
                 }
                 analysis = {
                     thought: parsed.thought ?? '',
