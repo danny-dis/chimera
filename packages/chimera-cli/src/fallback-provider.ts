@@ -46,16 +46,21 @@ export function createFallbackProvider(
           content: m.content,
         };
         if (m.role === 'tool') {
-          if (typeof extra.tool_call_id === 'string') {
-            msg.toolResultId = extra.tool_call_id;
-          } else {
-            try {
-              const parsed = JSON.parse(m.content);
-              if (parsed.toolCallId) {
-                msg.toolResultId = parsed.toolCallId;
-              }
-            } catch { /* content is not JSON */ }
-          }
+          const id =
+            typeof extra.tool_call_id === 'string'
+              ? extra.tool_call_id
+              : typeof extra.toolResultId === 'string'
+                ? extra.toolResultId
+                : (() => {
+                    try {
+                      const parsed = JSON.parse(m.content);
+                      return parsed.toolCallId ?? undefined;
+                    } catch {
+                      return undefined;
+                    }
+                  })();
+          if (id) msg.toolResultId = id;
+          if (typeof extra.toolName === 'string') msg.toolName = extra.toolName;
         }
         if (m.role === 'assistant' && Array.isArray(extra.tool_calls)) {
           msg.toolCalls = (extra.tool_calls as Array<{ id?: string; type?: string; function?: { name?: string; arguments?: string } }>)

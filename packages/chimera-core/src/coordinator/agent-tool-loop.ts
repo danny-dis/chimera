@@ -53,6 +53,8 @@ export interface LoopChatMessage {
   tool_calls?: Array<{ id: string; name: string; arguments: Record<string, unknown> }>;
   /** Solo-style tool result linkage. */
   toolResultId?: string;
+  /** Tool name for the result (needed by strict providers e.g. Google). */
+  toolName?: string;
   /** Trio/spawner-style tool result linkage. */
   tool_call_id?: string;
 }
@@ -189,9 +191,9 @@ function toolResultMessage(
 ): LoopChatMessage {
   const payload = JSON.stringify(result.result.result);
   if (mode === 'trio') {
-    return { role: 'tool', content: payload, tool_call_id: result.result.toolCallId };
+    return { role: 'tool', content: payload, tool_call_id: result.result.toolCallId, toolName: result.toolName };
   }
-  return { role: 'tool', content: payload, toolResultId: result.result.toolCallId };
+  return { role: 'tool', content: payload, toolResultId: result.result.toolCallId, toolName: result.toolName };
 }
 
 const CONTINUE_NUDGE = 'Continue. Incorporate the tool results and finish the task.';

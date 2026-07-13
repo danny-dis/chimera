@@ -95,9 +95,9 @@ function assistantMessage(mode, content, toolCalls) {
 function toolResultMessage(mode, result) {
     const payload = JSON.stringify(result.result.result);
     if (mode === 'trio') {
-        return { role: 'tool', content: payload, tool_call_id: result.result.toolCallId };
+        return { role: 'tool', content: payload, tool_call_id: result.result.toolCallId, toolName: result.toolName };
     }
-    return { role: 'tool', content: payload, toolResultId: result.result.toolCallId };
+    return { role: 'tool', content: payload, toolResultId: result.result.toolCallId, toolName: result.toolName };
 }
 const CONTINUE_NUDGE = 'Continue. Incorporate the tool results and finish the task.';
 const FILE_NUDGE = 'You have NOT created any files yet. The task requires you to CREATE files. ' +

@@ -62,7 +62,11 @@ function mapMessages(messages: Message[]): { role: string; content: string; tool
       return { ...base, tool_calls: toolCalls };
     }
     if (msg.role === 'tool') {
-      if (msg.toolResultId) return { ...base, tool_call_id: msg.toolResultId };
+      if (msg.toolResultId) {
+        const toolMsg: Record<string, unknown> = { ...base, tool_call_id: msg.toolResultId };
+        if (msg.toolName) (toolMsg as Record<string, unknown>).name = msg.toolName;
+        return toolMsg as { role: string; content: string; tool_call_id?: string };
+      }
       // NIM's Rust server (serde) 400s on `role:"tool"` without tool_call_id.
       // Demote to a plain user message so the result is still seen rather
       // than failing the whole call. ponytail: thread the real id from the
