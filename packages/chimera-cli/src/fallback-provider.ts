@@ -58,11 +58,13 @@ export function createFallbackProvider(
           }
         }
         if (m.role === 'assistant' && Array.isArray(extra.tool_calls)) {
-          msg.toolCalls = (extra.tool_calls as Array<{ id: string; type: string; function: { name: string; arguments: string } }>).map((tc) => ({
-            id: tc.id,
-            name: tc.function.name,
-            arguments: tc.function.arguments,
-          }));
+          msg.toolCalls = (extra.tool_calls as Array<{ id?: string; type?: string; function?: { name?: string; arguments?: string } }>)
+            .filter((tc) => tc && tc.function && typeof tc.function.name === 'string')
+            .map((tc, i) => ({
+              id: tc.id ?? `call_${i}`,
+              name: tc.function!.name!,
+              arguments: tc.function!.arguments ?? '',
+            }));
         }
         return msg;
       });

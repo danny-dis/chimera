@@ -29,7 +29,7 @@ import type {
 } from '../session-orchestrator.js';
 import type { ToolCall } from '../types/agent.js';
 import { runToolCalls } from './tool-execution-helper.js';
-import { expectedPathFromTask, fileLandedOnDisk } from './path-from-task.js';
+import { expectedPathFromTask, fileLandedOnDisk, snapshotTarget, targetChanged } from './path-from-task.js';
 
 /** Disk state of a file: mtime+size, or null if missing. Used to verify a
  *  write/edit tool call actually mutated the target (not a no-op/failed call). */
@@ -251,6 +251,9 @@ export async function runAgentToolLoop(
   let outputTokens = 0;
 
   const canLoop = !!toolExecutor && !!workspaceRoot;
+  // Snapshot the task's target at entry so we can detect an edit that was
+  // narrated but never applied (mtime/size unchanged after the run).
+  const targetBefore = workspaceRoot ? snapshotTarget(task ?? '', workspaceRoot) : null;
 
   while (canLoop && currentToolCalls.length > 0 && round < maxRounds) {
     round++;
@@ -335,20 +338,25 @@ export async function runAgentToolLoop(
   // files gets the guarantee.
   let realFiles = 0;
   const targetPath = task ? expectedPathFromTask(task) : undefined;
+  // Fire when the task wants files but NONE landed (new-file case) OR the
+  // target exists yet was NOT modified on disk (edit narrated, not applied).
+  // The pre-existing file is the trap: fileLandedOnDisk is true for an edit,
+  // so we must also check targetChanged to avoid a silent false `done`.
+  const targetUnchanged = !!workspaceRoot && !!task && !targetChanged(task, workspaceRoot, targetBefore);
   const wantForce =
-    wantsFiles === true && !fileLandedOnDisk(task ?? '', workspaceRoot!) && canLoop;
+    wantsFiles === true && canLoop && (!fileLandedOnDisk(task ?? '', workspaceRoot!) || targetUnchanged);
 
   if (wantForce) {
     realFiles = countSourceFiles(workspaceRoot!);
     const MAX_FORCE = forceMinFiles ?? 3;
     let forceAttempts = 0;
-    while (!fileLandedOnDisk(task ?? '', workspaceRoot!) && forceAttempts < MAX_FORCE) {
+    while ((!fileLandedOnDisk(task ?? '', workspaceRoot!) || !targetChanged(task ?? '', workspaceRoot!, targetBefore)) && forceAttempts < MAX_FORCE) {
       forceAttempts++;
       const forceMessages: LoopChatMessage[] = [];
       if (systemPrompt) forceMessages.push({ role: 'system', content: systemPrompt });
       const targetLine = targetPath
-        ? `You MUST call write_file to apply the fix to \`${targetPath}\`; do not merely narrate the change. `
-        : 'You MUST call write_file to apply the fix to the file the task names; do not merely narrate the change. ';
+        ? `You MUST call write_file (to create a new file) or edit_file (to modify an existing file) to apply the fix to \`${targetPath}\`; do not merely narrate the change. `
+        : 'You MUST call write_file or edit_file to apply the fix to the file the task names; do not merely narrate the change. ';
       forceMessages.push({
         role: 'user',
         content:

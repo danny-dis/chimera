@@ -39,7 +39,9 @@ function mapMessages(messages) {
     });
 }
 function mapTools(tools) {
-    return tools.map((tool) => ({
+    return tools
+        .filter((tool) => Boolean(tool && typeof tool.name === 'string'))
+        .map((tool) => ({
         type: 'function',
         function: {
             name: tool.name,

@@ -74,14 +74,16 @@ function mapMessages(messages: Message[]): { role: string; content: string; tool
 }
 
 function mapTools(tools: NonNullable<CompletionOptions['tools']>) {
-  return tools.map((tool) => ({
-    type: 'function' as const,
-    function: {
-      name: tool.name,
-      description: tool.description,
-      parameters: tool.parameters,
-    },
-  }));
+  return tools
+    .filter((tool): tool is NonNullable<typeof tool> => Boolean(tool && typeof tool.name === 'string'))
+    .map((tool) => ({
+      type: 'function' as const,
+      function: {
+        name: tool.name,
+        description: tool.description,
+        parameters: tool.parameters,
+      },
+    }));
 }
 
 function mapToolChoice(choice: NonNullable<CompletionOptions['toolChoice']>) {

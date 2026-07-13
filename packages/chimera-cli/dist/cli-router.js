@@ -381,7 +381,7 @@ class CliRouter {
             process.exit(1);
         }
     }
-    async run(mode, task) {
+    async run(mode, task, preset = 'solo') {
         const label = {
             ask: 'Answering',
             plan: 'Planning',
@@ -445,6 +445,7 @@ class CliRouter {
             const result = await orchestrator.execute({
                 task,
                 mode,
+                preset,
                 providers: { writer, reviewer, ...(challenger ? { challenger } : {}) },
             });
             this.printResult(result);
@@ -550,23 +551,26 @@ class CliRouter {
         this.program
             .command('code <task>')
             .description('Write code')
-            .action(async (task) => {
+            .option('--preset <mode>', 'deliberation preset (solo|duo|trio|fusion|hive|swarm|auto)', 'solo')
+            .action(async (task, options) => {
             this.verbose = this.program.opts().verbose ?? false;
-            await this.run('code', task);
+            await this.run('code', task, options.preset);
         });
         this.program
             .command('debug <task>')
             .description('Debug an issue')
-            .action(async (task) => {
+            .option('--preset <mode>', 'deliberation preset (solo|duo|trio|fusion|hive|swarm|auto)', 'solo')
+            .action(async (task, options) => {
             this.verbose = this.program.opts().verbose ?? false;
-            await this.run('debug', task);
+            await this.run('debug', task, options.preset);
         });
         this.program
             .command('review <task>')
             .description('Review code')
-            .action(async (task) => {
+            .option('--preset <mode>', 'deliberation preset (solo|duo|trio|fusion|hive|swarm|auto)', 'solo')
+            .action(async (task, options) => {
             this.verbose = this.program.opts().verbose ?? false;
-            await this.run('review', task);
+            await this.run('review', task, options.preset);
         });
         this.program
             .command('parallel <task>')

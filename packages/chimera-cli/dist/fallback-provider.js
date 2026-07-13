@@ -41,10 +41,12 @@ function createFallbackProvider(providers, onFallback) {
                     }
                 }
                 if (m.role === 'assistant' && Array.isArray(extra.tool_calls)) {
-                    msg.toolCalls = extra.tool_calls.map((tc) => ({
-                        id: tc.id,
+                    msg.toolCalls = extra.tool_calls
+                        .filter((tc) => tc && tc.function && typeof tc.function.name === 'string')
+                        .map((tc, i) => ({
+                        id: tc.id ?? `call_${i}`,
                         name: tc.function.name,
-                        arguments: tc.function.arguments,
+                        arguments: tc.function.arguments ?? '',
                     }));
                 }
                 return msg;

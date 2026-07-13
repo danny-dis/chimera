@@ -266,7 +266,6 @@ export class TrioExecutor {
       return this.degraded(`draft stage failed: ${String(err)}`, totalTokens, totalCostUsd, startTime, false, stages, worktreePath);
     }
     stages.push(draftStage);
-    this.safeEmit({ type: 'draft_proposed', agentId: config.writer, patchId: 'pending', confidence: 0 });
 
     // Optional Stage: Linter
     let linterFeedback = '';
