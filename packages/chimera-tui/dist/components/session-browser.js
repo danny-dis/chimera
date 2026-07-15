@@ -1,8 +1,8 @@
 import React, { useState } from 'react';
 import { Box, Text, useInput } from 'ink';
-import { zen } from '../theme.js';
+import { zen, tiered } from '../theme.js';
 import { formatCost, formatDateTime } from './tui-utils.js';
-export const SessionBrowser = ({ sessions, onSelect, onDelete, }) => {
+export const SessionBrowser = ({ sessions, onSelect, onDelete, skillModel, }) => {
     const [selectedIndex, setSelectedIndex] = useState(0);
     const [confirmDelete, setConfirmDelete] = useState(null);
     useInput((input, key) => {
@@ -45,7 +45,11 @@ export const SessionBrowser = ({ sessions, onSelect, onDelete, }) => {
                 " (",
                 sessions.length,
                 ")")),
-        sessions.length === 0 && React.createElement(Text, { dimColor: true }, "No saved sessions"),
+        sessions.length === 0 && React.createElement(Text, { dimColor: true }, tiered({
+            beginner: 'No saved sessions yet — each conversation is saved automatically, so your past sessions will appear here to reopen or resume.',
+            intermediate: 'No saved sessions',
+            advanced: 'No saved sessions.',
+        }, skillModel)),
         sessions.map((session, i) => {
             const isSelected = i === selectedIndex;
             const isConfirming = confirmDelete === session.id;

@@ -1,10 +1,11 @@
 import React from 'react';
-import type { Message } from '../types.js';
+import type { Message, SkillModelView } from '../types.js';
 interface ChatProps {
     messages: Message[];
     focused?: boolean;
     height?: number;
     width?: number;
+    skillModel?: SkillModelView;
 }
 export declare const Chat: React.FC<ChatProps>;
 export {};

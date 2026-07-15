@@ -1,7 +1,8 @@
 import React from 'react';
-import type { DiffFile } from '../types.js';
+import type { DiffFile, SkillModelView } from '../types.js';
 interface DiffViewerProps {
     files: DiffFile[];
+    skillModel?: SkillModelView;
 }
 export declare const DiffViewer: React.FC<DiffViewerProps>;
 export {};

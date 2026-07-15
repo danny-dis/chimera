@@ -1,4 +1,5 @@
 import type { Mode, DeliberationMode, AgentRole } from '@chimera/core';
+import type { SkillTier } from './types.js';
 /**
  * Zen theme — the single design system for the Chimera TUI.
  * Every component reads colors from here; no raw color strings allowed.
@@ -38,6 +39,12 @@ export interface ModeMeta {
     icon: string;
     label: string;
     description: string;
+    /** Tier-aware description copy; `intermediate` mirrors `description`. */
+    desc: {
+        beginner: string;
+        intermediate: string;
+        advanced: string;
+    };
 }
 export declare const MODES: Mode[];
 export declare const MODE_META: Record<Mode, ModeMeta>;
@@ -45,9 +52,25 @@ export interface PresetMeta {
     icon: string;
     label: string;
     description: string;
+    desc: {
+        beginner: string;
+        intermediate: string;
+        advanced: string;
+    };
 }
 export declare const PRESETS: DeliberationMode[];
 export declare const PRESET_META: Record<DeliberationMode, PresetMeta>;
+/**
+ * Resolve a tiered string for the current skill tier. Guards against a
+ * missing model (renders `intermediate` so the TUI still works uninstrumented).
+ */
+export declare function tiered<T>(msg: {
+    beginner: T;
+    intermediate: T;
+    advanced: T;
+}, model?: {
+    tier(): SkillTier;
+}): T;
 /** Safe role color lookup (never throws, always returns a valid ink color). */
 export declare function roleColors(role: AgentRole): string;
 /** Identity passthrough — documents that a string is a theme color. */

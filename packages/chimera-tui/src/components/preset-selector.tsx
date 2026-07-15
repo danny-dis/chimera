@@ -1,7 +1,8 @@
 import React, { useState, useCallback } from 'react';
 import { Box, Text, useInput } from 'ink';
 import type { DeliberationMode } from '@chimera/core';
-import { zen, PRESETS, PRESET_META } from '../theme.js';
+import { zen, PRESETS, PRESET_META, tiered } from '../theme.js';
+import type { SkillModelView } from '../types.js';
 
 interface PresetSelectorProps {
   preset: DeliberationMode;
@@ -9,6 +10,7 @@ interface PresetSelectorProps {
   focused?: boolean;
   compact?: boolean;
   contentWidth?: number;
+  skillModel?: SkillModelView;
 }
 
 export const PresetSelector: React.FC<PresetSelectorProps> = ({
@@ -17,6 +19,7 @@ export const PresetSelector: React.FC<PresetSelectorProps> = ({
   focused = false,
   compact = false,
   contentWidth,
+  skillModel,
 }) => {
   const [navIndex, setNavIndex] = useState(() => Math.max(0, PRESETS.indexOf(preset)));
 
@@ -86,7 +89,7 @@ export const PresetSelector: React.FC<PresetSelectorProps> = ({
             <Text bold={isSelected} color={isSelected ? zen.agent : zen.fg}>
               {PRESET_META[p].icon} {p}
             </Text>
-            <Text dimColor>{(!contentWidth || contentWidth >= 35) ? ` — ${PRESET_META[p].description.slice(0, Math.max(0, contentWidth ? contentWidth - 12 : 30))}` : ''}</Text>
+            <Text dimColor>{(!contentWidth || contentWidth >= 35) ? ` — ${tiered(PRESET_META[p].desc, skillModel).slice(0, Math.max(0, contentWidth ? contentWidth - 12 : 30))}` : ''}</Text>
           </Box>
         );
       })}

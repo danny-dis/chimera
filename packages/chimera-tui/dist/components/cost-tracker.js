@@ -1,7 +1,7 @@
 import React from 'react';
 import { Box, Text } from 'ink';
 import { formatCost, budgetColor } from './tui-utils.js';
-import { zen } from '../theme.js';
+import { zen, tiered } from '../theme.js';
 const BudgetBar = ({ used, total, width = 20, }) => {
     const ratio = Math.min(used / total, 1);
     const filled = Math.round(ratio * width);
@@ -16,7 +16,7 @@ const BudgetBar = ({ used, total, width = 20, }) => {
             "%")));
 };
 /** Full panel version (used as overlay). */
-export const CostTracker = ({ data, showBreakdown = true, contentWidth }) => {
+export const CostTracker = ({ data, showBreakdown = true, contentWidth, skillModel }) => {
     const remaining = Math.max(0, data.budget - data.currentCost);
     const isNarrow = contentWidth !== undefined && contentWidth < 30;
     if (isNarrow) {
@@ -31,7 +31,11 @@ export const CostTracker = ({ data, showBreakdown = true, contentWidth }) => {
         return (React.createElement(Box, { flexDirection: "column", borderStyle: "round", borderColor: zen.success, paddingX: 1 },
             React.createElement(Box, { marginBottom: 1 },
                 React.createElement(Text, { bold: true, color: zen.success }, "Cost Tracker")),
-            React.createElement(Text, { dimColor: true }, "No costs yet. Start a task to see usage.")));
+            React.createElement(Text, { dimColor: true }, tiered({
+                beginner: 'No costs yet — once you start a task, Chimera tracks token usage and spend here so you can watch your budget.',
+                intermediate: 'No costs yet. Start a task to see usage.',
+                advanced: 'No costs yet.',
+            }, skillModel))));
     }
     return (React.createElement(Box, { flexDirection: "column", borderStyle: "round", borderColor: zen.success, paddingX: 1 },
         React.createElement(Box, { marginBottom: 1 },

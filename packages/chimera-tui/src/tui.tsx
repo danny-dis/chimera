@@ -10,7 +10,7 @@ import { StatusBar } from './components/status-bar.js';
 import { SessionBrowser } from './components/session-browser.js';
 import { DiffViewer } from './components/diff-viewer.js';
 import { useLayout } from './hooks/use-layout.js';
-import { zen } from './theme.js';
+import { zen, tiered } from './theme.js';
 import { useFocus } from './hooks/use-focus.js';
 import { runCommand, autocompleteCommand } from './commands/commands.js';
 import type { CommandContext } from './commands/commands.js';
@@ -37,6 +37,7 @@ export const TUI: React.FC<TUIProps> = ({
   onSessionSelect,
   onSessionDelete,
   onExit,
+  skillModel,
 }) => {
   const [messages, setMessages] = useState<Message[]>(initialMessages);
   const [agents, setAgents] = useState<Agent[]>(initialAgents);
@@ -47,6 +48,10 @@ export const TUI: React.FC<TUIProps> = ({
   const [sidebarVisible, setSidebarVisible] = useState(true);
   const [activeOverlay, setActiveOverlay] = useState<Overlay>(null);
   const [commandHistory, setCommandHistory] = useState<string[]>([]);
+  // Bumped whenever the skill model's explanation depth is toggled so that
+  // tiered copy (driven by model.tier()/explainDepth()) re-renders live.
+  const [, setExplainVersion] = useState(0);
+  const bumpExplain = useCallback(() => setExplainVersion((v) => v + 1), []);
 
   const layout = useLayout(sidebarVisible);
   const focus = useFocus();
@@ -89,7 +94,8 @@ export const TUI: React.FC<TUIProps> = ({
     getCostData: () => costData,
     getHistory: () => commandHistory,
     sessionId,
-  }), [mode, preset, costData, commandHistory, sessionId, onModeChange, onPresetChange]);
+    skillModel,
+  }), [mode, preset, costData, commandHistory, sessionId, onModeChange, onPresetChange, skillModel]);
 
   const handleSlashCommand = useCallback((text: string) => {
     const ctx = buildCommandContext();
@@ -164,6 +170,20 @@ export const TUI: React.FC<TUIProps> = ({
       onExit?.();
       process.exit(0);
     }
+    // Adaptive-onboarding: reversible explain depth toggle (more ↔ less ↔ default).
+    // Stays live even while an overlay is open; only consumes bare keypresses.
+    if (!key.ctrl && !key.meta && !key.shift && !key.return && !key.escape) {
+      if (input === 'm' && skillModel?.setExplainMore) {
+        skillModel.setExplainMore();
+        bumpExplain();
+        return;
+      }
+      if (input === 'l' && skillModel?.setExplainLess) {
+        skillModel.setExplainLess();
+        bumpExplain();
+        return;
+      }
+    }
   });
 
   if (!layout.isMinSize) {
@@ -204,18 +224,19 @@ export const TUI: React.FC<TUIProps> = ({
               sessions={sessions}
               onSelect={onSessionSelect}
               onDelete={onSessionDelete}
+              skillModel={skillModel}
             />
           ) : activeOverlay === 'diff' ? (
-            <DiffViewer files={diffFiles} />
+            <DiffViewer files={diffFiles} skillModel={skillModel} />
           ) : activeOverlay === 'agents' ? (
-            <AgentDashboard agents={agents} />
+            <AgentDashboard agents={agents} skillModel={skillModel} />
           ) : activeOverlay === 'events' ? (
             <Box flexGrow={1} borderStyle="round" borderColor={zen.border}>
-              <EventLog events={events} height={chatHeight} />
+              <EventLog events={events} height={chatHeight} skillModel={skillModel} />
             </Box>
           ) : (
             <Box flexGrow={1} borderStyle="round" borderColor={zen.border} paddingX={1}>
-              <Chat messages={messages} focused={focus.isFocused(1)} height={chatHeight} width={layout.chatWidth} />
+              <Chat messages={messages} focused={focus.isFocused(1)} height={chatHeight} width={layout.chatWidth} skillModel={skillModel} />
             </Box>
           )}
           <Box marginTop={1} height={inputHeight}>
@@ -223,14 +244,23 @@ export const TUI: React.FC<TUIProps> = ({
               onSubmit={handleSendMessage}
               autocomplete={autocompleteCommand}
               disabled={activeOverlay !== null}
+              placeholder={tiered({
+                beginner: 'e.g. "Refactor utils.ts to use async/await"',
+                intermediate: 'Type a message or /help for commands...',
+                advanced: '> ',
+              }, skillModel)}
             />
           </Box>
           {messages.length === 0 && activeOverlay === null && (
             <Box marginTop={1}>
               <Text dimColor>
-                Tip: type a task, run <Text color={zen.accent}>/help</Text> for commands,
-                {' '}<Text color={zen.accent}>Ctrl+B</Text> toggles the sidebar,
-                {' '}<Text color={zen.accent}>/agents</Text> <Text color={zen.accent}>/events</Text> <Text color={zen.accent}>/diff</Text> for details.
+                {tiered({
+                  beginner:
+                    'Tip: describe a task in plain language (try "fix the login bug"), or run /help for the full command list.',
+                  intermediate:
+                    'Tip: type a task, run /help for commands, Ctrl+B toggles the sidebar, /agents /events /diff for details.',
+                  advanced: 'Tip: /help for commands.',
+                }, skillModel)}
               </Text>
             </Box>
           )}
@@ -250,6 +280,7 @@ export const TUI: React.FC<TUIProps> = ({
               contentWidth={layout.sidebarContentWidth}
               onModeChange={handleModeChange}
               onPresetChange={handlePresetChange}
+              skillModel={skillModel}
             />
           </Box>
         )}
@@ -261,8 +292,13 @@ export const TUI: React.FC<TUIProps> = ({
           <Text color={zen.accent}>Ctrl+B</Text> Sidebar · <Text color={zen.accent}>Tab</Text> Focus ·
           <Text color={zen.accent}>/help</Text> · <Text color={zen.accent}>/agents</Text> <Text color={zen.accent}>/events</Text> <Text color={zen.accent}>/diff</Text> ·
           <Text color={zen.accent}>Esc</Text> Close · <Text color={zen.accent}>Ctrl+C</Text> Exit
+          {' · '}<Text color={zen.accent}>(m)</Text> more · <Text color={zen.accent}>(l)</Text> less detail
         </Text>
-        <Text dimColor>Session: {sessionId}</Text>
+        <Text dimColor>
+          {process.env.CHIMERA_DEV && skillModel
+            ? `Session: ${sessionId} · ${skillModel.tier()} (${skillModel.tierReason()})`
+            : `Session: ${sessionId}`}
+        </Text>
       </Box>
     </Box>
   );

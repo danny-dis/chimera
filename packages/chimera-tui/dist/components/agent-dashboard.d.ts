@@ -1,8 +1,9 @@
 import React from 'react';
-import type { Agent } from '../types.js';
+import type { Agent, SkillModelView } from '../types.js';
 interface AgentDashboardProps {
     agents: Agent[];
     contentWidth?: number;
+    skillModel?: SkillModelView;
 }
 /** Full panel version (used as overlay). */
 export declare const AgentDashboard: React.FC<AgentDashboardProps>;

@@ -1,7 +1,7 @@
 import React from 'react';
 import { Box, Text } from 'ink';
 import { statusSymbols } from './tui-utils.js';
-import { zen } from '../theme.js';
+import { zen, tiered } from '../theme.js';
 import { AGENT_CAPABILITIES, PRESET_CAPABILITIES, getAgentCapability } from '../agent-capabilities.js';
 const AgentRow = ({ agent, contentWidth }) => {
     const roleColor = zen.role[agent.role] ?? 'white';
@@ -42,7 +42,7 @@ const CapabilityRow = ({ capability, compact, }) => {
                 capability.outputs)))));
 };
 /** Full panel version (used as overlay). */
-export const AgentDashboard = ({ agents, contentWidth }) => {
+export const AgentDashboard = ({ agents, contentWidth, skillModel }) => {
     const running = agents.filter((a) => a.status === 'running').length;
     const completed = agents.filter((a) => a.status === 'completed').length;
     const errored = agents.filter((a) => a.status === 'error').length;
@@ -60,7 +60,11 @@ export const AgentDashboard = ({ agents, contentWidth }) => {
                 ")")),
         React.createElement(Box, { flexDirection: "column", marginBottom: 1 },
             React.createElement(Text, { bold: true }, "Live agents"),
-            agents.length === 0 && React.createElement(Text, { dimColor: true }, "No active agents. Capabilities remain available by preset."),
+            agents.length === 0 && React.createElement(Text, { dimColor: true }, tiered({
+                beginner: 'No active agents yet — when a task starts, the agents assigned by your chosen preset appear here with their status and what they can do.',
+                intermediate: 'No active agents. Capabilities remain available by preset.',
+                advanced: 'No active agents.',
+            }, skillModel)),
             agents.map((agent) => (React.createElement(AgentRow, { key: agent.id, agent: agent, contentWidth: contentWidth })))),
         React.createElement(Box, { flexDirection: "column", marginBottom: 1 },
             React.createElement(Text, { bold: true }, "Role capabilities"),

@@ -36,6 +36,20 @@ chimera code "fix the off-by-one in src/parser.ts"
 role (writer/reviewer/challenger) is assigned automatically. Override any role
 with `CHIMERA_WRITER_MODEL` / `CHIMERA_REVIEWER_MODEL` / `CHIMERA_CHALLENGER_MODEL`.
 
+## Adaptive guidance
+
+Chimera adapts how much it explains to *you* — not what it lets you do. It
+infers a confidence score from how you use it (flags you pass, how you phrase
+requests, whether a step needs repeating) and shows more or less hand-holding
+accordingly. New or ambiguous sessions start in the middle. You can always shift
+it:
+
+- Say **"explain more"** (or "teach me") for a why-first, jargon-defined walkthrough.
+- Say **"explain less"** (or "skip the explanation") for terse, shortcut-first output.
+
+The toggle is reversible at any time. Set `CHIMERA_DEV=1` to see, in one line,
+why a given depth was chosen (`[skill] score≈0.62 intermediate — …`).
+
 ## Modes
 
 | Mode | What it does |

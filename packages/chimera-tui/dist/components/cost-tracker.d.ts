@@ -1,9 +1,10 @@
 import React from 'react';
-import type { CostData } from '../types.js';
+import type { CostData, SkillModelView } from '../types.js';
 interface CostTrackerProps {
     data: CostData;
     showBreakdown?: boolean;
     contentWidth?: number;
+    skillModel?: SkillModelView;
 }
 /** Full panel version (used as overlay). */
 export declare const CostTracker: React.FC<CostTrackerProps>;

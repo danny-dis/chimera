@@ -1,22 +1,32 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Box, Text } from 'ink';
-import { zen } from '../theme.js';
+import { zen, tiered } from '../theme.js';
+import type { SkillModelView } from '../types.js';
 
 interface InputProps {
   onSubmit: (text: string) => void;
   autocomplete?: (partial: string) => string[];
   placeholder?: string;
   disabled?: boolean;
+  skillModel?: SkillModelView;
 }
 
 const BACKSPACE_CHARS = new Set(['\x7f', '\x08', '\b']);
 
+const DEFAULT_PLACEHOLDERS: { beginner: string; intermediate: string; advanced: string } = {
+  beginner: 'Type a task in plain language, or /help to see what Chimera can do...',
+  intermediate: 'Type a message or /help for commands...',
+  advanced: '/help for commands — or type a task.',
+};
+
 export const Input: React.FC<InputProps> = ({
   onSubmit,
   autocomplete,
-  placeholder = 'Type a message or /help for commands...',
+  placeholder,
   disabled = false,
+  skillModel,
 }) => {
+  const effectivePlaceholder = placeholder ?? tiered(DEFAULT_PLACEHOLDERS, skillModel);
   const [value, setValue] = useState('');
   const [history, setHistory] = useState<string[]>([]);
   const valueRef = useRef(value);
@@ -117,7 +127,7 @@ export const Input: React.FC<InputProps> = ({
           <Text color={zen.fg}>{value.slice(value.split(/\s/)[0].length)}</Text>
         </Box>
       ) : (
-        <Text>{value || <Text dimColor>{placeholder}</Text>}</Text>
+        <Text>{value || <Text dimColor>{effectivePlaceholder}</Text>}</Text>
       )}
       {!disabled && <Text color={zen.info}>▊</Text>}
       {disabled && <Text dimColor> (disabled)</Text>}

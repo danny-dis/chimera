@@ -1,8 +1,14 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Box, Text } from 'ink';
-import { zen } from '../theme.js';
+import { zen, tiered } from '../theme.js';
 const BACKSPACE_CHARS = new Set(['\x7f', '\x08', '\b']);
-export const Input = ({ onSubmit, autocomplete, placeholder = 'Type a message or /help for commands...', disabled = false, }) => {
+const DEFAULT_PLACEHOLDERS = {
+    beginner: 'Type a task in plain language, or /help to see what Chimera can do...',
+    intermediate: 'Type a message or /help for commands...',
+    advanced: '/help for commands — or type a task.',
+};
+export const Input = ({ onSubmit, autocomplete, placeholder, disabled = false, skillModel, }) => {
+    const effectivePlaceholder = placeholder ?? tiered(DEFAULT_PLACEHOLDERS, skillModel);
     const [value, setValue] = useState('');
     const [history, setHistory] = useState([]);
     const valueRef = useRef(value);
@@ -83,7 +89,7 @@ export const Input = ({ onSubmit, autocomplete, placeholder = 'Type a message or
         React.createElement(Text, null, '> '),
         isCommand ? (React.createElement(Box, null,
             React.createElement(Text, { color: zen.warning }, value.split(/\s/)[0]),
-            React.createElement(Text, { color: zen.fg }, value.slice(value.split(/\s/)[0].length)))) : (React.createElement(Text, null, value || React.createElement(Text, { dimColor: true }, placeholder))),
+            React.createElement(Text, { color: zen.fg }, value.slice(value.split(/\s/)[0].length)))) : (React.createElement(Text, null, value || React.createElement(Text, { dimColor: true }, effectivePlaceholder))),
         !disabled && React.createElement(Text, { color: zen.info }, "\u258A"),
         disabled && React.createElement(Text, { dimColor: true }, " (disabled)")));
 };

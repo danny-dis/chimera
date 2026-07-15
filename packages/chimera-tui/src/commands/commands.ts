@@ -1,6 +1,7 @@
 import type { Mode, DeliberationMode } from '@chimera/core';
-import type { CostData } from '../types.js';
+import type { CostData, SkillModelView } from '../types.js';
 import { AGENT_CAPABILITIES, PRESET_CAPABILITIES } from '../agent-capabilities.js';
+import { tiered } from '../theme.js';
 
 // ── Command result ──────────────────────────────────────────────────────
 
@@ -76,6 +77,8 @@ export interface CommandContext {
   runDoctor?: () => Promise<string[]>;
   /** Read resolved config. */
   readConfig?: () => Promise<Record<string, unknown> | null>;
+  /** Optional per-session skill model for tiered (adaptive) help copy. */
+  skillModel?: SkillModelView;
 }
 
 // ── Help text ────────────────────────────────────────────────────────────
@@ -138,6 +141,52 @@ export const HELP_TEXT = [
   '    /events                           — show events overlay',
 ];
 
+// Beginner variant: groups commands and explains what each does in plain language.
+export const HELP_TEXT_BEGINNER = [
+  'Chimera commands — type a slash command and press Enter.',
+  '',
+  '  Get started:',
+  '    /help        — show this help',
+  '    /clear       — clear the screen',
+  '    /exit        — quit the session',
+  '',
+  '  Modes & teams (how Chimera works):',
+  '    /mode <ask|plan|code|debug|review|oal|auto>  — choose what Chimera does:',
+  '                  ask = questions, plan = plan first, code = write code,',
+  '                  debug = fix bugs, review = review changes, oal = run a long task alone.',
+  '    /preset <solo|duo|trio|hive|fusion>          — choose team size:',
+  '                  solo = 1 agent, duo = 2 (one checks the other),',
+  '                  trio = 3, hive = work split in parallel, fusion = mix of AI models.',
+  '',
+  '  See your work:',
+  '    /cost        — how much this session has cost',
+  '    /sessions    — list saved sessions',
+  '    /agents /events /diff  — inspect agents, event log, and file changes',
+  '',
+  '  Advanced (type /help again once you are comfortable):',
+  '    /tasks /compact /init /rewind /loop /goal /model /theme /status /config /login ...',
+  '',
+  'Just type a task in plain language too — you do not need a command.',
+];
+
+// Advanced variant: terse, grouped summary without explanations.
+export const HELP_TEXT_ADVANCED = [
+  '  /mode <ask|plan|code|debug|review|oal|auto>   /preset <auto|solo|duo|trio|hive|fusion>',
+  '  /cost /history /sessions /clear /exit /help',
+  '  /tasks /compact /init /todos /rewind [id] /loop <n> <task> /goal <desc>',
+  '  /model [name] /theme <name> /vim /status /output-style <name> /permissions /config /sandbox',
+  '  /login /logout /doctor /memory /sessions /agents /events /diff',
+];
+
+/** Select help text by skill tier; defaults to the intermediate full list. */
+export function getHelpText(model?: SkillModelView): string[] {
+  return tiered({
+    beginner: HELP_TEXT_BEGINNER,
+    intermediate: HELP_TEXT,
+    advanced: HELP_TEXT_ADVANCED,
+  }, model);
+}
+
 // ── Dispatch ─────────────────────────────────────────────────────────────
 
 export function runCommand(
@@ -156,7 +205,7 @@ export function runCommand(
   switch (cmd) {
     // ── Core ──────────────────────────────────────────────────────────
     case 'help':
-      return { output: HELP_TEXT };
+      return { output: getHelpText(ctx.skillModel) };
 
     case 'mode': {
       const known: Mode[] = ['ask', 'plan', 'code', 'debug', 'review', 'oal', 'auto'];
@@ -593,7 +642,11 @@ export function runCommand(
       return { output: ['Goodbye.'], exit: true };
 
     default:
-      return { output: [`Unknown command: /${cmd}. Type /help for commands.`] };
+      return { output: [tiered({
+        beginner: `I didn't recognise "/${cmd}". Commands start with a slash — try /help to see the full list, or just type your task in plain language.`,
+        intermediate: `Unknown command: /${cmd}. Type /help for commands.`,
+        advanced: `Unknown: /${cmd}. See /help.`,
+      }, ctx.skillModel)] };
   }
 }
 

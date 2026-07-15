@@ -8,6 +8,9 @@ import { ProviderFactory, RateLimitError, ProviderUnavailableError, ProviderErro
 import type { ModelProvider, ModelEntry } from '@chimera/providers';
 import { CheckpointStore } from '@chimera/session';
 import { LearningEngine } from '@chimera/learning';
+import { UserSkillModel, tierMessage, suggestNextValue } from '@chimera/learning';
+import type { ObservedCapability } from '@chimera/learning';
+import type { TieredMessage, SkillTier } from '@chimera/learning';
 import { ToolRegistry, ToolExecutor, allTools } from '@chimera/tools';
 import { runEval, formatEvalMarkdown } from './eval-runner.js';
 import { runSlashCommand } from './commands/registry.js';
@@ -126,24 +129,45 @@ function formatProviderError(err: unknown, providerName?: string): string {
   return err instanceof Error ? err.message : String(err);
 }
 
+/** Render a tiered message for the given skill tier, logging the reason in dev. */
+function renderTiered(msg: TieredMessage, tier: SkillTier): string {
+  if (process.env.CHIMERA_DEV || process.argv.includes('--verbose')) {
+    // dev-only single-line signal trace
+    console.debug(`[skill] (tierMessage) → ${tier}`);
+  }
+  return tierMessage(msg, tier);
+}
+
 /**
  * Validate that at least one provider can be created successfully.
  * Called on startup to fail fast with a clear message instead of discovering
  * a missing API key mid-task.
  */
-function validateStartupProviders(mapped: { writer?: ModelProvider; reviewer?: ModelProvider; challenger?: ModelProvider; fallback: ModelProvider[] }): void {
+function validateStartupProviders(
+  mapped: { writer?: ModelProvider; reviewer?: ModelProvider; challenger?: ModelProvider; fallback: ModelProvider[] },
+  skillModel?: UserSkillModel,
+): void {
+  const tier = skillModel?.tier() ?? 'intermediate';
   const real = mapped.fallback.filter((p) => p.getModel().provider !== 'mock');
   if (real.length === 0 && mapped.fallback.length > 0) {
     // Only mock providers — warn but don't block
-    console.log(
-      '  \u26a0 No real API keys found \u2014 using offline mock provider.',
-    );
+    const mockMsg: TieredMessage = {
+      beginner:
+        '  ⚠ No real API keys found — using the offline mock provider.\n  This lets you try the interface, but it won\'t actually call a model.\n  Run `chimera setup` to add a real provider and start getting real answers.',
+      intermediate: '  ⚠ No real API keys found — using offline mock provider.',
+      advanced: '  ⚠ No real API keys — mock provider active.',
+    };
+    console.log(renderTiered(mockMsg, tier));
     console.log('  Run `chimera setup` to configure real providers.\n');
   }
   if (mapped.fallback.length === 0) {
-    console.error(
-      '\n\u2717 No providers available. Configure at least one provider:',
-    );
+    const noneMsg: TieredMessage = {
+      beginner:
+        '\n✗ No providers available. You need at least one provider to run Chimera.\n  - Run `chimera setup` for an interactive walkthrough\n  - Or set ANTHROPIC_API_KEY, OPENAI_API_KEY, or GOOGLE_API_KEY in your .env file',
+      intermediate: '\n✗ No providers available. Configure at least one provider:',
+      advanced: '\n✗ No providers configured.',
+    };
+    console.error(renderTiered(noneMsg, tier));
     console.error('  - Run `chimera setup` for interactive configuration');
     console.error('  - Or set ANTHROPIC_API_KEY, OPENAI_API_KEY, or GOOGLE_API_KEY in .env\n');
     process.exit(1);
@@ -424,9 +448,20 @@ export class CliRouter {
       oal: 'Optimizing',
       auto: 'Auto-selecting',
     };
-  
+
+    // Per-invocation skill model (one-shot path has no persistent session).
+    const skillModel = new UserSkillModel();
+    const opts = this.program.opts() as Record<string, unknown>;
+    const scripted =
+      !!process.env.NONINTERACTIVE ||
+      process.argv.includes('--yes') ||
+      process.argv.includes('-y') ||
+      opts.yes === true;
+    skillModel.observeCommandUsage({ flags: process.argv.slice(2), usedPreset: !!preset && preset !== 'solo', scripted, configOverridden: false });
+    skillModel.observeMessage(task);
+
     console.log(`\n\u2699 Chimera [${mode}] \u2014 ${label[mode]}...\n`);
-  
+
     // Auto-generate config from env vars (fetches models from API if needed)
     if (!configExists()) {
       const generated = await autoGenerateConfig();
@@ -434,11 +469,11 @@ export class CliRouter {
         console.log(`  \u2713 Auto-configured from environment (${generated.providers.length} providers)`);
       }
     }
-  
+
     const mapped = await this.getRoleMappedProviders();
-  
+
     // #6 — Validate providers on startup (fail fast)
-    validateStartupProviders(mapped);
+    validateStartupProviders(mapped, skillModel);
   
     // #1 — Use FallbackChain when multiple providers are available.
     // Instead of a single writer that dies on the first 429, the fallback
@@ -487,8 +522,9 @@ export class CliRouter {
         preset,
         providers: { writer, reviewer, ...(challenger ? { challenger } : {}) },
       });
-  
-      this.printResult(result);
+
+      skillModel.observeTaskOutcome({ clean: result.status === 'done' });
+      this.printResult(result, skillModel);
     } catch (err) {
       // #3 — Better error messages for provider failures
       const msg = formatProviderError(err);
@@ -497,7 +533,7 @@ export class CliRouter {
     }
   }
 
-  private printResult(result: OrchestratorResult): void {
+  private printResult(result: OrchestratorResult, skillModel?: UserSkillModel): void {
     const statusIcon: Record<string, string> = {
       done: '✓',
       blocked: '⚠',
@@ -511,7 +547,14 @@ export class CliRouter {
     if (result.output && result.output.trim().length > 0) {
       console.log(`\n${result.output}\n`);
     } else {
-      console.log(`\n⚠ Empty response. The model returned no content.`);
+      const tier = skillModel?.tier() ?? 'intermediate';
+      const emptyMsg: TieredMessage = {
+        beginner: '\n⚠ Empty response. The model returned no content.',
+        intermediate: '\n⚠ Empty response. The model returned no content.',
+        // Advanced users already know the usual culprits — skip the API-key primer.
+        advanced: '\n⚠ Empty response.',
+      };
+      console.log(renderTiered(emptyMsg, tier));
       console.log(`  Check your API key, model availability, and provider status.\n`);
     }
   }
@@ -860,6 +903,10 @@ export class CliRouter {
     // required() synchronously from this CJS CLI. Dynamic import keeps boot clean.
     const { runTUI } = await import('@chimera/tui');
 
+    // TUI owns its own skill model instance (it feeds its own signals; the
+    // per-turn REPL feeding path is a separate launch and need not share this).
+    const skillModel = new UserSkillModel();
+
     // Auto-generate config from env vars (fetches models from API if needed)
     if (!configExists()) {
       const generated = await autoGenerateConfig();
@@ -1023,6 +1070,7 @@ export class CliRouter {
       sessionId,
       activeTool,
       workingDir: workspaceRoot,
+      skillModel,
       onSendMessage: async (text) => {
         // Reset agents at the start of each new task so they don't accumulate
         currentAgents = [];
@@ -1394,6 +1442,14 @@ export class CliRouter {
     const conversationHistory: Array<{ role: string; content: string }> = [];
     let loopState: { kind: 'loop' | 'goal'; task: string; maxIterations: number; currentIteration: number; status: 'running' | 'completed' | 'failed'; startedAt: number } | null = null;
 
+    // One skill model per session — fed by signals as they occur.
+    const skillModel = new UserSkillModel();
+    // Capabilities the user has touched this session (drives the value nudge).
+    const seenCapabilities = new Set<ObservedCapability>();
+    // Surface one underused capability at a natural pause (task completion),
+    // throttled so it never interrupts mid-task (Step 4 of adaptive onboarding).
+    let turnsSinceNudge = 0;
+
     const rl = readline.createInterface({
       input: process.stdin,
       output: process.stdout,
@@ -1406,6 +1462,7 @@ export class CliRouter {
       setMode: (m) => { currentMode = m; },
       sessionId,
       history,
+      skillModel,
       latestReplResult: null,
       setLatestReplResult: () => {},
       currentOrchestrator: null,
@@ -1416,7 +1473,7 @@ export class CliRouter {
       adaptProvider,
       getProviders: () => this.getProviders(),
       getSessionStore: () => this.sessionStore,
-      printResult: (r) => this.printResult(r),
+      printResult: (r) => this.printResult(r, skillModel),
       initOrchestrator: () => this.initOrchestrator(),
     };
 
@@ -1443,6 +1500,16 @@ export class CliRouter {
 
       // Process task
       history.push(input);
+
+      // Feed observable behavior into the skill model so explanation depth
+      // tracks the user in real time (Step 2 of the adaptive-onboarding work).
+      skillModel.observeMessage(input);
+      if (/explain more|teach me|for a beginner|more detail|i'?m new|i am new/i.test(input)) {
+        skillModel.setExplainMore();
+      } else if (/skip the explanation|explain less|less detail|don'?t explain|just do it|just do the task/i.test(input)) {
+        skillModel.setExplainLess();
+      }
+
       console.log(`\n⚙ [${currentMode}] processing...\n`);
 
       // Retrieve relevant memories
@@ -1478,7 +1545,37 @@ export class CliRouter {
           conversationHistory,
         });
 
-        this.printResult(result);
+        this.printResult(result, skillModel);
+        skillModel.observeTaskOutcome({ clean: result.status === 'done' });
+
+        // Track which capabilities the user has exercised (for the nudge).
+        const capFromInput = /^\/(loop|goal|sessions|resume|skill|learn|workflow|export|hooks|vim|teleport|eval|doctor|mcp|ide)/i.exec(input.trim());
+        if (capFromInput) {
+          const map: Record<string, ObservedCapability> = {
+            loop: 'loop', goal: 'goal', sessions: 'sessions', resume: 'sessions',
+            skill: 'skill', learn: 'learn', workflow: 'workflow', export: 'export',
+            hooks: 'hooks', vim: 'vim', teleport: 'teleport', eval: 'eval',
+            doctor: 'doctor', mcp: 'mcp', ide: 'ide',
+          };
+          const cap = map[capFromInput[1]!.toLowerCase()];
+          if (cap) seenCapabilities.add(cap);
+          if (/--preset/.test(input)) seenCapabilities.add('preset');
+          if (/chimera (init|setup)|config\.yaml|CHIMERA_/i.test(input)) seenCapabilities.add('config');
+        }
+
+        // Natural-pause nudge: suggest ONE underused capability, throttled and
+        // non-intrusive (Step 4). Calibrated to the inferred skill level.
+        turnsSinceNudge += 1;
+        if (turnsSinceNudge >= 3 && result.status === 'done') {
+          turnsSinceNudge = 0;
+          const suggestion = suggestNextValue(skillModel, Array.from(seenCapabilities));
+          if (suggestion) {
+            if (this.verbose) {
+              console.log(`  [skill] ${skillModel.tierReason()} → suggesting "${suggestion.id}"`);
+            }
+            console.log(`\n  💡 ${suggestion.tip}\n`);
+          }
+        }
 
         // Accumulate conversation history for context
         if (result.output && result.status === 'done') {

@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Box, Text, useInput } from 'ink';
-import { zen } from '../theme.js';
+import { zen, tiered } from '../theme.js';
 const DiffLineComponent = ({ lineNum, type, content }) => {
     const prefix = type === 'addition' ? '+' : type === 'deletion' ? '-' : ' ';
     const color = type === 'addition' ? zen.success : type === 'deletion' ? zen.error : undefined;
@@ -24,7 +24,7 @@ const FileHeader = ({ file, isExpanded, isSelected }) => {
             "-",
             file.deletions)));
 };
-export const DiffViewer = ({ files }) => {
+export const DiffViewer = ({ files, skillModel }) => {
     const [selectedIndex, setSelectedIndex] = useState(0);
     const [expandedFiles, setExpandedFiles] = useState(new Set([0]));
     useInput((input, key) => {
@@ -57,7 +57,11 @@ export const DiffViewer = ({ files }) => {
                 " (",
                 files.length,
                 " files)")),
-        files.length === 0 && React.createElement(Text, { dimColor: true }, "No changes to display"),
+        files.length === 0 && React.createElement(Text, { dimColor: true }, tiered({
+            beginner: 'No file changes yet — when Chimera edits files, the before/after differences show up here.',
+            intermediate: 'No changes to display',
+            advanced: 'No diffs.',
+        }, skillModel)),
         files.map((file, i) => (React.createElement(Box, { key: file.path, flexDirection: "column" },
             React.createElement(FileHeader, { file: file, isExpanded: expandedFiles.has(i), isSelected: i === selectedIndex }),
             expandedFiles.has(i) &&

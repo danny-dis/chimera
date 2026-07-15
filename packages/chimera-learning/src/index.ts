@@ -11,6 +11,24 @@ export { LearningEngine } from './learning-engine.js';
 export { AutoSkillService } from './auto-skill-service.js';
 export type { AutoSkillConfig, AutoSkillResult } from './auto-skill-service.js';
 
+// Adaptive onboarding & guidance (skill-signal scoring + tiered surfacing)
+export { UserSkillModel, skillTierFromCli } from './user-skill-model.js';
+export type {
+  SkillTier,
+  ExplainDepth,
+  SkillOverride,
+  SkillSignal,
+  SkillAuditEntry,
+  ObservedCapability,
+} from './user-skill-model.js';
+export {
+  tierMessage,
+  depthMessage,
+  suggestNextValue,
+  CAPABILITY_TIPS,
+} from './guidance.js';
+export type { TieredMessage, CapabilityTip, ValueSuggestion } from './guidance.js';
+
 // Types
 export type {
   SessionPattern,

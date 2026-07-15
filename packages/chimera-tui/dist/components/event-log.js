@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { Box, Text, useInput } from 'ink';
 import { Viewport } from './viewport.js';
 import { formatTime } from './tui-utils.js';
-import { zen } from '../theme.js';
+import { zen, tiered } from '../theme.js';
 const eventTypeColors = {
     user_request: zen.accent,
     task_classified: zen.info,
@@ -64,7 +64,7 @@ const renderEventSummary = (event) => {
             return event.message;
     }
 };
-export const EventLog = ({ events, filter = null, onFilterChange, focused = false, height = 10, contentWidth, }) => {
+export const EventLog = ({ events, filter = null, onFilterChange, focused = false, height = 10, contentWidth, skillModel, }) => {
     const [collapsed, setCollapsed] = useState(new Set());
     const filteredEvents = filter
         ? events.filter((e) => e.type === filter)
@@ -113,7 +113,11 @@ export const EventLog = ({ events, filter = null, onFilterChange, focused = fals
         React.createElement(Viewport, { items: filteredEvents, height: height, focused: focused, renderItem: (event, _index, isSelected) => {
                 if (filteredEvents.length === 0) {
                     return (React.createElement(Box, null,
-                        React.createElement(Text, { dimColor: true }, "No events yet. Start a task to see events.")));
+                        React.createElement(Text, { dimColor: true }, tiered({
+                            beginner: 'No events yet — once you start a task, Chimera logs what it does here (tool calls, decisions, results).',
+                            intermediate: 'No events yet. Start a task to see events.',
+                            advanced: 'No events.',
+                        }, skillModel))));
                 }
                 const color = eventTypeColors[event.type] ?? zen.fg;
                 const isCollapsed = collapsed.has(event.type);

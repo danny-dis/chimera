@@ -1,19 +1,21 @@
 import React, { useState } from 'react';
 import { Box, Text, useInput } from 'ink';
-import type { Session } from '../types.js';
-import { zen } from '../theme.js';
+import type { Session, SkillModelView } from '../types.js';
+import { zen, tiered } from '../theme.js';
 import { formatCost, formatDateTime } from './tui-utils.js';
 
 interface SessionBrowserProps {
   sessions: Session[];
   onSelect?: (sessionId: string) => void;
   onDelete?: (sessionId: string) => void;
+  skillModel?: SkillModelView;
 }
 
 export const SessionBrowser: React.FC<SessionBrowserProps> = ({
   sessions,
   onSelect,
   onDelete,
+  skillModel,
 }) => {
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
@@ -63,7 +65,11 @@ export const SessionBrowser: React.FC<SessionBrowserProps> = ({
         <Text dimColor> ({sessions.length})</Text>
       </Box>
 
-      {sessions.length === 0 && <Text dimColor>No saved sessions</Text>}
+      {sessions.length === 0 && <Text dimColor>{tiered({
+        beginner: 'No saved sessions yet — each conversation is saved automatically, so your past sessions will appear here to reopen or resume.',
+        intermediate: 'No saved sessions',
+        advanced: 'No saved sessions.',
+      }, skillModel)}</Text>}
 
       {sessions.map((session, i) => {
         const isSelected = i === selectedIndex;

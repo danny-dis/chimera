@@ -10,6 +10,7 @@ import { runWorkflow } from '@chimera/core';
 import type { ModelProvider } from '@chimera/providers';
 import { ModelMetadataFetcher } from '@chimera/providers';
 import type { CheckpointStore } from '@chimera/session';
+import type { UserSkillModel } from '@chimera/learning';
 import { loadCustomCommands, runCustomCommand } from './custom-loader.js';
 import { initAgentsMd } from './init.js';
 
@@ -49,6 +50,8 @@ export interface ReplContext {
   sessionId: string;
   /** Full history of user inputs in this session. */
   history: string[];
+  /** Behavior-derived skill model; drives explanation depth across the REPL. */
+  skillModel?: UserSkillModel;
   /** Result from the most recent task; used by /cost and /status. */
   latestReplResult: OrchestratorResult | null;
   setLatestReplResult(r: OrchestratorResult | null): void;

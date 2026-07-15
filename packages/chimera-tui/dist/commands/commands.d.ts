@@ -1,5 +1,5 @@
 import type { Mode, DeliberationMode } from '@chimera/core';
-import type { CostData } from '../types.js';
+import type { CostData, SkillModelView } from '../types.js';
 export interface CommandResult {
     /** Lines of output rendered as system messages in the chat. */
     output: string[];
@@ -88,8 +88,14 @@ export interface CommandContext {
     runDoctor?: () => Promise<string[]>;
     /** Read resolved config. */
     readConfig?: () => Promise<Record<string, unknown> | null>;
+    /** Optional per-session skill model for tiered (adaptive) help copy. */
+    skillModel?: SkillModelView;
 }
 export declare const HELP_TEXT: string[];
+export declare const HELP_TEXT_BEGINNER: string[];
+export declare const HELP_TEXT_ADVANCED: string[];
+/** Select help text by skill tier; defaults to the intermediate full list. */
+export declare function getHelpText(model?: SkillModelView): string[];
 export declare function runCommand(input: string, ctx: CommandContext): CommandResult;
 /**
  * Given a partial input like "/co" return matching command names.

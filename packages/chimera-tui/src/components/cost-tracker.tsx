@@ -1,13 +1,14 @@
 import React from 'react';
 import { Box, Text } from 'ink';
-import type { CostData } from '../types.js';
+import type { CostData, SkillModelView } from '../types.js';
 import { formatCost, budgetColor } from './tui-utils.js';
-import { zen } from '../theme.js';
+import { zen, tiered } from '../theme.js';
 
 interface CostTrackerProps {
   data: CostData;
   showBreakdown?: boolean;
   contentWidth?: number;
+  skillModel?: SkillModelView;
 }
 
 const BudgetBar: React.FC<{ used: number; total: number; width?: number }> = ({
@@ -32,7 +33,7 @@ const BudgetBar: React.FC<{ used: number; total: number; width?: number }> = ({
 };
 
 /** Full panel version (used as overlay). */
-export const CostTracker: React.FC<CostTrackerProps> = ({ data, showBreakdown = true, contentWidth }) => {
+export const CostTracker: React.FC<CostTrackerProps> = ({ data, showBreakdown = true, contentWidth, skillModel }) => {
   const remaining = Math.max(0, data.budget - data.currentCost);
   const isNarrow = contentWidth !== undefined && contentWidth < 30;
 
@@ -52,7 +53,11 @@ export const CostTracker: React.FC<CostTrackerProps> = ({ data, showBreakdown = 
         <Box marginBottom={1}>
           <Text bold color={zen.success}>Cost Tracker</Text>
         </Box>
-        <Text dimColor>No costs yet. Start a task to see usage.</Text>
+        <Text dimColor>{tiered({
+          beginner: 'No costs yet — once you start a task, Chimera tracks token usage and spend here so you can watch your budget.',
+          intermediate: 'No costs yet. Start a task to see usage.',
+          advanced: 'No costs yet.',
+        }, skillModel)}</Text>
       </Box>
     );
   }

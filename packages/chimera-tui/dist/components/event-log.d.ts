@@ -1,5 +1,5 @@
 import React from 'react';
-import type { EventLogEntry } from '../types.js';
+import type { EventLogEntry, SkillModelView } from '../types.js';
 interface EventLogProps {
     events: EventLogEntry[];
     filter?: string | null;
@@ -7,6 +7,7 @@ interface EventLogProps {
     focused?: boolean;
     height?: number;
     contentWidth?: number;
+    skillModel?: SkillModelView;
 }
 export declare const EventLog: React.FC<EventLogProps>;
 export {};

@@ -1,7 +1,7 @@
 import React, { useState, useCallback } from 'react';
 import { Box, Text, useInput } from 'ink';
-import { zen, MODES, MODE_META } from '../theme.js';
-export const ModeSelector = ({ mode, onSelect, focused = false, compact = false, contentWidth, }) => {
+import { zen, MODES, MODE_META, tiered } from '../theme.js';
+export const ModeSelector = ({ mode, onSelect, focused = false, compact = false, contentWidth, skillModel, }) => {
     const [navIndex, setNavIndex] = useState(() => Math.max(0, MODES.indexOf(mode)));
     const selectMode = useCallback((index) => {
         const m = MODES[index];
@@ -52,7 +52,7 @@ export const ModeSelector = ({ mode, onSelect, focused = false, compact = false,
                     MODE_META[m].icon,
                     " ",
                     m),
-                React.createElement(Text, { dimColor: true }, (!contentWidth || contentWidth >= 35) ? ` — ${MODE_META[m].description.slice(0, Math.max(0, contentWidth ? contentWidth - 12 : 30))}` : '')));
+                React.createElement(Text, { dimColor: true }, (!contentWidth || contentWidth >= 35) ? ` — ${tiered(MODE_META[m].desc, skillModel).slice(0, Math.max(0, contentWidth ? contentWidth - 12 : 30))}` : '')));
         })));
 };
 //# sourceMappingURL=mode-selector.js.map

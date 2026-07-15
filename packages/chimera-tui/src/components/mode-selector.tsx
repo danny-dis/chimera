@@ -1,7 +1,8 @@
 import React, { useState, useCallback } from 'react';
 import { Box, Text, useInput } from 'ink';
 import type { Mode } from '@chimera/core';
-import { zen, MODES, MODE_META } from '../theme.js';
+import { zen, MODES, MODE_META, tiered } from '../theme.js';
+import type { SkillModelView } from '../types.js';
 
 interface ModeSelectorProps {
   mode: Mode;
@@ -9,6 +10,7 @@ interface ModeSelectorProps {
   focused?: boolean;
   compact?: boolean;
   contentWidth?: number;
+  skillModel?: SkillModelView;
 }
 
 export const ModeSelector: React.FC<ModeSelectorProps> = ({
@@ -17,6 +19,7 @@ export const ModeSelector: React.FC<ModeSelectorProps> = ({
   focused = false,
   compact = false,
   contentWidth,
+  skillModel,
 }) => {
   const [navIndex, setNavIndex] = useState(() => Math.max(0, MODES.indexOf(mode)));
 
@@ -86,7 +89,7 @@ export const ModeSelector: React.FC<ModeSelectorProps> = ({
             <Text bold={isSelected} color={isSelected ? zen.accent : zen.fg}>
               {MODE_META[m].icon} {m}
             </Text>
-            <Text dimColor>{(!contentWidth || contentWidth >= 35) ? ` — ${MODE_META[m].description.slice(0, Math.max(0, contentWidth ? contentWidth - 12 : 30))}` : ''}</Text>
+            <Text dimColor>{(!contentWidth || contentWidth >= 35) ? ` — ${tiered(MODE_META[m].desc, skillModel).slice(0, Math.max(0, contentWidth ? contentWidth - 12 : 30))}` : ''}</Text>
           </Box>
         );
       })}

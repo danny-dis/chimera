@@ -7,7 +7,7 @@ import { PresetSelector } from './preset-selector.js';
 const Section = ({ label, color = zen.fg, children, }) => (React.createElement(Box, { flexDirection: "column", marginTop: 1 },
     React.createElement(Text, { bold: true, color: color }, label),
     children));
-export const Sidebar = ({ sessionId, mode, preset, agents, costData, tokenUsage, instructions, contentWidth, onModeChange, onPresetChange, }) => {
+export const Sidebar = ({ sessionId, mode, preset, agents, costData, tokenUsage, instructions, contentWidth, onModeChange, onPresetChange, skillModel, }) => {
     const totalTokens = tokenUsage?.total
         ?? agents.reduce((sum, a) => sum + a.tokenUsage.input + a.tokenUsage.output, 0);
     const inputTokens = tokenUsage?.input
@@ -24,9 +24,9 @@ export const Sidebar = ({ sessionId, mode, preset, agents, costData, tokenUsage,
             React.createElement(Text, { bold: true, color: zen.accent }, "CHIMERA"),
             React.createElement(Text, { dimColor: true }, sessionId)),
         React.createElement(Section, { label: "Mode", color: zen.accent },
-            React.createElement(ModeSelector, { mode: mode, compact: true, focused: true, onSelect: onModeChange })),
+            React.createElement(ModeSelector, { mode: mode, compact: true, focused: true, onSelect: onModeChange, skillModel: skillModel })),
         React.createElement(Section, { label: "Preset", color: zen.agent },
-            React.createElement(PresetSelector, { preset: preset, compact: true, focused: true, onSelect: onPresetChange })),
+            React.createElement(PresetSelector, { preset: preset, compact: true, focused: true, onSelect: onPresetChange, skillModel: skillModel })),
         React.createElement(Section, { label: "Token Usage", color: zen.info },
             React.createElement(Text, null,
                 totalTokens.toLocaleString(),

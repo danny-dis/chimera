@@ -1,17 +1,25 @@
 import React, { useCallback } from 'react';
 import { Box, Text } from 'ink';
-import type { Message, ToolCallIndicator } from '../types.js';
+import type { Message, ToolCallIndicator, SkillModelView } from '../types.js';
 import { Viewport } from './viewport.js';
 import { Markdown } from './markdown.js';
 import { statusSymbols } from './tui-utils.js';
-import { zen } from '../theme.js';
+import { zen, tiered } from '../theme.js';
 
 interface ChatProps {
   messages: Message[];
   focused?: boolean;
   height?: number;
   width?: number;
+  skillModel?: SkillModelView;
 }
+
+const WELCOME_LINES: { beginner: string; intermediate: string; advanced: string } = {
+  beginner:
+    'Terminal-native parallel multi-agent coding platform. Try: "Add a /healthz endpoint to the API."',
+  intermediate: 'Terminal-native parallel multi-agent coding platform. Type a task or /help for commands.',
+  advanced: 'Type a task or /help.',
+};
 
 const ToolCallBadge: React.FC<{ indicator: ToolCallIndicator }> = ({ indicator }) => {
   const st = statusSymbols[indicator.status];
@@ -150,7 +158,7 @@ const MessageBubble: React.FC<{ message: Message; isSelected: boolean }> = ({ me
   );
 };
 
-export const Chat: React.FC<ChatProps> = ({ messages, focused = false, height = 20, width = 80 }) => {
+export const Chat: React.FC<ChatProps> = ({ messages, focused = false, height = 20, width = 80, skillModel }) => {
   const getItemHeight = useCallback(
     (msg: Message) => estimateMessageHeight(msg, width),
     [width],
@@ -161,8 +169,7 @@ export const Chat: React.FC<ChatProps> = ({ messages, focused = false, height = 
       {messages.length === 0 && (
         <Box flexDirection="column" paddingX={2} paddingY={1}>
           <Text bold color={zen.accent}>Chimera</Text>
-          <Text dimColor>Terminal-native parallel multi-agent coding platform.</Text>
-          <Text dimColor>Type a task or /help for commands.</Text>
+          <Text dimColor>{tiered(WELCOME_LINES, skillModel)}</Text>
         </Box>
       )}
       <Viewport

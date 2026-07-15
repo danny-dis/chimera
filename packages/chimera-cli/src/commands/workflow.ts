@@ -25,6 +25,7 @@ import {
 } from '@chimera/core';
 import { ProviderFactory } from '@chimera/providers';
 import type { ModelProvider } from '@chimera/providers';
+import { skillTierFromCli, tierMessage, type TieredMessage } from '@chimera/learning';
 
 /**
  * Built-in workflows surfaced by the CLI. `standard-draft` and
@@ -190,8 +191,15 @@ export function registerWorkflowCommand(parent: Command): Command {
         aggregator: adaptProvider(providers[1] ?? providers[0] ?? noopProvider()),
       };
 
+      const stepLog: TieredMessage = {
+        beginner:
+          '  A "step" is one self-contained unit of work in your workflow (e.g. a single transformation). Chimera runs them in order and reports each.',
+        intermediate: '  [step] = one unit of work in the workflow, run in sequence.',
+        advanced: '  [step] completed (kind/duration).',
+      };
       eventStream.subscribe('*', (event) => {
         if (event.type === 'workflow_step_completed') {
+          console.log(tierMessage(stepLog, skillTierFromCli()));
           console.log(`  [step] ${event.stepId} (${event.kind}) — ${event.durationMs}ms`);
         } else if (event.type === 'workflow_run_completed') {
           console.log(`  [run]  status=${event.status} duration=${event.durationMs}ms steps=${event.stepCount}`);
@@ -205,7 +213,12 @@ export function registerWorkflowCommand(parent: Command): Command {
         });
 
         if (result.status !== 'success') {
-          console.error(`\n✗ Workflow run failed: ${result.error ?? 'unknown error'}\n`);
+          const failMsg: TieredMessage = {
+            beginner: `\n✗ The workflow didn't finish: ${result.error ?? 'unknown error'}\n  Check the step above that failed, fix the input or the step's code, then run it again with \`chimera workflow run ${found.definition.name}\`.\n`,
+            intermediate: `\n✗ Workflow run failed: ${result.error ?? 'unknown error'}\n`,
+            advanced: `\n✗ workflow run failed: ${result.error ?? 'unknown error'} (re-run: chimera workflow run ${found.definition.name})\n`,
+          };
+          console.error(tierMessage(failMsg, skillTierFromCli()));
           process.exitCode = 1;
           return;
         }
@@ -217,7 +230,12 @@ export function registerWorkflowCommand(parent: Command): Command {
         console.log();
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
-        console.error(`\n✗ Workflow run threw: ${msg}\n`);
+        const threwMsg: TieredMessage = {
+          beginner: `\n✗ The workflow hit an unexpected error: ${msg}\n  This usually means a step's code threw. Read the message above, fix the step, and re-run.\n`,
+          intermediate: `\n✗ Workflow run threw: ${msg}\n`,
+          advanced: `\n✗ workflow run threw: ${msg}\n`,
+        };
+        console.error(tierMessage(threwMsg, skillTierFromCli()));
         process.exitCode = 1;
       }
     });
@@ -247,9 +265,12 @@ async function getProviders(): Promise<ModelProvider[]> {
   try {
     return ProviderFactory.createFromEnv();
   } catch (err) {
-    console.error(
-      `\n✗ Provider initialization failed: ${err instanceof Error ? err.message : String(err)}\n`,
-    );
+    const initFail: TieredMessage = {
+      beginner: `\n✗ Couldn't start the AI providers: ${err instanceof Error ? err.message : String(err)}\n  Set your API key first — run \`chimera setup\`, or export e.g. ANTHROPIC_API_KEY in your shell.\n`,
+      intermediate: `\n✗ Provider initialization failed: ${err instanceof Error ? err.message : String(err)}\n`,
+      advanced: `\n✗ provider init failed: ${err instanceof Error ? err.message : String(err)} (set API key / CHIMERA_*_MODEL)\n`,
+    };
+    console.error(tierMessage(initFail, skillTierFromCli()));
     return [];
   }
 }

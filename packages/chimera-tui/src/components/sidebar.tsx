@@ -1,6 +1,6 @@
 import React from 'react';
 import { Box, Text } from 'ink';
-import type { Agent, CostData } from '../types.js';
+import type { Agent, CostData, SkillModelView } from '../types.js';
 import { zen, roleColors } from '../theme.js';
 import { formatCost, statusSymbols } from './tui-utils.js';
 import { ModeSelector } from './mode-selector.js';
@@ -17,6 +17,7 @@ interface SidebarProps {
   contentWidth?: number;
   onModeChange?: (mode: import('@chimera/core').Mode) => void;
   onPresetChange?: (preset: import('@chimera/core').DeliberationMode) => void;
+  skillModel?: SkillModelView;
 }
 
 const Section: React.FC<{ label: string; color?: string; children: React.ReactNode }> = ({
@@ -39,6 +40,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   contentWidth,
   onModeChange,
   onPresetChange,
+  skillModel,
 }) => {
   const totalTokens = tokenUsage?.total
     ?? agents.reduce((sum, a) => sum + a.tokenUsage.input + a.tokenUsage.output, 0);
@@ -69,6 +71,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
           compact
           focused
           onSelect={onModeChange}
+          skillModel={skillModel}
         />
       </Section>
 
@@ -79,6 +82,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
           compact
           focused
           onSelect={onPresetChange}
+          skillModel={skillModel}
         />
       </Section>
 

@@ -9,7 +9,7 @@
  */
 import { Command } from 'commander';
 import { resolve } from 'path';
-import { LearningEngine } from '@chimera/learning';
+import { LearningEngine, skillTierFromCli, tierMessage, type TieredMessage } from '@chimera/learning';
 import type { LearningReport, ArtifactInventory } from '@chimera/learning';
 
 function workspaceRoot(): string {
@@ -85,7 +85,13 @@ function printReport(report: LearningReport, applied: boolean): void {
   console.log('');
 
   if (totalCreated === 0 && totalUpdated === 0) {
-    console.log('  No new artifacts to synthesize. Need more session data.\n');
+    const noArtifacts: TieredMessage = {
+      beginner:
+        '  Nothing new to learn from yet — Chimera synthesizes skills after it has seen at least\n  2 sessions of your work. Run a couple of tasks first, then try `chimera learn` again.\n',
+      intermediate: '  No new artifacts to synthesize. Need more session data.\n',
+      advanced: '  No new artifacts (minSessionsThreshold=2 not met). Run more sessions or widen --session scope.\n',
+    };
+    console.log(tierMessage(noArtifacts, skillTierFromCli()));
     return;
   }
 

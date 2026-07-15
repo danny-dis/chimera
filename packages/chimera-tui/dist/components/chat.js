@@ -3,7 +3,12 @@ import { Box, Text } from 'ink';
 import { Viewport } from './viewport.js';
 import { Markdown } from './markdown.js';
 import { statusSymbols } from './tui-utils.js';
-import { zen } from '../theme.js';
+import { zen, tiered } from '../theme.js';
+const WELCOME_LINES = {
+    beginner: 'Terminal-native parallel multi-agent coding platform. Try: "Add a /healthz endpoint to the API."',
+    intermediate: 'Terminal-native parallel multi-agent coding platform. Type a task or /help for commands.',
+    advanced: 'Type a task or /help.',
+};
 const ToolCallBadge = ({ indicator }) => {
     const st = statusSymbols[indicator.status];
     const statusSymbol = st.symbol;
@@ -117,13 +122,12 @@ const MessageBubble = ({ message, isSelected }) => {
             message.toolCalls?.map((tc, i) => (React.createElement(ToolCallBadge, { key: i, indicator: tc }))),
             message.analysis && React.createElement(AnalysisSection, { analysis: message.analysis }))));
 };
-export const Chat = ({ messages, focused = false, height = 20, width = 80 }) => {
+export const Chat = ({ messages, focused = false, height = 20, width = 80, skillModel }) => {
     const getItemHeight = useCallback((msg) => estimateMessageHeight(msg, width), [width]);
     return (React.createElement(Box, { flexDirection: "column", height: height, overflow: "hidden" },
         messages.length === 0 && (React.createElement(Box, { flexDirection: "column", paddingX: 2, paddingY: 1 },
             React.createElement(Text, { bold: true, color: zen.accent }, "Chimera"),
-            React.createElement(Text, { dimColor: true }, "Terminal-native parallel multi-agent coding platform."),
-            React.createElement(Text, { dimColor: true }, "Type a task or /help for commands."))),
+            React.createElement(Text, { dimColor: true }, tiered(WELCOME_LINES, skillModel)))),
         React.createElement(Viewport, { items: messages, height: height, focused: focused, getItemHeight: getItemHeight, renderItem: (msg, _index, isSelected) => (React.createElement(MessageBubble, { message: msg, isSelected: isSelected })) })));
 };
 //# sourceMappingURL=chat.js.map

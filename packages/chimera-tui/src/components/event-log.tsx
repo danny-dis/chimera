@@ -1,9 +1,9 @@
 import React, { useState } from 'react';
 import { Box, Text, useInput } from 'ink';
-import type { EventLogEntry } from '../types.js';
+import type { EventLogEntry, SkillModelView } from '../types.js';
 import { Viewport } from './viewport.js';
 import { formatTime } from './tui-utils.js';
-import { zen } from '../theme.js';
+import { zen, tiered } from '../theme.js';
 
 interface EventLogProps {
   events: EventLogEntry[];
@@ -12,6 +12,7 @@ interface EventLogProps {
   focused?: boolean;
   height?: number;
   contentWidth?: number;
+  skillModel?: SkillModelView;
 }
 
 const eventTypeColors: Record<string, string> = {
@@ -85,6 +86,7 @@ export const EventLog: React.FC<EventLogProps> = ({
   focused = false,
   height = 10,
   contentWidth,
+  skillModel,
 }) => {
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
 
@@ -159,7 +161,11 @@ export const EventLog: React.FC<EventLogProps> = ({
           if (filteredEvents.length === 0) {
             return (
               <Box>
-                <Text dimColor>No events yet. Start a task to see events.</Text>
+                <Text dimColor>{tiered({
+                  beginner: 'No events yet — once you start a task, Chimera logs what it does here (tool calls, decisions, results).',
+                  intermediate: 'No events yet. Start a task to see events.',
+                  advanced: 'No events.',
+                }, skillModel)}</Text>
               </Box>
             );
           }

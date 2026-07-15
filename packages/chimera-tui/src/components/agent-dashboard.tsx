@@ -1,13 +1,14 @@
 import React from 'react';
 import { Box, Text } from 'ink';
-import type { Agent } from '../types.js';
+import type { Agent, SkillModelView } from '../types.js';
 import { statusSymbols } from './tui-utils.js';
-import { zen } from '../theme.js';
+import { zen, tiered } from '../theme.js';
 import { AGENT_CAPABILITIES, PRESET_CAPABILITIES, getAgentCapability } from '../agent-capabilities.js';
 
 interface AgentDashboardProps {
   agents: Agent[];
   contentWidth?: number;
+  skillModel?: SkillModelView;
 }
 
 const AgentRow: React.FC<{ agent: Agent; contentWidth?: number }> = ({ agent, contentWidth }) => {
@@ -63,7 +64,7 @@ const CapabilityRow: React.FC<{ capability: (typeof AGENT_CAPABILITIES)[number];
 };
 
 /** Full panel version (used as overlay). */
-export const AgentDashboard: React.FC<AgentDashboardProps> = ({ agents, contentWidth }) => {
+export const AgentDashboard: React.FC<AgentDashboardProps> = ({ agents, contentWidth, skillModel }) => {
   const running = agents.filter((a) => a.status === 'running').length;
   const completed = agents.filter((a) => a.status === 'completed').length;
   const errored = agents.filter((a) => a.status === 'error').length;
@@ -84,7 +85,11 @@ export const AgentDashboard: React.FC<AgentDashboardProps> = ({ agents, contentW
 
       <Box flexDirection="column" marginBottom={1}>
         <Text bold>Live agents</Text>
-        {agents.length === 0 && <Text dimColor>No active agents. Capabilities remain available by preset.</Text>}
+        {agents.length === 0 && <Text dimColor>{tiered({
+          beginner: 'No active agents yet — when a task starts, the agents assigned by your chosen preset appear here with their status and what they can do.',
+          intermediate: 'No active agents. Capabilities remain available by preset.',
+          advanced: 'No active agents.',
+        }, skillModel)}</Text>}
         {agents.map((agent) => (
           <AgentRow key={agent.id} agent={agent} contentWidth={contentWidth} />
         ))}

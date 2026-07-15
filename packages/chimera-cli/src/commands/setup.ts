@@ -3,6 +3,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import YAML from 'yaml';
 import { recommendFromProviders } from '@chimera/providers';
+import { UserSkillModel, tierMessage, type TieredMessage } from '@chimera/learning';
 
 // Providers the wizard can configure. `cheap` maps to the free NVIDIA
 // openai-compatible slot (CHIMERA_CHEAP_API_KEY / _BASE_URL / _MODEL).
@@ -79,7 +80,7 @@ function recommendedForRoles(selectedProviders: string[]): Record<string, string
   return { writer: rec.writer, reviewer: rec.reviewer, challenger: rec.challenger };
 }
 
-export async function runSetup(cwd?: string): Promise<boolean> {
+export async function runSetup(cwd?: string, skillModel?: UserSkillModel): Promise<boolean> {
   const base = cwd ?? process.cwd();
   const configDir = path.join(base, '.chimera');
   const configPath = path.join(configDir, 'config.yaml');
@@ -87,7 +88,13 @@ export async function runSetup(cwd?: string): Promise<boolean> {
 
   console.log('\n  Chimera Setup Wizard\n');
   console.log('  This will configure your providers, API keys, and per-role models.\n');
-  console.log('  Smart defaults: Chimera auto-recommends the best model per role\n  (writer/reviewer get the strongest; challenger gets a distinct one).\n');
+  const defaultsMsg: TieredMessage = {
+    beginner:
+      '  Smart defaults: Chimera automatically recommends the best model for each of three roles\n  — writer (writes the code), reviewer (checks it), and challenger (stress-tests it). The\n  writer and reviewer get the strongest model; the challenger gets a different one so it\n  can spot blind spots. You can change any of these next.',
+    intermediate: '  Smart defaults: Chimera auto-recommends the best model per role (writer/reviewer strongest; challenger distinct).\n',
+    advanced: '  Smart defaults applied (per-role model auto-recommend). Override via CHIMERA_<ROLE>_MODEL or config.yaml.\n',
+  };
+  console.log(tierMessage(defaultsMsg, skillModel?.tier() ?? 'intermediate'));
   console.log(`  Config: ${configPath}`);
   console.log(`  Env:    ${envPath}\n`);
 
@@ -172,9 +179,19 @@ export async function runSetup(cwd?: string): Promise<boolean> {
       console.log(`  ✓ API keys written to ${envPath}`);
     }
 
-    console.log('\n  Setup complete! Run `chimera` to start.\n');
-    console.log('  Tip: override any role later with CHIMERA_WRITER_MODEL /');
-    console.log('       CHIMERA_REVIEWER_MODEL / CHIMERA_CHALLENGER_MODEL, or edit .chimera/config.yaml.\n');
+    const doneMsg: TieredMessage = {
+      beginner:
+        '\n  Setup complete! 🎉\n\n  To start, just type a task — for example:\n      chimera code "add input validation to the login form"\n  Chimera will pick a model and get to work. No need to remember any flags.\n',
+      intermediate: '\n  Setup complete! Run `chimera` to start.\n',
+      advanced: '\n  Setup complete. Run `chimera` (or `chimera <mode> "<task>"` for a one-shot run).\n',
+    };
+    console.log(tierMessage(doneMsg, skillModel?.tier() ?? 'intermediate'));
+    const tipMsg: TieredMessage = {
+      beginner: '  Tip: later you can point a role at a specific model with an environment variable.\n',
+      intermediate: '  Tip: override any role later with CHIMERA_WRITER_MODEL / CHIMERA_REVIEWER_MODEL / CHIMERA_CHALLENGER_MODEL,\n       or edit .chimera/config.yaml.\n',
+      advanced: '  Role overrides: CHIMERA_WRITER_MODEL / REVIEWER_ / CHALLENGER_ or .chimera/config.yaml (defaults.preset).\n',
+    };
+    console.log(tierMessage(tipMsg, skillModel?.tier() ?? 'intermediate'));
     rl.close();
     return true;
   } catch (err) {

@@ -1,7 +1,7 @@
 import React, { useState, useCallback } from 'react';
 import { Box, Text, useInput } from 'ink';
-import { zen, PRESETS, PRESET_META } from '../theme.js';
-export const PresetSelector = ({ preset, onSelect, focused = false, compact = false, contentWidth, }) => {
+import { zen, PRESETS, PRESET_META, tiered } from '../theme.js';
+export const PresetSelector = ({ preset, onSelect, focused = false, compact = false, contentWidth, skillModel, }) => {
     const [navIndex, setNavIndex] = useState(() => Math.max(0, PRESETS.indexOf(preset)));
     const selectPreset = useCallback((index) => {
         const p = PRESETS[index];
@@ -52,7 +52,7 @@ export const PresetSelector = ({ preset, onSelect, focused = false, compact = fa
                     PRESET_META[p].icon,
                     " ",
                     p),
-                React.createElement(Text, { dimColor: true }, (!contentWidth || contentWidth >= 35) ? ` — ${PRESET_META[p].description.slice(0, Math.max(0, contentWidth ? contentWidth - 12 : 30))}` : '')));
+                React.createElement(Text, { dimColor: true }, (!contentWidth || contentWidth >= 35) ? ` — ${tiered(PRESET_META[p].desc, skillModel).slice(0, Math.max(0, contentWidth ? contentWidth - 12 : 30))}` : '')));
         })));
 };
 //# sourceMappingURL=preset-selector.js.map

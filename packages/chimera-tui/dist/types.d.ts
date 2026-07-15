@@ -1,4 +1,21 @@
 import type { AgentRole, Mode } from '@chimera/core';
+/** Mirrors `SkillTier` in `@chimera/learning`; kept local so the TUI has no
+ * hard dependency on the learning engine (it duck-types against a model the
+ * CLI plums in via props). */
+export type SkillTier = 'beginner' | 'intermediate' | 'advanced';
+/**
+ * Minimal shape of the per-session skill model the TUI reads from.
+ * The full `UserSkillModel` from `@chimera/learning` is duck-typed to this so
+ * the TUI never takes a hard dependency on the learning engine and still
+ * renders if the CLI has not yet plumbed the field through.
+ */
+export interface SkillModelView {
+    tier(): SkillTier;
+    explainDepth(): 'full' | 'condensed' | 'minimal';
+    setExplainMore(): void;
+    setExplainLess(): void;
+    tierReason(): string;
+}
 export interface ToolActivity {
     tool: string;
     args?: string;
@@ -111,5 +128,7 @@ export interface TUIProps {
     onSessionDelete?: (sessionId: string) => void;
     onEventFilter?: (type: string | null) => void;
     onExit?: () => void;
+    /** Optional per-session skill model for adaptive (tiered) onboarding copy. */
+    skillModel?: SkillModelView;
 }
 //# sourceMappingURL=types.d.ts.map

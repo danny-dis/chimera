@@ -1,10 +1,11 @@
 import React, { useState } from 'react';
 import { Box, Text, useInput } from 'ink';
-import type { DiffFile } from '../types.js';
-import { zen } from '../theme.js';
+import type { DiffFile, SkillModelView } from '../types.js';
+import { zen, tiered } from '../theme.js';
 
 interface DiffViewerProps {
   files: DiffFile[];
+  skillModel?: SkillModelView;
 }
 
 const DiffLineComponent: React.FC<{
@@ -48,7 +49,7 @@ const FileHeader: React.FC<{
   );
 };
 
-export const DiffViewer: React.FC<DiffViewerProps> = ({ files }) => {
+export const DiffViewer: React.FC<DiffViewerProps> = ({ files, skillModel }) => {
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [expandedFiles, setExpandedFiles] = useState<Set<number>>(new Set([0]));
 
@@ -86,7 +87,11 @@ export const DiffViewer: React.FC<DiffViewerProps> = ({ files }) => {
         <Text dimColor> ({files.length} files)</Text>
       </Box>
 
-      {files.length === 0 && <Text dimColor>No changes to display</Text>}
+      {files.length === 0 && <Text dimColor>{tiered({
+        beginner: 'No file changes yet — when Chimera edits files, the before/after differences show up here.',
+        intermediate: 'No changes to display',
+        advanced: 'No diffs.',
+      }, skillModel)}</Text>}
 
       {files.map((file, i) => (
         <Box key={file.path} flexDirection="column">
