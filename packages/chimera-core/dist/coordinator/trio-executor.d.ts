@@ -79,6 +79,7 @@ export declare class TrioExecutor {
     private buildRevisionMessages;
     private tryExtractIssues;
     private tryExtractChallenges;
+    private tryExtractAlternatives;
     private needsRevision;
     private runLinter;
     private computeCost;

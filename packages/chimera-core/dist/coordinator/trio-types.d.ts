@@ -96,6 +96,8 @@ export interface TrioStageResult {
     }>;
     /** Challenges raised by the challenger. */
     challenges?: string[];
+    /** Alternative approaches with tradeoffs, raised by the challenger. */
+    alternatives?: string[];
     error?: string;
 }
 /**

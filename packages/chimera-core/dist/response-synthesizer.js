@@ -151,7 +151,16 @@ class ResponseSynthesizer {
         const base = conflicts.length === 0
             ? this.buildNoConflictResponse(inputs)
             : this.buildResolvedResponse(inputs, conflicts);
-        return this.appendReviewerNotes(base, inputs);
+        const withAlternatives = this.appendAlternatives(base, inputs);
+        return this.appendReviewerNotes(withAlternatives, inputs);
+    }
+    /** Surface challenger-proposed better paths so the user sees the lazier option. */
+    appendAlternatives(base, inputs) {
+        const all = inputs.flatMap((i) => i.alternatives ?? []);
+        if (all.length === 0)
+            return base;
+        const bullets = all.map((a) => `- ${a}`).join('\n');
+        return `${base}\n\n## Better paths the challenger considered\n${bullets}`;
     }
     /** Append reviewer high-severity issues to the response regardless of
      *  conflict resolution status — the reviewer is the quality gate. */

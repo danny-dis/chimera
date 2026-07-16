@@ -333,6 +333,7 @@ export class TrioExecutor {
           outputTokens,
           durationMs: Date.now() - start,
           challenges: this.tryExtractChallenges(result.content),
+          alternatives: this.tryExtractAlternatives(result.content),
         };
       };
 
@@ -366,7 +367,7 @@ export class TrioExecutor {
         totalCostUsd += cost;
         this.recordSpend(config.challenger!, cost);
         stages.push(challengeStage);
-        this.safeEmit({ type: 'challenged', agentId: config.challenger!, challenges: challengeStage.challenges ?? [], alternatives: [] });
+        this.safeEmit({ type: 'challenged', agentId: config.challenger!, challenges: challengeStage.challenges ?? [], alternatives: challengeStage.alternatives ?? [] });
       } else {
         // Challenger failed in parallel — emit event but continue with review-only
         this.safeEmit({ type: 'challenged', agentId: config.challenger!, challenges: [], alternatives: [] });
@@ -445,7 +446,7 @@ export class TrioExecutor {
           return this.degraded(`challenge stage failed: ${String(err)}`, totalTokens, totalCostUsd, startTime, false, stages, worktreePath);
         }
         stages.push(challengeStage);
-        this.safeEmit({ type: 'challenged', agentId: config.challenger, challenges: challengeStage.challenges ?? [], alternatives: [] });
+        this.safeEmit({ type: 'challenged', agentId: config.challenger, challenges: challengeStage.challenges ?? [], alternatives: challengeStage.alternatives ?? [] });
 
         if (this.isOverBudget(config, totalCostUsd)) {
           return this.degraded(
@@ -860,6 +861,16 @@ export class TrioExecutor {
     try {
       const parsed = JSON.parse(content);
       if (Array.isArray(parsed.challenges)) return parsed.challenges;
+    } catch {
+      // not JSON
+    }
+    return undefined;
+  }
+
+  private tryExtractAlternatives(content: string): string[] | undefined {
+    try {
+      const parsed = JSON.parse(content);
+      if (Array.isArray(parsed.alternatives)) return parsed.alternatives;
     } catch {
       // not JSON
     }

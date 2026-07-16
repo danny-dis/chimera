@@ -49,6 +49,8 @@ export declare class ResponseSynthesizer {
     private resolveConflicts;
     private mergeIssues;
     private buildUnifiedResponse;
+    /** Surface challenger-proposed better paths so the user sees the lazier option. */
+    private appendAlternatives;
     /** Append reviewer high-severity issues to the response regardless of
      *  conflict resolution status — the reviewer is the quality gate. */
     private appendReviewerNotes;
