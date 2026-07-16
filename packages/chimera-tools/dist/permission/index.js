@@ -1,6 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.parseCommand = exports.classifyChainedCommand = exports.classifyBlastRadius = exports.createBuiltinPolicy = exports.getBuiltinPolicyNames = exports.networkPolicy = exports.destructiveCommandsPolicy = exports.maxToolCallsPolicy = exports.costBudgetPolicy = exports.trustedProjectPolicy = exports.workspaceWritePolicy = exports.readOnlyPolicy = exports.askOnOsTools = exports.createPolicyStackFromConfig = exports.PolicyStack = exports.customProfile = exports.fullAccessProfile = exports.editFilesProfile = exports.readOnlyProfile = exports.PermissionEngine = exports.PermissionManager = void 0;
+exports.getProfileForWorkspace = exports.isTrusted = exports.addTrustedPath = exports.loadTrustedPaths = exports.parseCommand = exports.classifyChainedCommand = exports.classifyBlastRadius = exports.createBuiltinPolicy = exports.getBuiltinPolicyNames = exports.networkPolicy = exports.destructiveCommandsPolicy = exports.maxToolCallsPolicy = exports.costBudgetPolicy = exports.trustedProjectPolicy = exports.workspaceWritePolicy = exports.readOnlyPolicy = exports.askOnOsTools = exports.createPolicyStackFromConfig = exports.PolicyStack = exports.customProfile = exports.fullAccessProfile = exports.editFilesProfile = exports.readOnlyProfile = exports.PermissionEngine = exports.PermissionManager = void 0;
 var permission_manager_js_1 = require("./permission-manager.js");
 Object.defineProperty(exports, "PermissionManager", { enumerable: true, get: function () { return permission_manager_js_1.PermissionManager; } });
 // Policy engine
@@ -31,4 +31,10 @@ var blast_radius_js_1 = require("./blast-radius.js");
 Object.defineProperty(exports, "classifyBlastRadius", { enumerable: true, get: function () { return blast_radius_js_1.classifyBlastRadius; } });
 Object.defineProperty(exports, "classifyChainedCommand", { enumerable: true, get: function () { return blast_radius_js_1.classifyChainedCommand; } });
 Object.defineProperty(exports, "parseCommand", { enumerable: true, get: function () { return blast_radius_js_1.parseCommand; } });
+// Trusted folder registry — lower friction in known-safe roots
+var trusted_paths_js_1 = require("./trusted-paths.js");
+Object.defineProperty(exports, "loadTrustedPaths", { enumerable: true, get: function () { return trusted_paths_js_1.loadTrustedPaths; } });
+Object.defineProperty(exports, "addTrustedPath", { enumerable: true, get: function () { return trusted_paths_js_1.addTrustedPath; } });
+Object.defineProperty(exports, "isTrusted", { enumerable: true, get: function () { return trusted_paths_js_1.isTrusted; } });
+Object.defineProperty(exports, "getProfileForWorkspace", { enumerable: true, get: function () { return trusted_paths_js_1.getProfileForWorkspace; } });
 //# sourceMappingURL=index.js.map

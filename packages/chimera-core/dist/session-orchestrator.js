@@ -67,8 +67,10 @@ const context_2 = require("@chimera/context");
 const instruction_discovery_js_1 = require("./instruction-discovery.js");
 const project_detection_js_1 = require("./project-detection.js");
 const engine_js_1 = require("./coordinator/deliberation/engine.js");
+const coordinator_engine_js_1 = require("./coordinator/coordinator-engine.js");
 const agent_tool_loop_js_1 = require("./coordinator/agent-tool-loop.js");
 const model_capabilities_js_1 = require("./coordinator/model-capabilities.js");
+const escalation_ladder_js_1 = require("./escalation-ladder.js");
 let agentCounter = 0;
 function nextAgentId() {
     return `agent-${++agentCounter}`;
@@ -156,7 +158,9 @@ class SessionOrchestrator {
     autoExtract = null;
     recallService = null;
     autoDream = null;
+    lspDiagnostics = null;
     _extractionCursor = 0;
+    _attemptTrail = new escalation_ladder_js_1.AttemptTrail();
     toolCallHistory = [];
     _lastComplexity = null;
     constructor(eventStream, tools, workspaceRoot, memory, options) {
@@ -179,6 +183,7 @@ class SessionOrchestrator {
         this.autoExtract = options?.autoExtract ?? null;
         this.recallService = options?.recallService ?? null;
         this.autoDream = options?.autoDream ?? null;
+        this.lspDiagnostics = options?.lspDiagnostics ?? null;
         if (tools) {
             this.toolRegistry = tools.registry;
             this.toolExecutor = tools.executor;
@@ -323,6 +328,7 @@ class SessionOrchestrator {
                     }
                 }).catch(() => { });
             }
+            let memoryContext = '';
             const injectionCheck = (0, prompt_guard_js_1.checkUserInput)(task);
             if (!injectionCheck.safe && injectionCheck.confidence > 0.85) {
                 this.logSecurityEvent('prompt_injection_detected', injectionCheck.confidence, injectionCheck.flags, { type: 'injection', decision: 'block', payload: task });
@@ -340,7 +346,6 @@ class SessionOrchestrator {
                     events: [...this.eventStream.getAll()],
                 };
             }
-            let memoryContext = '';
             const instructions = (0, instruction_discovery_js_1.discoverInstructions)(this._workspaceRoot);
             const instructionContext = (0, instruction_discovery_js_1.buildInstructionContext)(instructions);
             if (instructionContext) {
@@ -447,6 +452,43 @@ class SessionOrchestrator {
             // --- Conversational fast path: bypass full pipeline for simple questions ---
             if (task_router_js_1.TaskRouter.isConversationalTask(task)) {
                 return this.executeConversational(task, providers, costCap, memoryContext, conversationHistory, executeSignal);
+            }
+            // --- Step 6: explicit subagent delegation decision (before inline path) ---
+            const delegation = (0, escalation_ladder_js_1.decideDelegation)(task, complexity, {
+                // ponytail: ctx flags come from real signals when available
+                // (decomposer confidence, tool-scope diff). Defaults keep this a pure
+                // pre-check; wire richer ctx from CoordinatorEngine/TaskDecomposer later.
+                hasSubtasks: complexity.overall >= 0.7,
+                independent: complexity.overall >= 0.7,
+            });
+            this._attemptTrail.push('subagent-delegation', delegation.delegate ? 'available' : 'skipped', delegation.detail);
+            if (delegation.delegate) {
+                this.eventStream.append({
+                    type: 'workflow_run_started',
+                    name: 'coordinator-delegate',
+                    runId: `del-${Date.now()}`,
+                    detail: `delegating to CoordinatorEngine: ${delegation.reason}`,
+                });
+                try {
+                    const delegated = await this.runDelegated(task, providers.writer, executeSignal);
+                    this._attemptTrail.push('subagent-delegation', 'success', `resolved=${delegated.resolved}`);
+                    return {
+                        status: delegated.resolved ? 'done' : 'needs_user',
+                        output: delegated.output,
+                        cost: totalCost,
+                        agentCount: delegated.subTaskResults.length,
+                        events: [...this.eventStream.getAll()],
+                    };
+                }
+                catch (derr) {
+                    const dmsg = derr instanceof Error ? derr.message : String(derr);
+                    this._attemptTrail.push('subagent-delegation', 'failed', dmsg);
+                    // Fall through to inline path — delegation is one rung, not a dead end.
+                    this.eventStream.append({
+                        type: 'error',
+                        message: `Delegation failed, falling back to inline: ${dmsg}`,
+                    });
+                }
             }
             // --- Delegate to DeliberationEngine (primary path) ---
             if (this._registry) {
@@ -725,15 +767,18 @@ class SessionOrchestrator {
                 });
                 return { status: 'needs_user', output: note, cost: totalCost, agentCount: outputs.length, events: [...this.eventStream.getAll()] };
             }
+            // Step 2 — never return a bare dead end. Append the rung trail so the
+            // caller sees what was attempted, in what order, and why each fell short.
+            const trailReport = (0, escalation_ladder_js_1.formatEscalationFailure)(task, this._attemptTrail, safeMessage);
             this.transition({ status: 'error', error: safeMessage });
             this.eventStream.append({
                 type: 'final_response',
                 status: 'blocked',
                 cost: totalCost,
                 agentCount: outputs.length,
-                output: `Error: ${safeMessage}`,
+                output: trailReport,
             });
-            return { status: 'error', output: `Error: ${safeMessage}`, cost: totalCost, agentCount: outputs.length, events: [...this.eventStream.getAll()] };
+            return { status: 'error', output: trailReport, cost: totalCost, agentCount: outputs.length, events: [...this.eventStream.getAll()] };
         }
         finally {
             // Ensure we never leak a pending timeout signal. The AbortController
@@ -741,6 +786,17 @@ class SessionOrchestrator {
             // the already-aborted state.
             ac.abort('execute-finished');
         }
+    }
+    /**
+     * Step 6 — route a delegatable task through the CoordinatorEngine (hive
+     * fan-out). Subagents report a structured AggregatedResult so the caller can
+     * decide next steps deterministically (no opaque raw blob). Falls through to
+     * the inline path on throw; delegation is one rung, not a dead end.
+     */
+    async runDelegated(task, provider, signal) {
+        void signal;
+        const coordinator = new coordinator_engine_js_1.CoordinatorEngine({ provider, eventStream: this.eventStream });
+        return coordinator.execute(task, 'parallel execution');
     }
     /**
      * Conversational fast path: single LLM call with plain text output.
@@ -1773,6 +1829,23 @@ class SessionOrchestrator {
                             file: tc.arguments.filePath,
                             errors: lintResult.errors,
                         });
+                    }
+                    // #2d — Surface LSP diagnostics for the edited file (opt-in hook).
+                    if (this.lspDiagnostics) {
+                        try {
+                            const diags = await this.lspDiagnostics(lintTarget);
+                            if (diags.length > 0) {
+                                this.eventStream.append({
+                                    type: 'lsp_diagnostics',
+                                    tool: tc.name,
+                                    file: tc.arguments.filePath,
+                                    diagnostics: diags,
+                                });
+                            }
+                        }
+                        catch {
+                            // LSP is best-effort
+                        }
                     }
                 }
                 catch {

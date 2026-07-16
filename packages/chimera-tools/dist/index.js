@@ -1,8 +1,9 @@
 "use strict";
 // @chimera/tools — Tool registry and core tools
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.allTools = exports.McpManager = exports.McpClient = exports.lspTool = exports.createWorkflowTool = exports.createSkillTool = exports.skillLoadTool = exports.TaskStatusSchema = exports.TaskSchema = exports.taskUpdateTool = exports.taskListTool = exports.taskCreateTool = exports.questionTool = exports.todoReadTool = exports.todoWriteTool = exports.webSearchTool = exports.webFetchTool = exports.searchReplaceTool = exports.editFileTool = exports.editBlockTool = exports.applyPatchTool = exports.gitPushTool = exports.gitCommitTool = exports.gitAddTool = exports.gitInitTool = exports.gitBranchTool = exports.gitLogTool = exports.gitDiffTool = exports.gitStatusTool = exports.runShellCommandTool = exports.globFilesTool = exports.searchFilesTool = exports.MediaBlockSchema = exports.listDirectoryTool = exports.writeFileTool = exports.readFileTool = exports.ToolExecutor = exports.ToolRegistry = exports.buildTool = exports.TOOL_DEFAULTS = exports.IGNORED_DIRS = exports.MAX_SHELL_TIMEOUT = exports.DEFAULT_SHELL_TIMEOUT = exports.MAX_OUTPUT_SIZE = exports.MAX_FILE_SIZE = exports.GitCommitSchema = exports.GitFileStatusSchema = exports.SearchMatchSchema = exports.FileEntrySchema = exports.PathSchema = void 0;
-exports.SecretDetector = exports.EnvironmentFilter = exports.PTYExecutor = exports.Sandbox = exports.createBuiltinPolicy = exports.getBuiltinPolicyNames = exports.networkPolicy = exports.destructiveCommandsPolicy = exports.maxToolCallsPolicy = exports.costBudgetPolicy = exports.trustedProjectPolicy = exports.workspaceWritePolicy = exports.readOnlyPolicy = exports.askOnOsTools = exports.createPolicyStackFromConfig = exports.PolicyStack = exports.PathRestrictionEngine = exports.CommandPolicy = exports.PermissionEngine = void 0;
+exports.McpClient = exports.formatDiagnostics = exports.getDiagnosticsForFile = exports.lspTool = exports.createWorkflowTool = exports.createSkillTool = exports.skillLoadTool = exports.TaskStatusSchema = exports.TaskSchema = exports.taskUpdateTool = exports.taskListTool = exports.taskCreateTool = exports.questionTool = exports.todoReadTool = exports.todoWriteTool = exports.webSearchTool = exports.webFetchTool = exports.searchReplaceTool = exports.editFileTool = exports.editBlockTool = exports.applyPatchTool = exports.gitPushTool = exports.gitCommitTool = exports.gitAddTool = exports.gitInitTool = exports.gitBranchTool = exports.gitLogTool = exports.gitDiffTool = exports.gitStatusTool = exports.runShellCommandTool = exports.globFilesTool = exports.searchFilesTool = exports.MediaBlockSchema = exports.listDirectoryTool = exports.writeFileTool = exports.readFileTool = exports.ToolExecutor = exports.ToolRegistry = exports.buildTool = exports.TOOL_DEFAULTS = exports.IGNORED_DIRS = exports.MAX_SHELL_TIMEOUT = exports.DEFAULT_SHELL_TIMEOUT = exports.MAX_OUTPUT_SIZE = exports.MAX_FILE_SIZE = exports.GitCommitSchema = exports.GitFileStatusSchema = exports.SearchMatchSchema = exports.FileEntrySchema = exports.PathSchema = void 0;
+exports.SecretDetector = exports.EnvironmentFilter = exports.PTYExecutor = exports.Sandbox = exports.createBuiltinPolicy = exports.getBuiltinPolicyNames = exports.networkPolicy = exports.destructiveCommandsPolicy = exports.maxToolCallsPolicy = exports.costBudgetPolicy = exports.trustedProjectPolicy = exports.workspaceWritePolicy = exports.readOnlyPolicy = exports.askOnOsTools = exports.createPolicyStackFromConfig = exports.PolicyStack = exports.PathRestrictionEngine = exports.CommandPolicy = exports.fullAccessProfile = exports.editFilesProfile = exports.readOnlyProfile = exports.PermissionEngine = exports.allTools = exports.initializeMcpTools = exports.McpManager = void 0;
+exports.loadAllTools = loadAllTools;
 // Schema and types
 var tool_schema_js_1 = require("./tool-schema.js");
 Object.defineProperty(exports, "PathSchema", { enumerable: true, get: function () { return tool_schema_js_1.PathSchema; } });
@@ -79,10 +80,16 @@ Object.defineProperty(exports, "createWorkflowTool", { enumerable: true, get: fu
 // LSP tools
 var lsp_js_1 = require("./tools/lsp.js");
 Object.defineProperty(exports, "lspTool", { enumerable: true, get: function () { return lsp_js_1.lspTool; } });
+var lsp_diagnostics_js_1 = require("./lsp-diagnostics.js");
+Object.defineProperty(exports, "getDiagnosticsForFile", { enumerable: true, get: function () { return lsp_diagnostics_js_1.getDiagnosticsForFile; } });
+Object.defineProperty(exports, "formatDiagnostics", { enumerable: true, get: function () { return lsp_diagnostics_js_1.formatDiagnostics; } });
 // MCP client
 var mcp_client_js_1 = require("./mcp-client.js");
 Object.defineProperty(exports, "McpClient", { enumerable: true, get: function () { return mcp_client_js_1.McpClient; } });
 Object.defineProperty(exports, "McpManager", { enumerable: true, get: function () { return mcp_client_js_1.McpManager; } });
+// MCP tool integration
+const mcp_tools_js_1 = require("./mcp-tools.js");
+Object.defineProperty(exports, "initializeMcpTools", { enumerable: true, get: function () { return mcp_tools_js_1.initializeMcpTools; } });
 // All tools array for bulk registration
 const filesystem_js_2 = require("./tools/filesystem.js");
 const search_js_2 = require("./tools/search.js");
@@ -126,9 +133,22 @@ exports.allTools = [
     skill_js_2.createWorkflowTool,
     lsp_js_2.lspTool,
 ];
+/**
+ * Builtin tools plus any tools contributed by configured MCP servers.
+ * The static `allTools` above is preserved for synchronous importers
+ * (e.g. the CLI registry loop); this async path is the MCP-aware one
+ * the CLI should call at startup.
+ */
+async function loadAllTools(workspaceRoot) {
+    const mcpTools = workspaceRoot ? await (0, mcp_tools_js_1.initializeMcpTools)(workspaceRoot) : [];
+    return [...exports.allTools, ...mcpTools];
+}
 // Permission engine
 var policy_js_1 = require("./permission/policy.js");
 Object.defineProperty(exports, "PermissionEngine", { enumerable: true, get: function () { return policy_js_1.PermissionEngine; } });
+Object.defineProperty(exports, "readOnlyProfile", { enumerable: true, get: function () { return policy_js_1.readOnlyProfile; } });
+Object.defineProperty(exports, "editFilesProfile", { enumerable: true, get: function () { return policy_js_1.editFilesProfile; } });
+Object.defineProperty(exports, "fullAccessProfile", { enumerable: true, get: function () { return policy_js_1.fullAccessProfile; } });
 var command_policy_js_1 = require("./permission/command-policy.js");
 Object.defineProperty(exports, "CommandPolicy", { enumerable: true, get: function () { return command_policy_js_1.CommandPolicy; } });
 var path_restrictions_js_1 = require("./permission/path-restrictions.js");

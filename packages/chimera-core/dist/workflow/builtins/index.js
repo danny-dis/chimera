@@ -72,6 +72,25 @@ exports.BUILT_IN_WORKFLOWS = Object.freeze([
             { id: 'aggregate', kind: 'llm', config: { role: 'aggregator' } },
         ],
     }),
+    // -------------------------------------------------------------------------
+    // STEP 5 PoC — `release-cut`: a real multi-skill workflow composed from the
+    // existing `release` skill's repeated sequence (validate → collect commits →
+    // changelog → version-bump → PR). Inspectable/editable pure data; the runner
+    // logs `workflow_run_started` naming which workflow ran and why.
+    // -------------------------------------------------------------------------
+    Object.freeze({
+        name: 'release-cut',
+        description: 'Cut a release: validate branch state → collect commits → draft changelog → bump version → open PR. Composed from the `release` skill sequence.',
+        tags: ['builtin', 'release', 'multi-skill', 'poc'],
+        steps: [
+            { id: 'validate', kind: 'tool', config: { skill: 'release', phase: 'validate-state' }, required: true },
+            { id: 'collect', kind: 'tool', config: { skill: 'release', phase: 'collect-commits' } },
+            { id: 'changelog', kind: 'tool', config: { skill: 'release', phase: 'draft-changelog' } },
+            { id: 'bump', kind: 'tool', config: { skill: 'release', phase: 'version-bump' } },
+            { id: 'pr-gate', kind: 'gate', config: { passOn: 'PASS', note: 'present changelog + bump for review before PR' } },
+            { id: 'pr', kind: 'tool', config: { skill: 'release', phase: 'commit-and-pr' } },
+        ],
+    }),
 ]);
 /**
  * Default workflow per mode. The orchestrator consults this map to pick

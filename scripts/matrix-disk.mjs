@@ -141,17 +141,24 @@ function seedDebug(workdir) {
   writeFileSync(join(workdir, 'bug.js'), 'function subtract(a, b) {\n  return a + b; // BUG: should subtract\n}\nmodule.exports = subtract;\n');
 }
 
-// Validate JS files on disk.
+// Validate JS files on disk: syntax (--check) + runnability (require).
+// ponytail: runnability is the LANDED != CORRECT closure — a file that
+// parses but throws on load (missing dep, top-level crash) is the defect
+// class the matrix previously missed. Only *fail* on the strong signal
+// (parsable but completely unrunnable); partial side-effect files stay soft.
 function validateJs(workdir) {
-  let valid = 0, broken = 0, files = [];
+  let valid = 0, broken = 0, ran = 0, files = [];
+  let runError = '';
   for (const f of readdirSync(workdir)) {
     if (!f.endsWith('.js')) continue;
     const fp = join(workdir, f);
     files.push(f);
     try { execFileSync(process.execPath, ['--check', fp], { stdio: 'pipe' }); valid++; }
     catch { broken++; }
+    try { execFileSync(process.execPath, ['-e', `require(${JSON.stringify(fp)})`], { stdio: 'pipe' }); ran++; }
+    catch (e) { if (!runError) runError = String(e?.stderr || e?.message || e).slice(0, 200); }
   }
-  return { valid, broken, files };
+  return { valid, broken, ran, files, runError };
 }
 
 const results = [];
@@ -218,6 +225,12 @@ async function runCombo(mode, preset) {
     if (brokenDone) {
       failures.push({ mode, preset, status, reason: `done but broken/missing file (broken=${js.broken}, targetExists=${targetExists})` });
     }
+    // LANDED != CORRECT: parsable (valid>0) but nothing ran = the file loads
+    // with a thrown error (missing dep, top-level crash). Strong defect signal.
+    const unrunnableDone = (status === 'done') && targetExists && js.valid > 0 && js.ran === 0;
+    if (unrunnableDone) {
+      failures.push({ mode, preset, status, reason: `done but file unrunnable (ran=0/${js.valid}, err=${js.runError})` });
+    }
   }
 
   // ponytail: honest quality scalar from evidence the harness already has.
@@ -226,7 +239,7 @@ async function runCombo(mode, preset) {
   const score = scoreCombo({ mode, preset, status, disk, diskWrites, toolCalls, evErrors });
   const rec = { mode, preset, status, ms, toolCalls, diskWrites, writeErrors, evErrors: [...new Set(evErrors)], disk, quality: score, output: (result?.output || result?.result || result?.error || '').toString().slice(0, 160) };
   results.push(rec);
-  const diskStr = disk ? ` disk.target=${disk.targetExists} valid=${disk.valid} broken=${disk.broken}` : '';
+  const diskStr = disk ? ` disk.target=${disk.targetExists} valid=${disk.valid} broken=${disk.broken} ran=${disk.ran}` : '';
   console.log(`  ${mode}/${preset} -> ${status} (${ms}ms tools=${toolCalls} diskW=${diskWrites}${diskStr}${evErrors.length ? ' EV:' + [...new Set(evErrors)].join(',') : ''})${status === 'throw' || status === 'error' ? ' ERR:' + ((result?.error || result?.output || '').toString().slice(0, 300)) : ''}`);
 
   // cleanup
@@ -253,8 +266,9 @@ async function main() {
   const done = results.filter((r) => r.status === 'done' || r.status === 'complete').length;
   const codeRows = results.filter((r) => r.mode === 'code' || r.mode === 'debug');
   const codeBrokenDone = codeRows.filter((r) => r.status === 'done' && r.disk && (r.disk.broken > 0 || !r.disk.targetExists));
+  const codeUnrunnableDone = codeRows.filter((r) => r.status === 'done' && r.disk && r.disk.valid > 0 && r.disk.ran === 0);
   console.log(`\n=== SUMMARY: ${done}/${results.length} done/complete ===`);
-  console.log(`code/debug rows: ${codeRows.length}, broken-and-done: ${codeBrokenDone.length}`);
+  console.log(`code/debug rows: ${codeRows.length}, broken-and-done: ${codeBrokenDone.length}, unrunnable-done: ${codeUnrunnableDone.length}`);
   if (failures.length) { console.log('FAILURES:'); for (const f of failures) console.log('  ' + JSON.stringify(f)); }
   else console.log('No broken-and-done code/debug rows. Truncation guard OK.');
 

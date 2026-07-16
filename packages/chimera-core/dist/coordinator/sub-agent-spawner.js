@@ -27,6 +27,7 @@ class SubAgentSpawner {
     toolExecutor;
     toolRegistry;
     workspaceRoot;
+    worktreeIsolation;
     baseBackoffMs;
     maxBackoffMs;
     maxRetries;
@@ -42,6 +43,7 @@ class SubAgentSpawner {
         this.toolExecutor = toolDeps?.toolExecutor;
         this.toolRegistry = toolDeps?.toolRegistry;
         this.workspaceRoot = toolDeps?.workspaceRoot;
+        this.worktreeIsolation = toolDeps?.worktreeIsolation;
         this.baseBackoffMs = backoffConfig?.baseBackoffMs ?? DEFAULT_BASE_BACKOFF_MS;
         this.maxBackoffMs = backoffConfig?.maxBackoffMs ?? DEFAULT_MAX_BACKOFF_MS;
         this.maxRetries = backoffConfig?.maxRetries ?? DEFAULT_MAX_RETRIES;
@@ -125,6 +127,28 @@ class SubAgentSpawner {
     }
     async executeOne(task) {
         const start = Date.now();
+        // Per-subtask FS isolation (opt-in via `task.isolated`). When enabled we
+        // spawn an isolated worktree and run the sub-agent against that branch path
+        // rather than the shared `workspaceRoot`, then merge/cleanup afterwards.
+        let worktree;
+        let effectiveRoot = this.workspaceRoot;
+        try {
+            if (task.isolated && this.worktreeIsolation && this.workspaceRoot) {
+                try {
+                    worktree = await this.worktreeIsolation.createIsolatedWorktree(`task-${task.id}`);
+                    effectiveRoot = worktree.worktreePath;
+                }
+                catch (err) {
+                    console.error(`[sub-agent-spawner] worktree isolation failed for ${task.id}; running against shared root: ${String(err)}`);
+                    worktree = undefined;
+                    effectiveRoot = this.workspaceRoot;
+                }
+            }
+        }
+        catch {
+            worktree = undefined;
+            effectiveRoot = this.workspaceRoot;
+        }
         try {
             // System prompt — append a tool-use directive when this sub-task
             // carries tool definitions (file-writing tasks). This is what makes
@@ -173,13 +197,13 @@ class SubAgentSpawner {
                 };
                 messages.push(lastAssistant);
                 // Execute the tool calls against the workspace (if executor wired).
-                if (this.toolExecutor && this.workspaceRoot) {
+                if (this.toolExecutor && effectiveRoot) {
                     const toolResults = await (0, tool_execution_helper_js_1.runToolCalls)({
                         toolCalls: result.toolCalls.map((tc) => ({ id: tc.id, name: tc.name, arguments: typeof tc.arguments === 'string' ? JSON.parse(tc.arguments) : tc.arguments })),
                         toolExecutor: this.toolExecutor,
                         toolRegistry: this.toolRegistry ?? null,
                         eventStream: this.eventStream,
-                        workspaceRoot: this.workspaceRoot,
+                        workspaceRoot: effectiveRoot,
                         sessionId: `hive-${task.id}`,
                     });
                     for (const tr of toolResults) {
@@ -201,13 +225,13 @@ class SubAgentSpawner {
             // calls. The tool loop above breaks on zero tool calls, so a narrating
             // sub-agent would land nothing on disk. Parse that prose and execute it
             // for real (best-effort — failures never change the success semantics).
-            if (this.toolExecutor && this.workspaceRoot) {
+            if (this.toolExecutor && effectiveRoot) {
                 try {
                     await (0, file_write_fallback_js_1.executeProseActions)(result.content || '', {
                         eventStream: this.eventStream,
                         toolExecutor: this.toolExecutor,
                         toolRegistry: this.toolRegistry ?? null,
-                        workspaceRoot: this.workspaceRoot,
+                        workspaceRoot: effectiveRoot,
                         sessionId: `hive-${task.id}`,
                         expectedPath: (0, path_from_task_js_1.expectedPathFromTask)(task.description),
                     });
@@ -233,6 +257,18 @@ class SubAgentSpawner {
                 error: err instanceof Error ? err.message : String(err),
                 durationMs: Date.now() - start,
             };
+        }
+        finally {
+            // Merge isolated branch back and clean up the worktree. Best-effort: a
+            // failed merge must not mask the subtask's own result.
+            if (worktree && this.worktreeIsolation) {
+                try {
+                    await this.worktreeIsolation.mergeBranch(worktree, `Merge isolated work for ${task.id}`);
+                }
+                catch (mergeErr) {
+                    console.error(`[sub-agent-spawner] worktree merge failed for ${task.id}: ${String(mergeErr)}`);
+                }
+            }
         }
     }
     isRateLimitError(error) {

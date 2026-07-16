@@ -24,6 +24,7 @@ export {
   MAX_SHELL_TIMEOUT,
   IGNORED_DIRS,
 } from './tool-schema.js';
+import type { ToolDefinition } from './tool-schema.js';
 
 // Tool builder
 export { TOOL_DEFAULTS, buildTool, type ToolDefinitionInput } from './tool-builder.js';
@@ -65,10 +66,16 @@ export { skillLoadTool, createSkillTool, createWorkflowTool } from './tools/skil
 
 // LSP tools
 export { lspTool } from './tools/lsp.js';
+export { getDiagnosticsForFile, formatDiagnostics, type LspDiagnosticIssue } from './lsp-diagnostics.js';
 
 // MCP client
 export { McpClient, McpManager } from './mcp-client.js';
 export type { McpServerConfig } from './mcp-client.js';
+
+// MCP tool integration
+import { initializeMcpTools } from './mcp-tools.js';
+export { initializeMcpTools };
+export type { McpConfigFile } from './mcp-client.js';
 
 // All tools array for bulk registration
 import { readFileTool, writeFileTool, listDirectoryTool } from './tools/filesystem.js';
@@ -115,8 +122,19 @@ export const allTools = [
   lspTool,
 ] as const;
 
+/**
+ * Builtin tools plus any tools contributed by configured MCP servers.
+ * The static `allTools` above is preserved for synchronous importers
+ * (e.g. the CLI registry loop); this async path is the MCP-aware one
+ * the CLI should call at startup.
+ */
+export async function loadAllTools(workspaceRoot?: string): Promise<ToolDefinition[]> {
+  const mcpTools = workspaceRoot ? await initializeMcpTools(workspaceRoot) : [];
+  return [...allTools, ...mcpTools];
+}
+
 // Permission engine
-export { PermissionEngine, type PermissionProfile, type PermissionMode, type PermissionRule, type PermissionCondition } from './permission/policy.js';
+export { PermissionEngine, readOnlyProfile, editFilesProfile, fullAccessProfile, type PermissionProfile, type PermissionMode, type PermissionRule, type PermissionCondition } from './permission/policy.js';
 export { CommandPolicy } from './permission/command-policy.js';
 export { PathRestrictionEngine } from './permission/path-restrictions.js';
 

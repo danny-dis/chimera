@@ -1,4 +1,5 @@
 export { type ToolDefinition, type ToolContext, type ToolResult, type ValidationResult, type PermissionDecision, type ToolCategory, type PermissionLevel, type FileEntry, type SearchMatch, type GitFileStatus, type GitCommit, PathSchema, FileEntrySchema, SearchMatchSchema, GitFileStatusSchema, GitCommitSchema, MAX_FILE_SIZE, MAX_OUTPUT_SIZE, DEFAULT_SHELL_TIMEOUT, MAX_SHELL_TIMEOUT, IGNORED_DIRS, } from './tool-schema.js';
+import type { ToolDefinition } from './tool-schema.js';
 export { TOOL_DEFAULTS, buildTool, type ToolDefinitionInput } from './tool-builder.js';
 export { ToolRegistry } from './tool-registry.js';
 export { ToolExecutor, type PermissionChecker } from './tool-executor.js';
@@ -14,9 +15,13 @@ export { taskCreateTool, taskListTool, taskUpdateTool, TaskSchema, TaskStatusSch
 export type { Task, TaskStatus } from './tools/task.js';
 export { skillLoadTool, createSkillTool, createWorkflowTool } from './tools/skill.js';
 export { lspTool } from './tools/lsp.js';
+export { getDiagnosticsForFile, formatDiagnostics, type LspDiagnosticIssue } from './lsp-diagnostics.js';
 export { McpClient, McpManager } from './mcp-client.js';
 export type { McpServerConfig } from './mcp-client.js';
-export declare const allTools: readonly [import("./tool-schema.js").ToolDefinition<import("zod").ZodEffects<import("zod").ZodObject<{
+import { initializeMcpTools } from './mcp-tools.js';
+export { initializeMcpTools };
+export type { McpConfigFile } from './mcp-client.js';
+export declare const allTools: readonly [ToolDefinition<import("zod").ZodEffects<import("zod").ZodObject<{
     path: import("zod").ZodString;
     startLine: import("zod").ZodOptional<import("zod").ZodNumber>;
     endLine: import("zod").ZodOptional<import("zod").ZodNumber>;
@@ -56,14 +61,14 @@ export declare const allTools: readonly [import("./tool-schema.js").ToolDefiniti
         base64: import("zod").ZodString;
         bytes: import("zod").ZodNumber;
     }, "strip", import("zod").ZodTypeAny, {
+        base64?: string;
         kind?: "image";
         mime?: string;
-        base64?: string;
         bytes?: number;
     }, {
+        base64?: string;
         kind?: "image";
         mime?: string;
-        base64?: string;
         bytes?: number;
     }>, import("zod").ZodObject<{
         kind: import("zod").ZodLiteral<"pdf">;
@@ -73,16 +78,16 @@ export declare const allTools: readonly [import("./tool-schema.js").ToolDefiniti
         pageCount: import("zod").ZodNumber;
         pages: import("zod").ZodArray<import("zod").ZodNumber, "many">;
     }, "strip", import("zod").ZodTypeAny, {
+        base64?: string;
         kind?: "pdf";
         mime?: "application/pdf";
-        base64?: string;
         bytes?: number;
         pageCount?: number;
         pages?: number[];
     }, {
+        base64?: string;
         kind?: "pdf";
         mime?: "application/pdf";
-        base64?: string;
         bytes?: number;
         pageCount?: number;
         pages?: number[];
@@ -92,14 +97,14 @@ export declare const allTools: readonly [import("./tool-schema.js").ToolDefiniti
     content?: string;
     totalLines?: number;
     media?: {
+        base64?: string;
         kind?: "image";
         mime?: string;
-        base64?: string;
         bytes?: number;
     } | {
+        base64?: string;
         kind?: "pdf";
         mime?: "application/pdf";
-        base64?: string;
         bytes?: number;
         pageCount?: number;
         pages?: number[];
@@ -109,19 +114,19 @@ export declare const allTools: readonly [import("./tool-schema.js").ToolDefiniti
     content?: string;
     totalLines?: number;
     media?: {
+        base64?: string;
         kind?: "image";
         mime?: string;
-        base64?: string;
         bytes?: number;
     } | {
+        base64?: string;
         kind?: "pdf";
         mime?: "application/pdf";
-        base64?: string;
         bytes?: number;
         pageCount?: number;
         pages?: number[];
     };
-}>>, import("./tool-schema.js").ToolDefinition<import("zod").ZodObject<{
+}>>, ToolDefinition<import("zod").ZodObject<{
     path: import("zod").ZodString;
     content: import("zod").ZodString;
     overwrite: import("zod").ZodDefault<import("zod").ZodBoolean>;
@@ -145,7 +150,7 @@ export declare const allTools: readonly [import("./tool-schema.js").ToolDefiniti
     path?: string;
     bytesWritten?: number;
     created?: boolean;
-}>>, import("./tool-schema.js").ToolDefinition<import("zod").ZodObject<{
+}>>, ToolDefinition<import("zod").ZodObject<{
     path: import("zod").ZodOptional<import("zod").ZodString>;
     depth: import("zod").ZodDefault<import("zod").ZodNumber>;
     includeHidden: import("zod").ZodDefault<import("zod").ZodBoolean>;
@@ -205,7 +210,7 @@ export declare const allTools: readonly [import("./tool-schema.js").ToolDefiniti
     }[];
     totalFiles?: number;
     totalDirs?: number;
-}>>, import("./tool-schema.js").ToolDefinition<import("zod").ZodObject<{
+}>>, ToolDefinition<import("zod").ZodObject<{
     pattern: import("zod").ZodString;
     path: import("zod").ZodOptional<import("zod").ZodString>;
     include: import("zod").ZodOptional<import("zod").ZodArray<import("zod").ZodString, "many">>;
@@ -289,7 +294,7 @@ export declare const allTools: readonly [import("./tool-schema.js").ToolDefiniti
     }[];
     totalMatches?: number;
     filesSearched?: number;
-}>>, import("./tool-schema.js").ToolDefinition<import("zod").ZodObject<{
+}>>, ToolDefinition<import("zod").ZodObject<{
     pattern: import("zod").ZodString;
     path: import("zod").ZodOptional<import("zod").ZodString>;
 }, "strip", import("zod").ZodTypeAny, {
@@ -307,21 +312,21 @@ export declare const allTools: readonly [import("./tool-schema.js").ToolDefiniti
 }, {
     files?: string[];
     count?: number;
-}>>, import("./tool-schema.js").ToolDefinition<import("zod").ZodObject<{
+}>>, ToolDefinition<import("zod").ZodObject<{
     command: import("zod").ZodString;
     cwd: import("zod").ZodOptional<import("zod").ZodString>;
     timeout: import("zod").ZodDefault<import("zod").ZodNumber>;
     env: import("zod").ZodOptional<import("zod").ZodRecord<import("zod").ZodString, import("zod").ZodString>>;
 }, "strip", import("zod").ZodTypeAny, {
     timeout?: number;
-    cwd?: string;
     command?: string;
     env?: Record<string, string>;
+    cwd?: string;
 }, {
     timeout?: number;
-    cwd?: string;
     command?: string;
     env?: Record<string, string>;
+    cwd?: string;
 }>, import("zod").ZodObject<{
     stdout: import("zod").ZodString;
     stderr: import("zod").ZodString;
@@ -337,7 +342,7 @@ export declare const allTools: readonly [import("./tool-schema.js").ToolDefiniti
     stdout?: string;
     stderr?: string;
     exitCode?: number;
-}>>, import("./tool-schema.js").ToolDefinition<import("zod").ZodObject<{
+}>>, ToolDefinition<import("zod").ZodObject<{
     path: import("zod").ZodOptional<import("zod").ZodString>;
 }, "strip", import("zod").ZodTypeAny, {
     path?: string;
@@ -404,7 +409,7 @@ export declare const allTools: readonly [import("./tool-schema.js").ToolDefiniti
         staged?: boolean;
     }[];
     untracked?: string[];
-}>>, import("./tool-schema.js").ToolDefinition<import("zod").ZodObject<{
+}>>, ToolDefinition<import("zod").ZodObject<{
     path: import("zod").ZodOptional<import("zod").ZodString>;
     staged: import("zod").ZodDefault<import("zod").ZodBoolean>;
     uncommitted: import("zod").ZodDefault<import("zod").ZodBoolean>;
@@ -434,7 +439,7 @@ export declare const allTools: readonly [import("./tool-schema.js").ToolDefiniti
     filesChanged?: number;
     insertions?: number;
     deletions?: number;
-}>>, import("./tool-schema.js").ToolDefinition<import("zod").ZodObject<{
+}>>, ToolDefinition<import("zod").ZodObject<{
     maxCommits: import("zod").ZodDefault<import("zod").ZodNumber>;
     path: import("zod").ZodOptional<import("zod").ZodString>;
     author: import("zod").ZodOptional<import("zod").ZodString>;
@@ -493,7 +498,7 @@ export declare const allTools: readonly [import("./tool-schema.js").ToolDefiniti
         files?: string[];
     }[];
     total?: number;
-}>>, import("./tool-schema.js").ToolDefinition<import("zod").ZodObject<{
+}>>, ToolDefinition<import("zod").ZodObject<{
     action: import("zod").ZodEnum<["list", "create", "delete", "checkout"]>;
     name: import("zod").ZodOptional<import("zod").ZodString>;
     base: import("zod").ZodOptional<import("zod").ZodString>;
@@ -517,7 +522,7 @@ export declare const allTools: readonly [import("./tool-schema.js").ToolDefiniti
     created?: boolean;
     branch?: string;
     deleted?: boolean;
-}>>, import("./tool-schema.js").ToolDefinition<import("zod").ZodObject<{}, import("zod").UnknownKeysParam, import("zod").ZodTypeAny, {}, {}>, import("zod").ZodObject<{
+}>>, ToolDefinition<import("zod").ZodObject<{}, import("zod").UnknownKeysParam, import("zod").ZodTypeAny, {}, {}>, import("zod").ZodObject<{
     initialized: import("zod").ZodBoolean;
     path: import("zod").ZodString;
 }, "strip", import("zod").ZodTypeAny, {
@@ -526,7 +531,7 @@ export declare const allTools: readonly [import("./tool-schema.js").ToolDefiniti
 }, {
     path?: string;
     initialized?: boolean;
-}>>, import("./tool-schema.js").ToolDefinition<import("zod").ZodObject<{
+}>>, ToolDefinition<import("zod").ZodObject<{
     files: import("zod").ZodArray<import("zod").ZodString, "many">;
 }, "strip", import("zod").ZodTypeAny, {
     files?: string[];
@@ -541,7 +546,7 @@ export declare const allTools: readonly [import("./tool-schema.js").ToolDefiniti
 }, {
     count?: number;
     added?: string[];
-}>>, import("./tool-schema.js").ToolDefinition<import("zod").ZodObject<{
+}>>, ToolDefinition<import("zod").ZodObject<{
     message: import("zod").ZodString;
     authorName: import("zod").ZodOptional<import("zod").ZodString>;
     authorEmail: import("zod").ZodOptional<import("zod").ZodString>;
@@ -565,7 +570,7 @@ export declare const allTools: readonly [import("./tool-schema.js").ToolDefiniti
     message?: string;
     hash?: string;
     committed?: boolean;
-}>>, import("./tool-schema.js").ToolDefinition<import("zod").ZodObject<{
+}>>, ToolDefinition<import("zod").ZodObject<{
     remote: import("zod").ZodString;
     branch: import("zod").ZodString;
     setUpstream: import("zod").ZodDefault<import("zod").ZodBoolean>;
@@ -589,7 +594,7 @@ export declare const allTools: readonly [import("./tool-schema.js").ToolDefiniti
     branch?: string;
     remote?: string;
     pushed?: boolean;
-}>>, import("./tool-schema.js").ToolDefinition<import("zod").ZodObject<{
+}>>, ToolDefinition<import("zod").ZodObject<{
     patch: import("zod").ZodString;
     path: import("zod").ZodOptional<import("zod").ZodString>;
     dryRun: import("zod").ZodDefault<import("zod").ZodBoolean>;
@@ -619,7 +624,7 @@ export declare const allTools: readonly [import("./tool-schema.js").ToolDefiniti
     hunksApplied?: number;
     hunksFailed?: number;
     rejectFiles?: string[];
-}>>, import("./tool-schema.js").ToolDefinition<import("zod").ZodObject<{
+}>>, ToolDefinition<import("zod").ZodObject<{
     path: import("zod").ZodString;
     oldText: import("zod").ZodString;
     newText: import("zod").ZodString;
@@ -646,7 +651,7 @@ export declare const allTools: readonly [import("./tool-schema.js").ToolDefiniti
     path?: string;
     applied?: boolean;
     replacements?: number;
-}>>, import("./tool-schema.js").ToolDefinition<import("zod").ZodEffects<import("zod").ZodObject<{
+}>>, ToolDefinition<import("zod").ZodEffects<import("zod").ZodObject<{
     path: import("zod").ZodString;
     old_string: import("zod").ZodOptional<import("zod").ZodString>;
     new_string: import("zod").ZodOptional<import("zod").ZodString>;
@@ -693,7 +698,7 @@ export declare const allTools: readonly [import("./tool-schema.js").ToolDefiniti
     path?: string;
     applied?: boolean;
     replacements?: number;
-}>>, import("./tool-schema.js").ToolDefinition<import("zod").ZodEffects<import("zod").ZodObject<{
+}>>, ToolDefinition<import("zod").ZodEffects<import("zod").ZodObject<{
     path: import("zod").ZodString;
     blocks: import("zod").ZodOptional<import("zod").ZodArray<import("zod").ZodObject<{
         search: import("zod").ZodString;
@@ -769,7 +774,7 @@ export declare const allTools: readonly [import("./tool-schema.js").ToolDefiniti
         reason?: string;
         similarLines?: string[];
     }[];
-}>>, import("./tool-schema.js").ToolDefinition<import("zod").ZodObject<{
+}>>, ToolDefinition<import("zod").ZodObject<{
     url: import("zod").ZodString;
     format: import("zod").ZodDefault<import("zod").ZodEnum<["markdown", "text", "html"]>>;
     timeout: import("zod").ZodDefault<import("zod").ZodNumber>;
@@ -793,7 +798,7 @@ export declare const allTools: readonly [import("./tool-schema.js").ToolDefiniti
     content?: string;
     url?: string;
     format?: string;
-}>>, import("./tool-schema.js").ToolDefinition<import("zod").ZodObject<{
+}>>, ToolDefinition<import("zod").ZodObject<{
     query: import("zod").ZodString;
     numResults: import("zod").ZodDefault<import("zod").ZodNumber>;
     type: import("zod").ZodDefault<import("zod").ZodEnum<["fast", "deep", "auto"]>>;
@@ -834,7 +839,7 @@ export declare const allTools: readonly [import("./tool-schema.js").ToolDefiniti
         title?: string;
         snippet?: string;
     }[];
-}>>, import("./tool-schema.js").ToolDefinition<import("zod").ZodObject<{
+}>>, ToolDefinition<import("zod").ZodObject<{
     todos: import("zod").ZodArray<import("zod").ZodObject<{
         content: import("zod").ZodString;
         status: import("zod").ZodEnum<["pending", "in_progress", "completed", "cancelled"]>;
@@ -889,7 +894,7 @@ export declare const allTools: readonly [import("./tool-schema.js").ToolDefiniti
         content?: string;
         priority?: "high" | "medium" | "low";
     }[];
-}>>, import("./tool-schema.js").ToolDefinition<import("zod").ZodTypeAny, import("zod").ZodObject<{
+}>>, ToolDefinition<import("zod").ZodTypeAny, import("zod").ZodObject<{
     todos: import("zod").ZodArray<import("zod").ZodObject<{
         content: import("zod").ZodString;
         status: import("zod").ZodEnum<["pending", "in_progress", "completed", "cancelled"]>;
@@ -915,7 +920,7 @@ export declare const allTools: readonly [import("./tool-schema.js").ToolDefiniti
         content?: string;
         priority?: "high" | "medium" | "low";
     }[];
-}>>, import("./tool-schema.js").ToolDefinition<import("zod").ZodObject<{
+}>>, ToolDefinition<import("zod").ZodObject<{
     question: import("zod").ZodString;
     header: import("zod").ZodString;
     options: import("zod").ZodArray<import("zod").ZodObject<{
@@ -951,7 +956,7 @@ export declare const allTools: readonly [import("./tool-schema.js").ToolDefiniti
     answer?: string;
 }, {
     answer?: string;
-}>>, import("./tool-schema.js").ToolDefinition<import("zod").ZodObject<{
+}>>, ToolDefinition<import("zod").ZodObject<{
     subject: import("zod").ZodString;
     description: import("zod").ZodString;
     activeForm: import("zod").ZodOptional<import("zod").ZodString>;
@@ -987,7 +992,7 @@ export declare const allTools: readonly [import("./tool-schema.js").ToolDefiniti
         id?: string;
         subject?: string;
     };
-}>>, import("./tool-schema.js").ToolDefinition<import("zod").ZodObject<{}, "strip", import("zod").ZodTypeAny, {}, {}>, import("zod").ZodObject<{
+}>>, ToolDefinition<import("zod").ZodObject<{}, "strip", import("zod").ZodTypeAny, {}, {}>, import("zod").ZodObject<{
     tasks: import("zod").ZodArray<import("zod").ZodObject<{
         id: import("zod").ZodString;
         subject: import("zod").ZodString;
@@ -1041,7 +1046,7 @@ export declare const allTools: readonly [import("./tool-schema.js").ToolDefiniti
         createdAt?: string;
         updatedAt?: string;
     }[];
-}>>, import("./tool-schema.js").ToolDefinition<import("zod").ZodObject<{
+}>>, ToolDefinition<import("zod").ZodObject<{
     id: import("zod").ZodString;
     status: import("zod").ZodEnum<["pending", "in_progress", "completed", "cancelled"]>;
 }, "strip", import("zod").ZodTypeAny, {
@@ -1101,7 +1106,7 @@ export declare const allTools: readonly [import("./tool-schema.js").ToolDefiniti
         createdAt?: string;
         updatedAt?: string;
     };
-}>>, import("./tool-schema.js").ToolDefinition<import("zod").ZodObject<{
+}>>, ToolDefinition<import("zod").ZodObject<{
     skillName: import("zod").ZodString;
     args: import("zod").ZodOptional<import("zod").ZodRecord<import("zod").ZodString, import("zod").ZodUnknown>>;
 }, "strip", import("zod").ZodTypeAny, {
@@ -1122,7 +1127,7 @@ export declare const allTools: readonly [import("./tool-schema.js").ToolDefiniti
     content?: string;
     skillName?: string;
     parsedArgs?: Record<string, unknown>;
-}>>, import("./tool-schema.js").ToolDefinition<import("zod").ZodObject<{
+}>>, ToolDefinition<import("zod").ZodObject<{
     name: import("zod").ZodString;
     description: import("zod").ZodString;
     content: import("zod").ZodString;
@@ -1152,7 +1157,7 @@ export declare const allTools: readonly [import("./tool-schema.js").ToolDefiniti
     path?: string;
     created?: boolean;
     skillName?: string;
-}>>, import("./tool-schema.js").ToolDefinition<import("zod").ZodObject<{
+}>>, ToolDefinition<import("zod").ZodObject<{
     name: import("zod").ZodString;
     description: import("zod").ZodDefault<import("zod").ZodString>;
     steps: import("zod").ZodArray<import("zod").ZodObject<{
@@ -1207,7 +1212,7 @@ export declare const allTools: readonly [import("./tool-schema.js").ToolDefiniti
     path?: string;
     created?: boolean;
     workflowName?: string;
-}>>, import("./tool-schema.js").ToolDefinition<import("zod").ZodObject<{
+}>>, ToolDefinition<import("zod").ZodObject<{
     operation: import("zod").ZodEnum<["goToDefinition", "findReferences", "hover", "documentSymbol", "workspaceSymbol"]>;
     filePath: import("zod").ZodString;
     line: import("zod").ZodOptional<import("zod").ZodNumber>;
@@ -1215,15 +1220,15 @@ export declare const allTools: readonly [import("./tool-schema.js").ToolDefiniti
     query: import("zod").ZodOptional<import("zod").ZodString>;
 }, "strip", import("zod").ZodTypeAny, {
     line?: number;
+    filePath?: string;
     query?: string;
     operation?: "goToDefinition" | "findReferences" | "hover" | "documentSymbol" | "workspaceSymbol";
-    filePath?: string;
     character?: number;
 }, {
     line?: number;
+    filePath?: string;
     query?: string;
     operation?: "goToDefinition" | "findReferences" | "hover" | "documentSymbol" | "workspaceSymbol";
-    filePath?: string;
     character?: number;
 }>, import("zod").ZodObject<{
     operation: import("zod").ZodString;
@@ -1238,7 +1243,14 @@ export declare const allTools: readonly [import("./tool-schema.js").ToolDefiniti
     operation?: string;
     formatted?: string;
 }>>];
-export { PermissionEngine, type PermissionProfile, type PermissionMode, type PermissionRule, type PermissionCondition } from './permission/policy.js';
+/**
+ * Builtin tools plus any tools contributed by configured MCP servers.
+ * The static `allTools` above is preserved for synchronous importers
+ * (e.g. the CLI registry loop); this async path is the MCP-aware one
+ * the CLI should call at startup.
+ */
+export declare function loadAllTools(workspaceRoot?: string): Promise<ToolDefinition[]>;
+export { PermissionEngine, readOnlyProfile, editFilesProfile, fullAccessProfile, type PermissionProfile, type PermissionMode, type PermissionRule, type PermissionCondition } from './permission/policy.js';
 export { CommandPolicy } from './permission/command-policy.js';
 export { PathRestrictionEngine } from './permission/path-restrictions.js';
 export { PolicyStack, createPolicyStackFromConfig } from './permission/policy-stack.js';

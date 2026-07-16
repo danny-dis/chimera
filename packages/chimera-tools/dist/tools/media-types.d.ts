@@ -5,14 +5,14 @@ export declare const MediaBlockSchema: z.ZodDiscriminatedUnion<"kind", [z.ZodObj
     base64: z.ZodString;
     bytes: z.ZodNumber;
 }, "strip", z.ZodTypeAny, {
+    base64?: string;
     kind?: "image";
     mime?: string;
-    base64?: string;
     bytes?: number;
 }, {
+    base64?: string;
     kind?: "image";
     mime?: string;
-    base64?: string;
     bytes?: number;
 }>, z.ZodObject<{
     kind: z.ZodLiteral<"pdf">;
@@ -22,16 +22,16 @@ export declare const MediaBlockSchema: z.ZodDiscriminatedUnion<"kind", [z.ZodObj
     pageCount: z.ZodNumber;
     pages: z.ZodArray<z.ZodNumber, "many">;
 }, "strip", z.ZodTypeAny, {
+    base64?: string;
     kind?: "pdf";
     mime?: "application/pdf";
-    base64?: string;
     bytes?: number;
     pageCount?: number;
     pages?: number[];
 }, {
+    base64?: string;
     kind?: "pdf";
     mime?: "application/pdf";
-    base64?: string;
     bytes?: number;
     pageCount?: number;
     pages?: number[];

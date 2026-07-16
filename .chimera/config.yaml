@@ -6,30 +6,41 @@
 # Writer  -> OpenGateway tencent/hy3 (free, Novita, built-in reasoning)
 # Reviewer -> Google Gemini 2.5 Flash (free quota)
 # Challenger -> Mistral open-mistral-7b (free)
+# DMR-X    -> local meta-model gateway (free key below); activates `backend: dmrx`
+#            which rewrites each role's model to its preset: writer->auto-coding,
+#            reviewer->auto-fast, challenger->auto-agentic (see dmrx-routing.ts).
 
+backend: dmrx
+
+# With backend: dmrx, applyDmrxRouting (dmrx-routing.ts) rewrites each
+# provider's MODEL to its role preset — writer->auto-coding, reviewer->
+# auto-fast, challenger->auto-agentic — but does NOT touch base_url. So every
+# entry here MUST point at the DMR-X gateway; the meta models are served there.
 providers:
-  # Writer — OpenGateway tencent/hy3 (free, reasoning model).
+  # Writer — DMR-X meta-model gateway (free key).
   - name: writer
     provider: openai-compatible
-    model: tencent/hy3
-    api_key: ${OPENGOV_API_KEY}
-    base_url: ${OPENGOV_BASE_URL}
+    model: auto-coding
+    api_key: dmr-f5b0eab9462d957d2f15161843931d5069cf87b0dbfdc3dc9dd1acdfebb10839
+    base_url: http://127.0.0.1:47113/v1
     role: writer
     timeout_ms: 180000
 
-  # Reviewer — Google Gemini 2.5 Flash (free quota).
+  # Reviewer — DMR-X meta-model gateway (free key).
   - name: reviewer
-    provider: google
-    model: gemini-2.5-flash
-    api_key: ${GOOGLE_API_KEY}
+    provider: openai-compatible
+    model: auto-fast
+    api_key: dmr-f5b0eab9462d957d2f15161843931d5069cf87b0dbfdc3dc9dd1acdfebb10839
+    base_url: http://127.0.0.1:47113/v1
     role: reviewer
     timeout_ms: 120000
 
-  # Challenger — Mistral open-mistral-7b (free).
+  # Challenger — DMR-X meta-model gateway (free key).
   - name: challenger
-    provider: mistral
-    model: open-mistral-7b
-    api_key: ${MISTRAL_API_KEY}
+    provider: openai-compatible
+    model: auto-agentic
+    api_key: dmr-f5b0eab9462d957d2f15161843931d5069cf87b0dbfdc3dc9dd1acdfebb10839
+    base_url: http://127.0.0.1:47113/v1
     role: challenger
     timeout_ms: 120000
 

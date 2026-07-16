@@ -48,6 +48,8 @@ export interface WorkflowDispatcherOptions {
   eventStream?: EventStream;
   /** Max completed runs to retain in memory (default: 100). Older runs are evicted. */
   maxRetainedRuns?: number;
+  /** Workspace root for background-task persistence (`.chimera/background-tasks.json`). */
+  workspaceRoot?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -69,7 +71,7 @@ export class WorkflowDispatcher {
   private readonly maxRetainedRuns: number;
 
   constructor(options?: WorkflowDispatcherOptions) {
-    this.taskManager = new BackgroundTaskManager(options?.maxConcurrency ?? 4);
+    this.taskManager = new BackgroundTaskManager(options?.maxConcurrency ?? 4, { workspaceRoot: options?.workspaceRoot });
     this.eventStream = options?.eventStream;
     this.maxRetainedRuns = options?.maxRetainedRuns ?? 100;
 

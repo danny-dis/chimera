@@ -3,6 +3,7 @@ export { ProviderFactory, listModels, getDefaultRegistry, resetDefaultRegistry }
 export { ModelAdapter, ProviderConfigSchema, type ProviderConfig } from './model-adapter.js';
 export { ModelRegistry, ModelEntrySchema, type ModelEntry, } from './model-registry.js';
 export { recommendRoleModels, recommendFromProviders, rankByTier, type RoleModels, type ConfigProviderRole, } from './recommend.js';
+export { DMRX_PRESETS, ROLE_TO_DMRX_PRESET, applyDmrxRouting, isDmrxBackend, isDmrxPreset, type DmrxPreset, type ChimeraMode, } from './dmrx-routing.js';
 export { ModelMetadataFetcher, fetchAndCacheModelMetadata, getModelEntriesFromAPI, type FetchedModelMetadata, type CacheEntry, type FetcherConfig, } from './model-metadata-fetcher.js';
 export { MetadataAwareProviderFactory, createMetadataAwareFactory, createProviderWithDynamicMetadata, type MetadataAwareFactoryConfig, } from './metadata-aware-factory.js';
 export { CostCalculator, type CostBreakdown, } from './cost-calculator.js';

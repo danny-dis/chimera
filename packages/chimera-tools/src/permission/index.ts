@@ -41,3 +41,11 @@ export {
   parseCommand,
 } from './blast-radius.js';
 export type { BlastRadius, BlastRadiusResult } from './blast-radius.js';
+
+// Trusted folder registry — lower friction in known-safe roots
+export {
+  loadTrustedPaths,
+  addTrustedPath,
+  isTrusted,
+  getProfileForWorkspace,
+} from './trusted-paths.js';

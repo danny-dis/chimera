@@ -13,6 +13,7 @@ export type { LongTermMemoryConfig, MemoryPersistenceConfig } from './memory/ind
 export type { MemoryItem, MemoryMetadata, MemoryQuery, MemoryResult, EmbeddingProvider } from './memory/index.js';
 export type { AgentMemoryItem, AgentMemoryType, AgentMemoryQuery, AgentMemorySnapshot } from './memory/index.js';
 export { CoordinatorEngine, TaskDecomposer, SubAgentSpawner, ResultAggregator } from './coordinator/index.js';
+export { AttemptTrail, findDeterministicSkill, shouldDelegateToSubagents, formatEscalationFailure, captureSkill, WorkflowObservation, detectWorkflowCandidate, decideDelegation, BudgetGuard, DEFAULT_TASK_BUDGET, shouldAskOnBlock, } from './escalation-ladder.js';
 export type { SubTask, SubTaskResult, DecompositionResult, AggregatedResult, Conflict, CoordinatorConfig } from './coordinator/index.js';
 export { DeliberationEngine } from './coordinator/deliberation/index.js';
 export type { DeliberationResult, DeliberationConfig } from './coordinator/deliberation/index.js';

@@ -1,4 +1,5 @@
 import type { SubTask, SubTaskResult, CoordinatorConfig } from './types.js';
+import { WorktreeIsolation } from '../agent/worktree-isolation.js';
 import { DynamicConcurrencyEngine, type ConcurrencyOverrides } from '../agent/dynamic-concurrency-engine.js';
 import { EventStream } from '../event-stream.js';
 import type { ProviderConfig } from '@chimera/providers';
@@ -20,6 +21,7 @@ export declare class SubAgentSpawner {
     private toolExecutor?;
     private toolRegistry?;
     private workspaceRoot?;
+    private worktreeIsolation?;
     private baseBackoffMs;
     private maxBackoffMs;
     private maxRetries;
@@ -27,6 +29,7 @@ export declare class SubAgentSpawner {
         toolExecutor?: ToolExecutorInterface;
         toolRegistry?: ToolRegistryInterface;
         workspaceRoot?: string;
+        worktreeIsolation?: WorktreeIsolation;
     });
     /**
      * Execute all sub-tasks respecting dependencies and concurrency limits.

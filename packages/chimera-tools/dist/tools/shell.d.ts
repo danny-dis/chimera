@@ -7,14 +7,14 @@ declare const RunShellCommandParamsSchema: z.ZodObject<{
     env: z.ZodOptional<z.ZodRecord<z.ZodString, z.ZodString>>;
 }, "strip", z.ZodTypeAny, {
     timeout?: number;
-    cwd?: string;
     command?: string;
     env?: Record<string, string>;
+    cwd?: string;
 }, {
     timeout?: number;
-    cwd?: string;
     command?: string;
     env?: Record<string, string>;
+    cwd?: string;
 }>;
 declare const RunShellCommandReturnsSchema: z.ZodObject<{
     stdout: z.ZodString;

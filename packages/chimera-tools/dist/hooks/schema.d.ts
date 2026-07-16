@@ -34,9 +34,9 @@ export declare const HookDefinitionSchema: z.ZodObject<{
     dataFilter: z.ZodOptional<z.ZodString>;
 }, "strip", z.ZodTypeAny, {
     timeout?: number;
-    cwd?: string;
     command?: string;
     env?: Record<string, string>;
+    cwd?: string;
     priority?: number;
     id?: string;
     enabled?: boolean;
@@ -47,9 +47,9 @@ export declare const HookDefinitionSchema: z.ZodObject<{
     dataFilter?: string;
 }, {
     timeout?: number;
-    cwd?: string;
     command?: string;
     env?: Record<string, string>;
+    cwd?: string;
     priority?: number;
     id?: string;
     enabled?: boolean;

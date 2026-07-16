@@ -39,6 +39,8 @@ export interface LoopChatMessage {
     }>;
     /** Solo-style tool result linkage. */
     toolResultId?: string;
+    /** Tool name for the result (needed by strict providers e.g. Google). */
+    toolName?: string;
     /** Trio/spawner-style tool result linkage. */
     tool_call_id?: string;
 }

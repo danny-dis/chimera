@@ -36,6 +36,13 @@ export interface SubTask {
         description: string;
         parameters: Record<string, unknown>;
     }>;
+    /**
+     * Opt into per-subtask filesystem isolation. When true, the spawner
+     * creates a `WorktreeIsolation` worktree and runs this sub-agent against
+     * the isolated branch path instead of the shared `workspaceRoot`. The
+     * branch is merged back on completion. Defaults to false.
+     */
+    isolated?: boolean;
 }
 export interface SubTaskResult {
     subTaskId: string;

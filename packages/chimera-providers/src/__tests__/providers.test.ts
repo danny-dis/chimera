@@ -109,6 +109,33 @@ describe('OpenAICompatibleProvider', () => {
     await expect(provider.complete(TEST_MESSAGES)).rejects.toThrow(ProviderUnavailableError);
     vi.unstubAllGlobals();
   });
+
+  it('retries transient 5xx then succeeds', async () => {
+    const okBody = { choices: [{ message: { content: 'hi' } }], usage: { prompt_tokens: 1, completion_tokens: 1 } };
+    const mockFetch = vi
+      .fn()
+      .mockResolvedValueOnce({ ok: false, status: 503, body: null, json: () => Promise.resolve({ error: { message: 'blip' } }) })
+      .mockResolvedValueOnce({ ok: true, status: 200, json: () => Promise.resolve(okBody) });
+    vi.stubGlobal('fetch', mockFetch);
+
+    const res = await provider.complete(TEST_MESSAGES);
+    expect(res.content).toBe('hi');
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+    vi.unstubAllGlobals();
+  });
+
+  it('does not retry 4xx (RateLimitError thrown on first attempt)', async () => {
+    const mockFetch = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 429,
+      json: () => Promise.resolve({ error: { message: 'rate limit' } }),
+    });
+    vi.stubGlobal('fetch', mockFetch);
+
+    await expect(provider.complete(TEST_MESSAGES)).rejects.toThrow(RateLimitError);
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+    vi.unstubAllGlobals();
+  });
 });
 
 describe('AnthropicProvider', () => {

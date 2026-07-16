@@ -159,7 +159,100 @@ route to nutritional security; over-reliance on a handful of staples is "probabl
 ## 4. Next Steps (proposed)
 1. Verify/complete Swahili & vernacular names via KALRO or a Kenyan language source.
 2. Add quantitative nutrition tables (per 100 g: vitamin A RE, iron, calcium, protein) from the
-   cited nutrition papers.
-3. Expand to pan-African coverage (West African yams, Ethiopian teff, etc.) as the next phase.
+   cited nutrition papers — blocked this session by USDA rate limit; retry with a real API key.
+3. Expand to pan-African coverage (West African yams, Ethiopian teff, etc.) as the next phase. ✅ DONE — see §5.
 4. If this feeds the chimera codebase later, model crops as a typed dataset (schema:
    `id, name_en, name_local, scientific_name, type, regions[], uses[], benefits[], risks[]`).
+
+---
+
+## 5. Pan-African Expansion — Major Indigenous Crops Beyond Kenya
+
+This section broadens the scope from Kenya to the wider continent, covering staple cereals, roots,
+and legumes that are indigenous to or centers-of-diversity within specific African regions.
+
+### 5.1 Overview
+Africa's agrobiodiversity includes several globally significant but underutilized staples:
+- **Ethiopian/Eritrean Highlands:** teff (*Eragrostis tef*) and enset (*Ensete ventricosum*) — the
+  latter alone feeds ~20 million Ethiopians (Wikipedia REST; J. Ethnobiol. Ethnomed. 2014, 173 cites).
+- **West Africa:** fonio (*Digitaria exilis*), Guinea yam (*Dioscorea cayenensis/rotundata*), and
+  African rice (*Oryza glaberrima*) — all independently domesticated in the region (Nature Genetics
+  2014, 425 cites; BMC Biology 2017, 170 cites).
+- **Sub-Saharan legume/ tree crops:** bambara groundnut (already in §2), lablab (*Lablab purpureus*),
+  and baobab (*Adansonia digitata*) — the latter an indigenous fruit tree flagged for "improving
+  diets and nutrition" (Planta 2019, 275 cites).
+
+These crops matter for the same reasons as Kenya's AIVs — climate resilience, nutrition, and
+food-sovereignty — but at continental scale. Teff is gluten-free; fonio is the fastest-maturing
+cereal known; enset is a perennial "insurance" crop with year-round harvest; African rice is
+drought- and flood-tolerant versus Asian rice.
+
+### 5.2 Structured Dataset — Pan-African Indigenous Crops
+
+| # | Crop | Region of origin / dominance | Scientific name | Type | Key uses | Notable benefits | Salient risk/limit |
+|---|------|------------------------------|-----------------|------|----------|------------------|--------------------|
+| 1 | Teff | Ethiopian/Eritrean highlands | *Eragrostis tef* | Cereal | Injera (flatbread), porridge | Gluten-free, high Fe/Ca, small grain = easy digestion | Low yield, tiny seed = hard threshing |
+| 2 | Fonio (acha) | West Africa (Sahel) | *Digitaria exilis* | Cereal | Porridge, couscous | Fastest-maturing cereal (~6–8 wks), drought-tolerant, gluten-free | Low yield, laborious dehulling |
+| 3 | Guinea yam | West Africa | *Dioscorea cayenensis/rotundata* | Root/tuber | Boiled, pounded (fufu) | Major calorie staple, vitamin C, potassium | Perishable; nematodes (Ann. Rev. Phytopath. 2018, 280 cites) |
+| 4 | African rice | West Africa | *Oryza glaberrima* | Cereal | Boiled rice | Drought/flood-tolerant, pest resistance vs Asian rice | Lower yield than *O. sativa* |
+| 5 | Enset (false banana) | Ethiopia | *Ensete ventricosum* | Root/stem | Fermented starch (kocho), bread | Perennial, year-round harvest, feeds ~20M | Vegetative propagation only; no grain |
+| 6 | Bambara groundnut | West/Central Africa (already Kenya §2#5) | *Vigna subterranea* | Legume | Boiled/dry seed | Complete protein + carbs, drought-tolerant | Low yield vs peanut |
+| 7 | Lablab (hyacinth bean) | Africa-wide | *Lablab purpureus* | Legume | Seeds, leaves, fodder | N-fixing, protein-rich, dual-purpose | Underutilized — "a crop lost for Africa" (Trop. Plant Biol. 2010, 168 cites) |
+| 8 | Baobab | Sub-Saharan Africa | *Adansonia digitata* | Fruit tree | Pulp (vit C), leaves, seed | Exceptional vit C, minerals; climate-resilient tree | Perishable pulp; wild-harvested |
+
+### 5.3 Cited Sources (pan-African)
+
+**Teff**
+- (2017). *Chemical composition and food uses of teff (Eragrostis tef).* Food Chemistry. 204 cites.
+  https://doi.org/10.1016/j.foodchem.2017.06.101
+- (2012). *Teff as a raw material for malting, brewing and gluten-free products.* J. Food Sci. Technol.
+  255 cites. https://doi.org/10.1007/s13197-012-0745-5
+- (2020). *Teff processing, utilization and future opportunities: a review.* Int. J. Food Sci. Technol.
+  103 cites. https://doi.org/10.1111/ijfs.14872
+
+**Fonio**
+- (2011). *Developments on the cereal grains Digitaria exilis (acha) and D. iburua.* J. Food Sci.
+  Technol. 98 cites. https://doi.org/10.1007/s13197-010-0208-9
+- (2018). *Fonio: A Socially Embedded Cereal for Food and Nutrition.* Ethnobiology Letters. 24 cites.
+  https://doi.org/10.14237/ebl.9.2.2018.1072
+
+**Yam**
+- (2020). *The Dioscorea Genus (Yam)—An Appraisal of Nutritional and Therapeutic Potentials.* Foods.
+  269 cites. https://doi.org/10.3390/foods9091304
+- (2017). *Genome sequencing of white Guinea yam.* BMC Biology. 170 cites.
+  https://doi.org/10.1186/s12915-017-0419-x
+
+**African rice**
+- (2014). *The genome sequence of African rice (Oryza glaberrima) and evidence for independent
+  domestication.* Nature Genetics. 425 cites. https://doi.org/10.1038/ng.3044
+- (2019). *The complex geography of domestication of African rice.* PLoS Genetics. 62 cites.
+  https://doi.org/10.1371/journal.pgen.1007414
+
+**Enset**
+- (2014). *Indigenous knowledge, use and on-farm management of enset.* J. Ethnobiol. Ethnomed. 173 cites.
+  https://doi.org/10.1186/1746-4269-10-41
+
+**Bambara groundnut (pan-African)**
+- (2020). *Bambara Groundnut: An Underutilized Leguminous Crop for Global Food Security and
+  Nutrition.* Front. Nutr. 235 cites. https://doi.org/10.3389/fnut.2020.601496
+
+**Lablab**
+- (2010). *Lablab purpureus—A Crop Lost for Africa?* Tropical Plant Biology. 168 cites.
+  https://doi.org/10.1007/s12042-010-9046-1
+
+**Baobab / indigenous fruit trees**
+- (2019). *The potential of neglected and underutilized species for improving diets and nutrition.*
+  Planta. 275 cites. https://doi.org/10.1007/s00425-019-03169-4
+- (2020). *Underutilized African indigenous fruit trees and food–nutrition security.* Food Energy
+  Secur. 113 cites. https://doi.org/10.1002/fes3.220
+
+**Botanical basis** (Wikipedia REST API, retrieved 2026-07-11): *Eragrostis tef*, *Digitaria exilis*,
+*Dioscorea cayenensis*, *Oryza glaberrima*, *Ensete ventricosum*.
+
+---
+
+## 6. Consolidated Next Steps
+1. Verify Swahili/vernacular names (Kenya §2) via KALRO / ethnobotany source — still open.
+2. Add per-100 g nutrition tables (USDA rate-limited this session; retry with API key).
+3. Consider a codebase data model for all 22 crops (Kenya 14 + pan-African 8, bambara shared):
+   `id, name_en, name_local, local_verified, scientific_name, type, regions[], uses[], benefits[], risks[], source_dois[]`.

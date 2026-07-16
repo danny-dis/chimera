@@ -8,15 +8,15 @@ declare const LspParamsSchema: z.ZodObject<{
     query: z.ZodOptional<z.ZodString>;
 }, "strip", z.ZodTypeAny, {
     line?: number;
+    filePath?: string;
     query?: string;
     operation?: "goToDefinition" | "findReferences" | "hover" | "documentSymbol" | "workspaceSymbol";
-    filePath?: string;
     character?: number;
 }, {
     line?: number;
+    filePath?: string;
     query?: string;
     operation?: "goToDefinition" | "findReferences" | "hover" | "documentSymbol" | "workspaceSymbol";
-    filePath?: string;
     character?: number;
 }>;
 declare const LspReturnsSchema: z.ZodObject<{

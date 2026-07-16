@@ -41,14 +41,14 @@ declare const ReadFileReturnsSchema: z.ZodObject<{
         base64: z.ZodString;
         bytes: z.ZodNumber;
     }, "strip", z.ZodTypeAny, {
+        base64?: string;
         kind?: "image";
         mime?: string;
-        base64?: string;
         bytes?: number;
     }, {
+        base64?: string;
         kind?: "image";
         mime?: string;
-        base64?: string;
         bytes?: number;
     }>, z.ZodObject<{
         kind: z.ZodLiteral<"pdf">;
@@ -58,16 +58,16 @@ declare const ReadFileReturnsSchema: z.ZodObject<{
         pageCount: z.ZodNumber;
         pages: z.ZodArray<z.ZodNumber, "many">;
     }, "strip", z.ZodTypeAny, {
+        base64?: string;
         kind?: "pdf";
         mime?: "application/pdf";
-        base64?: string;
         bytes?: number;
         pageCount?: number;
         pages?: number[];
     }, {
+        base64?: string;
         kind?: "pdf";
         mime?: "application/pdf";
-        base64?: string;
         bytes?: number;
         pageCount?: number;
         pages?: number[];
@@ -77,14 +77,14 @@ declare const ReadFileReturnsSchema: z.ZodObject<{
     content?: string;
     totalLines?: number;
     media?: {
+        base64?: string;
         kind?: "image";
         mime?: string;
-        base64?: string;
         bytes?: number;
     } | {
+        base64?: string;
         kind?: "pdf";
         mime?: "application/pdf";
-        base64?: string;
         bytes?: number;
         pageCount?: number;
         pages?: number[];
@@ -94,14 +94,14 @@ declare const ReadFileReturnsSchema: z.ZodObject<{
     content?: string;
     totalLines?: number;
     media?: {
+        base64?: string;
         kind?: "image";
         mime?: string;
-        base64?: string;
         bytes?: number;
     } | {
+        base64?: string;
         kind?: "pdf";
         mime?: "application/pdf";
-        base64?: string;
         bytes?: number;
         pageCount?: number;
         pages?: number[];

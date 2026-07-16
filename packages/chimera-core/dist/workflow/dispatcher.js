@@ -26,7 +26,7 @@ class WorkflowDispatcher {
     eventStream;
     maxRetainedRuns;
     constructor(options) {
-        this.taskManager = new background_task_manager_js_1.BackgroundTaskManager(options?.maxConcurrency ?? 4);
+        this.taskManager = new background_task_manager_js_1.BackgroundTaskManager(options?.maxConcurrency ?? 4, { workspaceRoot: options?.workspaceRoot });
         this.eventStream = options?.eventStream;
         this.maxRetainedRuns = options?.maxRetainedRuns ?? 100;
         // Wire task-manager lifecycle events → update run status.

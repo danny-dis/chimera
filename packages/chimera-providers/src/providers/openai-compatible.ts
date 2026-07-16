@@ -504,25 +504,51 @@ export class OpenAICompatibleProvider implements ModelProvider {
   }
 
   private async fetchJson(path: string, init: RequestInit): Promise<Response> {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), this.timeoutMs);
+    // Bounded retry on transient upstream failures (5xx / network / timeout)
+    // so a single provider flap doesn't kill an unattended daily run. Only the
+    // last attempt's result is returned/thrown; client errors (4xx) are not
+    // retried and surface immediately from the first attempt.
+    // ponytail: fixed 3 attempts, per-attempt timeout (config timeout_ms), no
+    // jitter library — Math.random backoff is enough; raise attempts if a
+    // provider's blips last longer than ~1.1s of backoff.
+    const MAX_ATTEMPTS = 3;
+    let lastError: unknown;
 
-    try {
-      return await fetch(`${this.baseUrl}${path}`, {
-        ...init,
-        signal: controller.signal,
-      });
-    } catch (error) {
-      if (error instanceof DOMException && error.name === 'AbortError') {
-        throw new ProviderUnavailableError('Request timed out', this.modelInfo.provider);
+    for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), this.timeoutMs);
+      try {
+        const res = await fetch(`${this.baseUrl}${path}`, {
+          ...init,
+          signal: controller.signal,
+        });
+        if (res.ok || res.status < 500) return res;
+        // 5xx: retryable. Read-and-discard body so the socket can be reused.
+        lastError = new ProviderUnavailableError(
+          `Provider returned ${res.status}`,
+          this.modelInfo.provider,
+        );
+        await res.body?.cancel().catch(() => {});
+      } catch (error) {
+        if (error instanceof DOMException && error.name === 'AbortError') {
+          lastError = new ProviderUnavailableError('Request timed out', this.modelInfo.provider);
+        } else {
+          lastError = new ProviderUnavailableError(
+            error instanceof Error ? error.message : 'Network request failed',
+            this.modelInfo.provider,
+          );
+        }
+      } finally {
+        clearTimeout(timeout);
       }
-      throw new ProviderUnavailableError(
-        error instanceof Error ? error.message : 'Network request failed',
-        this.modelInfo.provider,
-      );
-    } finally {
-      clearTimeout(timeout);
+
+      if (attempt < MAX_ATTEMPTS - 1) {
+        const backoff = 200 * 2 ** attempt + Math.random() * 100;
+        await new Promise((r) => setTimeout(r, backoff));
+      }
     }
+
+    throw lastError;
   }
 
   private async fetchStream(path: string, init: RequestInit): Promise<Response> {

@@ -7,7 +7,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { z } from 'zod';
 import YAML from 'yaml';
-import { listModels, recommendFromProviders } from '@chimera/providers';
+import { listModels, recommendFromProviders, applyDmrxRouting } from '@chimera/providers';
 
 // ---------------------------------------------------------------------------
 // Schema (mirrors CLI config-loader)
@@ -36,6 +36,10 @@ const ProviderEntrySchema = z.object({
 
 const ChimeraConfigSchema = z.object({
   providers: z.array(ProviderEntrySchema).min(1),
+  // `dmrx` rewrites every role's model to the DMR-X optimized meta-model
+  // (auto-coding / auto-smart / auto-fast / auto-agentic). Provider entries
+  // must already point at the DMR-X gateway. `direct` (or unset) = normal.
+  backend: z.enum(['direct', 'dmrx']).optional(),
   defaults: z
     .object({
       fallback_chain: z.array(z.string()).optional(),
@@ -135,8 +139,17 @@ export function resolveProviders(config: ChimeraConfig): ResolvedProvider[] {
  */
 export function getProvidersByRole(
   config: ChimeraConfig,
+  mode?: string,
 ): { writer?: ResolvedProvider; reviewer?: ResolvedProvider; challenger?: ResolvedProvider } {
-  const resolved = resolveProviders(config);
+  const routed = applyDmrxRouting(config, config.backend, mode).providers;
+  const resolved = routed.map((p: ProviderEntry) => ({
+    name: p.name,
+    provider: p.provider,
+    model: p.model,
+    apiKey: resolveEnvRef(p.api_key),
+    baseUrl: p.base_url,
+    role: p.role,
+  }));
   const byRole: { writer?: ResolvedProvider; reviewer?: ResolvedProvider; challenger?: ResolvedProvider } = {};
   for (const p of resolved) {
     if (p.role === 'writer') byRole.writer = p;

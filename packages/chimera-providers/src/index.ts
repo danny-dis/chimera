@@ -18,6 +18,17 @@ export {
   type ConfigProviderRole,
 } from './recommend.js';
 
+// DMR-X backend routing — auto-map roles to DMR-X meta-models
+export {
+  DMRX_PRESETS,
+  ROLE_TO_DMRX_PRESET,
+  applyDmrxRouting,
+  isDmrxBackend,
+  isDmrxPreset,
+  type DmrxPreset,
+  type ChimeraMode,
+} from './dmrx-routing.js';
+
 export {
   ModelMetadataFetcher,
   fetchAndCacheModelMetadata,

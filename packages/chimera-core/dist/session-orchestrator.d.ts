@@ -212,7 +212,9 @@ export declare class SessionOrchestrator {
     private autoExtract;
     private recallService;
     private autoDream;
+    private lspDiagnostics;
     private _extractionCursor;
+    private _attemptTrail;
     toolCallHistory: Array<{
         toolName: string;
         args: Record<string, unknown>;
@@ -232,6 +234,13 @@ export declare class SessionOrchestrator {
         autoExtract?: AutoExtractService;
         recallService?: RecallService;
         autoDream?: AutoDreamService;
+        /** Optional LSP diagnostics hook (wired from the CLI via @chimera/tools). */
+        lspDiagnostics?: (file: string) => Promise<Array<{
+            severity: string;
+            message: string;
+            line?: number;
+            column?: number;
+        }>>;
     });
     setWorkflowExecutor(executor: {
         execute(script: string): Promise<any>;
@@ -262,6 +271,13 @@ export declare class SessionOrchestrator {
             content: string;
         }>;
     }): Promise<OrchestratorResult>;
+    /**
+     * Step 6 — route a delegatable task through the CoordinatorEngine (hive
+     * fan-out). Subagents report a structured AggregatedResult so the caller can
+     * decide next steps deterministically (no opaque raw blob). Falls through to
+     * the inline path on throw; delegation is one rung, not a dead end.
+     */
+    private runDelegated;
     /**
      * Conversational fast path: single LLM call with plain text output.
      * Bypasses the full multi-agent pipeline (no reviewer, no challenger,

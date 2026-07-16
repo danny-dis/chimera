@@ -75,13 +75,13 @@ describe('ToolExecutor', () => {
       expect(result.error).toContain('Permission denied');
     });
 
-    it('asks for permission when policy is ask', async () => {
+    it('blocks and denies when policy is ask (non-interactive falls back to deny)', async () => {
       registry.register(sampleTool);
       const askExecutor = new ToolExecutor(registry, () => 'ask');
 
       const result = await askExecutor.execute('sample', { value: 'test' }, makeContext());
       expect(result.success).toBe(false);
-      expect(result.error).toContain('Permission pending');
+      expect(result.error).toContain('Permission denied');
     });
 
     it('emits tool_call_requested event when asking', async () => {

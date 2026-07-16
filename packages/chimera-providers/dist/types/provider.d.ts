@@ -8,6 +8,8 @@ export interface Message {
     content: string;
     toolCalls?: ToolCall[];
     toolResultId?: string;
+    /** Tool name for a tool result (strict providers such as Google require it). */
+    toolName?: string;
 }
 export interface ToolDefinition {
     name: string;

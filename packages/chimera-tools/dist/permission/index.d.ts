@@ -6,4 +6,5 @@ export type { PolicyLevel } from './policy-stack.js';
 export { askOnOsTools, readOnlyPolicy, workspaceWritePolicy, trustedProjectPolicy, costBudgetPolicy, maxToolCallsPolicy, destructiveCommandsPolicy, networkPolicy, getBuiltinPolicyNames, createBuiltinPolicy, } from './builtins.js';
 export { classifyBlastRadius, classifyChainedCommand, parseCommand, } from './blast-radius.js';
 export type { BlastRadius, BlastRadiusResult } from './blast-radius.js';
+export { loadTrustedPaths, addTrustedPath, isTrusted, getProfileForWorkspace, } from './trusted-paths.js';
 //# sourceMappingURL=index.d.ts.map

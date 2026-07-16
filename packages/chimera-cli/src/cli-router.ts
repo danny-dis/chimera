@@ -11,7 +11,13 @@ import { LearningEngine } from '@chimera/learning';
 import { UserSkillModel, tierMessage, suggestNextValue } from '@chimera/learning';
 import type { ObservedCapability } from '@chimera/learning';
 import type { TieredMessage, SkillTier } from '@chimera/learning';
-import { ToolRegistry, ToolExecutor, allTools } from '@chimera/tools';
+import { ToolRegistry, ToolExecutor, allTools, getDiagnosticsForFile } from '@chimera/tools';
+import {
+  PermissionEngine,
+  readOnlyProfile,
+  editFilesProfile,
+  fullAccessProfile,
+} from '@chimera/tools';
 import { runEval, formatEvalMarkdown } from './eval-runner.js';
 import { runSlashCommand } from './commands/registry.js';
 import type { ReplContext } from './commands/registry.js';
@@ -315,6 +321,7 @@ export class CliRouter {
         budgetEnforcer,
         rateLimiter,
         memoryPersistence: this.memoryPersistence,
+        lspDiagnostics: (file: string) => getDiagnosticsForFile(process.cwd(), file),
       },
     );
 
@@ -491,8 +498,21 @@ export class CliRouter {
       : (allProviders.length > 1 ? createFallbackProvider(allProviders) : adaptProvider(allProviders[0]));
     const challenger = mapped.challenger ? adaptProvider(mapped.challenger) : undefined;
   
-    const orchestrator = await this.initOrchestrator();
-  
+    const ctx = await this.buildRunContext();
+    const orchestrator = ctx.orchestrator;
+
+    // #1d/#1e/#3d — Mode-based permission gating.
+    // plan/ask/review become read-only (no writes); `code`/`debug` permit edits.
+    // `--yolo` opts into full-access (off by default, for CI/trusted automation).
+    const yolo = process.argv.includes('--yolo') || opts.yolo === true;
+    const profile =
+      yolo ? fullAccessProfile
+      : mode === 'plan' || mode === 'ask' || mode === 'review'
+        ? readOnlyProfile
+        : editFilesProfile;
+    const permissionEngine = new PermissionEngine(profile);
+    ctx.toolExecutor.setPermissionEngine(permissionEngine);
+
     // #4 — Tool execution visibility: stream tool activity to the terminal
     // so the user sees what the agent is doing in real time.
     orchestrator.getEventStream().subscribe('*', (event) => {
@@ -524,7 +544,11 @@ export class CliRouter {
       });
 
       skillModel.observeTaskOutcome({ clean: result.status === 'done' });
-      this.printResult(result, skillModel);
+      if (opts.json === true) {
+        process.stdout.write(JSON.stringify(result) + '\n');
+      } else {
+        this.printResult(result, skillModel);
+      }
     } catch (err) {
       // #3 — Better error messages for provider failures
       const msg = formatProviderError(err);
@@ -624,6 +648,8 @@ export class CliRouter {
       .command('ask <task>')
       .description('Ask a question')
       .option('--tui', 'use TUI for this task')
+      .option('--json', 'emit a JSON result instead of human-readable output')
+      .option('--yolo', 'auto-approve all tool calls (off by default; for CI/trusted automation)')
       .action(async (task: string, options) => {
         this.verbose = this.program.opts().verbose ?? false;
         if (options.tui) {
@@ -636,6 +662,8 @@ export class CliRouter {
     this.program
       .command('plan <task>')
       .description('Create a plan')
+      .option('--json', 'emit a JSON result instead of human-readable output')
+      .option('--yolo', 'auto-approve all tool calls (off by default; for CI/trusted automation)')
       .action(async (task: string) => {
         this.verbose = this.program.opts().verbose ?? false;
         await this.run('plan', task);
@@ -645,6 +673,8 @@ export class CliRouter {
       .command('code <task>')
       .description('Write code')
       .option('--preset <mode>', 'deliberation preset (solo|duo|trio|fusion|hive|swarm|auto)', 'solo')
+      .option('--json', 'emit a JSON result instead of human-readable output')
+      .option('--yolo', 'auto-approve all tool calls (off by default; for CI/trusted automation)')
       .action(async (task: string, options) => {
         this.verbose = this.program.opts().verbose ?? false;
         await this.run('code', task, options.preset);
@@ -654,6 +684,8 @@ export class CliRouter {
       .command('debug <task>')
       .description('Debug an issue')
       .option('--preset <mode>', 'deliberation preset (solo|duo|trio|fusion|hive|swarm|auto)', 'solo')
+      .option('--json', 'emit a JSON result instead of human-readable output')
+      .option('--yolo', 'auto-approve all tool calls (off by default; for CI/trusted automation)')
       .action(async (task: string, options) => {
         this.verbose = this.program.opts().verbose ?? false;
         await this.run('debug', task, options.preset);
@@ -663,6 +695,8 @@ export class CliRouter {
       .command('review <task>')
       .description('Review code')
       .option('--preset <mode>', 'deliberation preset (solo|duo|trio|fusion|hive|swarm|auto)', 'solo')
+      .option('--json', 'emit a JSON result instead of human-readable output')
+      .option('--yolo', 'auto-approve all tool calls (off by default; for CI/trusted automation)')
       .action(async (task: string, options) => {
         this.verbose = this.program.opts().verbose ?? false;
         await this.run('review', task, options.preset);

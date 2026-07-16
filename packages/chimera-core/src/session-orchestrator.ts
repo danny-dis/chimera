@@ -323,6 +323,7 @@ export class SessionOrchestrator {
   private autoExtract: AutoExtractService | null = null;
   private recallService: RecallService | null = null;
   private autoDream: AutoDreamService | null = null;
+  private lspDiagnostics: ((file: string) => Promise<Array<{ severity: string; message: string; line?: number; column?: number }>>) | null = null;
   private _extractionCursor: number = 0;
   private _attemptTrail: AttemptTrail = new AttemptTrail();
   public toolCallHistory: Array<{ toolName: string; args: Record<string, unknown>; result: any }> = [];
@@ -343,6 +344,8 @@ export class SessionOrchestrator {
       autoExtract?: AutoExtractService;
       recallService?: RecallService;
       autoDream?: AutoDreamService;
+      /** Optional LSP diagnostics hook (wired from the CLI via @chimera/tools). */
+      lspDiagnostics?: (file: string) => Promise<Array<{ severity: string; message: string; line?: number; column?: number }>>;
     },
   ) {
     this.eventStream = eventStream ?? new EventStream();
@@ -364,6 +367,7 @@ export class SessionOrchestrator {
     this.autoExtract = options?.autoExtract ?? null;
     this.recallService = options?.recallService ?? null;
     this.autoDream = options?.autoDream ?? null;
+    this.lspDiagnostics = options?.lspDiagnostics ?? null;
     if (tools) {
       this.toolRegistry = tools.registry;
       this.toolExecutor = tools.executor;
@@ -2376,6 +2380,23 @@ export class SessionOrchestrator {
               file: tc.arguments.filePath,
               errors: lintResult.errors,
             } as any);
+          }
+
+          // #2d — Surface LSP diagnostics for the edited file (opt-in hook).
+          if (this.lspDiagnostics) {
+            try {
+              const diags = await this.lspDiagnostics(lintTarget);
+              if (diags.length > 0) {
+                this.eventStream.append({
+                  type: 'lsp_diagnostics',
+                  tool: tc.name,
+                  file: tc.arguments.filePath,
+                  diagnostics: diags,
+                } as any);
+              }
+            } catch {
+              // LSP is best-effort
+            }
           }
         } catch {
           // Lint is best-effort
