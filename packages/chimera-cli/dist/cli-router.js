@@ -200,6 +200,7 @@ class CliRouter {
     learningEngine;
     constructor() {
         this.program = new commander_1.Command();
+        this.program.option('--mode <mode>', 'launch mode: tui (default), repl, or rpc (headless JSON-RPC over stdio)');
         this.sessionStore = new session_1.CheckpointStore();
         const workspaceRoot = process.cwd();
         this.memoryPersistence = new core_1.MemoryPersistence({ workspaceRoot });
@@ -1649,6 +1650,18 @@ class CliRouter {
         console.log(`  Available modes: ${modes.join(', ')}`);
     }
     async runCli(argv) {
+        // Read --mode before parseAsync (commander only populates opts after
+        // parsing, which would already have launched the TUI/REPL).
+        const modeIdx = argv.indexOf('--mode');
+        const mode = modeIdx !== -1 ? argv[modeIdx + 1] : undefined;
+        if (mode === 'rpc') {
+            // Headless JSON-RPC over stdio — same protocol as the standalone
+            // daemon, but inside this process (no separate daemon to boot).
+            // Reuses ChimeraDaemon + its stdio loop; no second protocol.
+            const { ChimeraDaemon, runStdioServer } = await import('@chimera/daemon');
+            await runStdioServer(new ChimeraDaemon());
+            return;
+        }
         await this.program.parseAsync(argv);
     }
 }

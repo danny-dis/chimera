@@ -10,5 +10,9 @@
  * a persistent process that IDE clients (VS Code, JetBrains, Neovim) connect to
  * and reuse the same chimera runtime.
  */
-export {};
+import { ChimeraDaemon } from './server.js';
+export { ChimeraDaemon } from './server.js';
+/** Run the JSON-RPC 2.0 read/dispatch loop over process stdio.
+ *  Shared by the standalone daemon and `chimera --mode rpc`. */
+export declare function runStdioServer(daemon: ChimeraDaemon): Promise<void>;
 //# sourceMappingURL=index.d.ts.map

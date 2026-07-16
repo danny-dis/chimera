@@ -12,7 +12,11 @@
  * and reuse the same chimera runtime.
  */
 Object.defineProperty(exports, "__esModule", { value: true });
+exports.ChimeraDaemon = void 0;
+exports.runStdioServer = runStdioServer;
 const server_js_1 = require("./server.js");
+var server_js_2 = require("./server.js");
+Object.defineProperty(exports, "ChimeraDaemon", { enumerable: true, get: function () { return server_js_2.ChimeraDaemon; } });
 const json_rpc_js_1 = require("./json-rpc.js");
 // Suppress non-JSON output — everything goes through writeMessage()
 const ORIGINAL_STDOUT_WRITE = process.stdout.write.bind(process.stdout);
@@ -30,10 +34,13 @@ const log = (msg) => {
 };
 async function main() {
     const daemon = new server_js_1.ChimeraDaemon();
+    await runStdioServer(daemon);
+}
+/** Run the JSON-RPC 2.0 read/dispatch loop over process stdio.
+ *  Shared by the standalone daemon and `chimera --mode rpc`. */
+async function runStdioServer(daemon) {
     let buffer = '';
-    log(`Chimera daemon v${process.env.npm_package_version || '0.0.1'} started`);
-    log('Listening for JSON-RPC messages on stdin...');
-    // Write a startup notification so the extension knows we're ready
+    // Write a startup notification so the client knows we're ready
     (0, json_rpc_js_1.writeMessage)({
         jsonrpc: '2.0',
         method: 'ready',
@@ -41,7 +48,6 @@ async function main() {
     });
     // Clean up subscriptions when the client disconnects
     process.stdin.on('end', () => {
-        log('stdin closed — cleaning up active subscriptions');
         daemon.cleanupSubscriptions();
     });
     // Read lines from stdin

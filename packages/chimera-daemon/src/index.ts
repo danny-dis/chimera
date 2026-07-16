@@ -12,6 +12,7 @@
  */
 
 import { ChimeraDaemon } from './server.js';
+export { ChimeraDaemon } from './server.js';
 import { readMessage, writeMessage, error, ErrorCodes } from './json-rpc.js';
 
 // Suppress non-JSON output — everything goes through writeMessage()
@@ -32,12 +33,15 @@ const log = (msg: string) => {
 
 async function main(): Promise<void> {
   const daemon = new ChimeraDaemon();
+  await runStdioServer(daemon);
+}
+
+/** Run the JSON-RPC 2.0 read/dispatch loop over process stdio.
+ *  Shared by the standalone daemon and `chimera --mode rpc`. */
+export async function runStdioServer(daemon: ChimeraDaemon): Promise<void> {
   let buffer = '';
 
-  log(`Chimera daemon v${process.env.npm_package_version || '0.0.1'} started`);
-  log('Listening for JSON-RPC messages on stdin...');
-
-  // Write a startup notification so the extension knows we're ready
+  // Write a startup notification so the client knows we're ready
   writeMessage({
     jsonrpc: '2.0',
     method: 'ready',
@@ -46,7 +50,6 @@ async function main(): Promise<void> {
 
   // Clean up subscriptions when the client disconnects
   process.stdin.on('end', () => {
-    log('stdin closed — cleaning up active subscriptions');
     daemon.cleanupSubscriptions();
   });
 
