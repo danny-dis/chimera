@@ -24,7 +24,7 @@ import type { ReplContext } from './commands/registry.js';
 import { registerSkillCommand } from './commands/skill.js';
 import { registerWorkflowCommand } from './commands/workflow.js';
 import { registerLearnCommand } from './commands/learn.js';
-import { autoGenerateConfig, configExists, loadConfig, getProvidersByRole, type ResolvedProvider, type ChimeraConfig } from './config-loader.js';
+import { autoGenerateConfig, configExists, loadConfig, getProvidersByRole, getDefaultPreset, type ResolvedProvider, type ChimeraConfig } from './config-loader.js';
 import { cleanupStaleWorktrees, removeWorktree } from '@chimera/isolation';
 // @chimera/tui depends on Ink, which is ESM with top-level await.
 // Loading it synchronously fails under Node ≥ 22 when this CJS module requires it.
@@ -445,7 +445,7 @@ export class CliRouter {
     }
   }
 
-  private async run(mode: Mode, task: string, preset: DeliberationMode = 'solo'): Promise<void> {
+  private async run(mode: Mode, task: string, preset: DeliberationMode = getDefaultPreset() ?? 'solo'): Promise<void> {
     const label: Record<Mode, string> = {
       ask: 'Answering',
       plan: 'Planning',
@@ -1479,7 +1479,7 @@ export class CliRouter {
     console.log('  Type your task, or /help for commands.\n');
 
     let currentMode: Mode = 'code';
-    let currentPreset: DeliberationMode = 'solo';
+    let currentPreset: DeliberationMode = getDefaultPreset() ?? 'solo';
     let sessionId = this.sessionStore.generateSessionId();
     const history: string[] = [];
     const conversationHistory: Array<{ role: string; content: string }> = [];
@@ -1524,6 +1524,8 @@ export class CliRouter {
     const replCtx: ReplContext = {
       getMode: () => currentMode,
       setMode: (m) => { currentMode = m; },
+      getPreset: () => currentPreset,
+      setPreset: (p) => { currentPreset = p; },
       sessionId,
       history,
       skillModel,

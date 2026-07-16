@@ -3,6 +3,7 @@ import * as path from 'path';
 import { z } from 'zod';
 import YAML from 'yaml';
 import { listModels, recommendFromProviders } from '@chimera/providers';
+import type { DeliberationMode } from '@chimera/core';
 
 // ---------------------------------------------------------------------------
 // Schema
@@ -35,6 +36,7 @@ const DefaultsSchema = z
   .object({
     fallback_chain: z.array(z.string()).optional(),
     auto_failover: z.boolean().optional(),
+    preset: z.enum(['auto', 'solo', 'duo', 'trio', 'fusion', 'hive', 'swarm']).optional(),
   })
   .optional();
 
@@ -144,6 +146,15 @@ export function loadConfig(cwd?: string): ChimeraConfig | null {
     );
     return null;
   }
+}
+
+/**
+ * The preset from `defaults.preset` in .chimera/config.yaml, if set.
+ * Used to seed the initial preset for the legacy REPL and the plain
+ * `ask`/`plan` subcommands. Explicit `--preset` overrides it.
+ */
+export function getDefaultPreset(): DeliberationMode | undefined {
+  return loadConfig()?.defaults?.preset;
 }
 
 export function saveConfig(config: ChimeraConfig, cwd?: string): void {

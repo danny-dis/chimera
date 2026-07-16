@@ -38,6 +38,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.configExists = configExists;
 exports.loadConfig = loadConfig;
+exports.getDefaultPreset = getDefaultPreset;
 exports.saveConfig = saveConfig;
 exports.resolveProviders = resolveProviders;
 exports.getProvidersByRole = getProvidersByRole;
@@ -77,6 +78,7 @@ const DefaultsSchema = zod_1.z
     .object({
     fallback_chain: zod_1.z.array(zod_1.z.string()).optional(),
     auto_failover: zod_1.z.boolean().optional(),
+    preset: zod_1.z.enum(['auto', 'solo', 'duo', 'trio', 'fusion', 'hive', 'swarm']).optional(),
 })
     .optional();
 const ChimeraConfigSchema = zod_1.z
@@ -152,6 +154,14 @@ function loadConfig(cwd) {
         console.error(`  ⚠ Failed to read config at ${configPath}: ${err instanceof Error ? err.message : String(err)}`);
         return null;
     }
+}
+/**
+ * The preset from `defaults.preset` in .chimera/config.yaml, if set.
+ * Used to seed the initial preset for the legacy REPL and the plain
+ * `ask`/`plan` subcommands. Explicit `--preset` overrides it.
+ */
+function getDefaultPreset() {
+    return loadConfig()?.defaults?.preset;
 }
 function saveConfig(config, cwd) {
     const configPath = getConfigPath(cwd);

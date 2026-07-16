@@ -1,4 +1,4 @@
-import type { LLMProvider, LongTermMemory, Mode, OrchestratorResult, SessionOrchestrator } from '@chimera/core';
+import type { LLMProvider, LongTermMemory, Mode, DeliberationMode, OrchestratorResult, SessionOrchestrator } from '@chimera/core';
 import { SchedulerManager } from '@chimera/core';
 import type { ModelProvider } from '@chimera/providers';
 import type { CheckpointStore } from '@chimera/session';
@@ -21,6 +21,9 @@ export interface ReplContext {
     /** Current orchestrator mode (ask/plan/code/...). */
     getMode(): Mode;
     setMode(m: Mode): void;
+    /** Current deliberation preset (auto/solo/duo/trio/...). */
+    getPreset(): DeliberationMode;
+    setPreset(p: DeliberationMode): void;
     /** Session id assigned by the checkpoint store. */
     sessionId: string;
     /** Full history of user inputs in this session. */

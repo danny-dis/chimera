@@ -297,26 +297,33 @@ class SessionOrchestrator {
         const executeSignal = composeAbortSignals([ac.signal, buildTimeoutSignal(EXECUTE_TIMEOUT_MS)]);
         // Validate mode+preset combination (skip validation for 'auto' preset)
         const resolvedPreset = preset ?? this.mapModeToDeliberationMode(mode);
+        // The preset the engine will actually run. Starts as the user's choice
+        // and is only changed when a remap/downgrade below fires.
+        let effectivePreset = preset ?? this.mapModeToDeliberationMode(mode);
         if (preset && preset !== 'auto') {
             // swarm is an analysis-only preset (no tool loop — it aggregates text,
             // never writes files). For code/debug tasks it would narrate code and
             // then fail the file-landing gate as needs_user. Remap to trio (which
             // writes files) so a beginner picking swarm on a code task still ships
             // a file. swarm stays valid for review/plan where it belongs.
-            const effectivePreset = (preset === 'swarm' && (mode === 'code' || mode === 'debug'))
+            effectivePreset = (preset === 'swarm' && (mode === 'code' || mode === 'debug'))
                 ? 'trio'
                 : preset;
             const allowed = VALID_MODE_PRESET_COMBOS[mode];
             if (allowed && !allowed.includes(effectivePreset)) {
+                // Not valid for this mode: downgrade to the mode's default preset
+                // (mapModeToDeliberationMode gives the canonical default, e.g. ask→solo,
+                // review→duo). The remap above (swarm→trio on code/debug) is preserved
+                // because it already happened before this check.
+                const downgraded = this.mapModeToDeliberationMode(mode);
                 this.eventStream.append({
                     type: 'mode_preset_warning',
                     mode,
                     preset: effectivePreset,
                     resolvedPreset,
-                    reason: `Preset "${preset}" is not optimal for mode "${mode}". Allowed: [${allowed.join(', ')}]. Using "${effectivePreset}" instead.`,
+                    reason: `Preset "${preset}" is not optimal for mode "${mode}". Allowed: [${allowed.join(', ')}]. Using "${downgraded}" instead.`,
                 });
-                // Downgrade to the mode's default / remapped preset
-                params.preset = effectivePreset;
+                effectivePreset = downgraded;
             }
         }
         try {
@@ -440,7 +447,7 @@ class SessionOrchestrator {
                 });
             }
             // Telemetry: track mode+preset combination for optimization
-            const resolvedPresetForTelemetry = preset ?? this.mapModeToDeliberationMode(resolvedMode, complexity);
+            const resolvedPresetForTelemetry = (preset && preset !== 'auto') ? effectivePreset : this.mapModeToDeliberationMode(resolvedMode, complexity);
             this.eventStream.append({
                 type: 'mode_preset_resolved',
                 mode: resolvedMode,
@@ -493,7 +500,7 @@ class SessionOrchestrator {
             // --- Delegate to DeliberationEngine (primary path) ---
             if (this._registry) {
                 try {
-                    const delibResult = await this.executeWithDeliberation(task, resolvedMode, providers, costCap, preset, complexity, memoryContext, conversationHistory);
+                    const delibResult = await this.executeWithDeliberation(task, resolvedMode, providers, costCap, effectivePreset, complexity, memoryContext, conversationHistory);
                     return this.deliberationToOrchestratorResult(delibResult, task, resolvedMode, targetBefore);
                 }
                 catch (err) {
@@ -732,12 +739,13 @@ class SessionOrchestrator {
                     provider: 'llm',
                     model: 'default',
                     tokensUsed: (challengeResult.usage?.inputTokens ?? 0) + (challengeResult.usage?.outputTokens ?? 0),
+                    alternatives: challengeParsed.alternatives ?? [],
                 });
                 this.eventStream.append({
                     type: 'challenged',
                     agentId: challengerId,
                     challenges: challengeParsed.issues ?? [],
-                    alternatives: challengeParsed.filesChanged ?? [],
+                    alternatives: challengeParsed.alternatives ?? [],
                 });
                 if (verdict === 'FAIL') {
                     return this.finalize('needs_user', outputs, totalCost, task, resolvedMode);
@@ -1262,6 +1270,7 @@ class SessionOrchestrator {
             role: o.role,
             content: o.content,
             confidence: o.confidence,
+            alternatives: o.alternatives,
         }));
     }
     /**
@@ -1322,7 +1331,7 @@ class SessionOrchestrator {
             response: challengeParsed.response ?? challengeResult.content,
             confidence: challengeParsed.confidence ?? 0.5,
             issues: challengeParsed.issues ?? [],
-            alternatives: challengeParsed.filesChanged ?? [],
+            alternatives: challengeParsed.alternatives ?? [],
             raw: challengeResult.content,
             rawUsage: challengeResult.usage,
         };
@@ -1469,13 +1478,13 @@ class SessionOrchestrator {
                     type: 'challenged',
                     agentId: challengerId,
                     challenges: parsed.issues ?? [],
-                    alternatives: parsed.filesChanged ?? [],
+                    alternatives: parsed.alternatives ?? [],
                 });
                 return {
                     response: parsed.response ?? result.content,
                     confidence: parsed.confidence ?? 0.5,
                     issues: parsed.issues ?? [],
-                    alternatives: parsed.filesChanged ?? [],
+                    alternatives: parsed.alternatives ?? [],
                     raw: result.content,
                 };
             })()

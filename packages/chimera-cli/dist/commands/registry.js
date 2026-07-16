@@ -9,6 +9,7 @@ const init_js_1 = require("./init.js");
 const HELP_TEXT = [
     '  Core commands:',
     '    /mode <ask|plan|code|debug|review|oal|auto>  — switch mode',
+    '    /preset <auto|solo|duo|trio|fusion|hive|swarm>  — switch preset',
     '    /cost /history /sessions /clear /exit /help',
     '',
     '  Tasks:',
@@ -53,6 +54,17 @@ async function runSlashCommand(cmd, args, ctx) {
             }
             else {
                 console.log(`  Current mode: ${ctx.getMode()}. Use /mode <ask|plan|code|debug|review|oal|auto>`);
+            }
+            return 'continue';
+        }
+        case 'preset': {
+            const known = ['auto', 'solo', 'duo', 'trio', 'fusion', 'hive', 'swarm'];
+            if (args[0] && known.includes(args[0])) {
+                ctx.setPreset(args[0]);
+                console.log(`  Preset: ${ctx.getPreset()}`);
+            }
+            else {
+                console.log(`  Current preset: ${ctx.getPreset()}. Use /preset <auto|solo|duo|trio|fusion|hive|swarm>`);
             }
             return 'continue';
         }

@@ -403,7 +403,7 @@ class CliRouter {
             process.exit(1);
         }
     }
-    async run(mode, task, preset = 'solo') {
+    async run(mode, task, preset = (0, config_loader_js_1.getDefaultPreset)() ?? 'solo') {
         const label = {
             ask: 'Answering',
             plan: 'Planning',
@@ -1366,7 +1366,7 @@ class CliRouter {
         console.log('\n  Chimera \u2014 interactive mode');
         console.log('  Type your task, or /help for commands.\n');
         let currentMode = 'code';
-        let currentPreset = 'solo';
+        let currentPreset = (0, config_loader_js_1.getDefaultPreset)() ?? 'solo';
         let sessionId = this.sessionStore.generateSessionId();
         const history = [];
         const conversationHistory = [];
@@ -1403,6 +1403,8 @@ class CliRouter {
         const replCtx = {
             getMode: () => currentMode,
             setMode: (m) => { currentMode = m; },
+            getPreset: () => currentPreset,
+            setPreset: (p) => { currentPreset = p; },
             sessionId,
             history,
             skillModel,

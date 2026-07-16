@@ -795,4 +795,73 @@ describe('SessionOrchestrator', () => {
       expect(userRequest[0].mode).toBe('auto');
     });
   });
+
+  describe('mode/preset switching actually reaches the engine', () => {
+    // ponytail: one no-API test that proves the selected preset (and any
+    // downgrade/remap) is the preset the DeliberationEngine actually runs —
+    // not just a value stored on params that nobody reads.
+    async function runCapturingPreset(
+      mode: Parameters<SessionOrchestrator['execute']>[0]['mode'],
+      preset: Parameters<SessionOrchestrator['execute']>[0]['preset'],
+    ): Promise<{ captured: string | undefined; warning: unknown }> {
+      const eventStream = new EventStream();
+      const orch = new SessionOrchestrator(eventStream);
+      // A registry is required for the deliberation path; the hardcoded
+      // catalog is enough (no cache load).
+      (orch as any)._registry = new (await import('@chimera/providers')).ModelRegistry(undefined, { skipCacheLoading: true });
+
+      const provider = mockStructuredProvider({ response: 'ok', confidence: 0.9, rationale: 'x' });
+
+      // Spy on the engine entry point to capture the preset actually used.
+      const spy = vi.spyOn(orch as any, 'executeWithDeliberation').mockResolvedValue({
+        output: 'ok',
+        status: 'done',
+        degraded: false,
+        analysis: { confidence: 0.9 },
+        agentCount: 1,
+      } as any);
+
+      await orch.execute({
+        task: 'create a new module that exports a utility function',
+        mode,
+        preset,
+        providers: { writer: provider, reviewer: provider },
+        costCap: 10,
+      });
+
+      const call = spy.mock.calls[0];
+      spy.mockRestore();
+      const warning = eventStream.getByType('mode_preset_warning');
+      return { captured: call?.[4] as string | undefined, warning };
+    }
+
+    it('honors an explicit valid preset (code/trio)', async () => {
+      const { captured, warning } = await runCapturingPreset('code', 'trio');
+      expect(captured).toBe('trio');
+      expect(warning).toHaveLength(0);
+    });
+
+    it('honors solo on code', async () => {
+      const { captured } = await runCapturingPreset('code', 'solo');
+      expect(captured).toBe('solo');
+    });
+
+    it('REMAP: code/swarm is remapped to trio and the engine sees trio (silent — trio is a valid code preset)', async () => {
+      const { captured, warning } = await runCapturingPreset('code', 'swarm');
+      expect(captured).toBe('trio');
+      expect(warning).toHaveLength(0);
+    });
+
+    it('DOWNGRADE: ask/fusion is not allowed and the engine sees the downgraded solo', async () => {
+      const { captured, warning } = await runCapturingPreset('ask', 'fusion');
+      expect(captured).toBe('solo');
+      expect(warning).toHaveLength(1);
+    });
+
+    it('DOWNGRADE: review/solo is not allowed (review allows duo|trio|fusion|swarm) -> solo downgraded', async () => {
+      const { captured, warning } = await runCapturingPreset('review', 'solo');
+      expect(captured).toBe('duo');
+      expect(warning).toHaveLength(1);
+    });
+  });
 });

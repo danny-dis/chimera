@@ -2,6 +2,7 @@ import type {
   LLMProvider,
   LongTermMemory,
   Mode,
+  DeliberationMode,
   OrchestratorResult,
   SessionOrchestrator,
   WorkflowDefinition,
@@ -17,6 +18,7 @@ import { initAgentsMd } from './init.js';
 const HELP_TEXT = [
   '  Core commands:',
   '    /mode <ask|plan|code|debug|review|oal|auto>  — switch mode',
+  '    /preset <auto|solo|duo|trio|fusion|hive|swarm>  — switch preset',
   '    /cost /history /sessions /clear /exit /help',
   '',
   '  Tasks:',
@@ -46,6 +48,9 @@ export interface ReplContext {
   /** Current orchestrator mode (ask/plan/code/...). */
   getMode(): Mode;
   setMode(m: Mode): void;
+  /** Current deliberation preset (auto/solo/duo/trio/...). */
+  getPreset(): DeliberationMode;
+  setPreset(p: DeliberationMode): void;
   /** Session id assigned by the checkpoint store. */
   sessionId: string;
   /** Full history of user inputs in this session. */
@@ -119,6 +124,16 @@ export async function runSlashCommand(
         console.log(`  Mode: ${ctx.getMode()}`);
       } else {
         console.log(`  Current mode: ${ctx.getMode()}. Use /mode <ask|plan|code|debug|review|oal|auto>`);
+      }
+      return 'continue';
+    }
+    case 'preset': {
+      const known = ['auto', 'solo', 'duo', 'trio', 'fusion', 'hive', 'swarm'];
+      if (args[0] && known.includes(args[0])) {
+        ctx.setPreset(args[0] as DeliberationMode);
+        console.log(`  Preset: ${ctx.getPreset()}`);
+      } else {
+        console.log(`  Current preset: ${ctx.getPreset()}. Use /preset <auto|solo|duo|trio|fusion|hive|swarm>`);
       }
       return 'continue';
     }

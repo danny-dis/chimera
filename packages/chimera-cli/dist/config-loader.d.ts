@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import type { DeliberationMode } from '@chimera/core';
 declare const ProviderEntrySchema: z.ZodObject<{
     name: z.ZodString;
     provider: z.ZodString;
@@ -131,10 +132,13 @@ declare const ChimeraConfigSchema: z.ZodEffects<z.ZodEffects<z.ZodObject<{
     defaults: z.ZodOptional<z.ZodObject<{
         fallback_chain: z.ZodOptional<z.ZodArray<z.ZodString, "many">>;
         auto_failover: z.ZodOptional<z.ZodBoolean>;
+        preset: z.ZodOptional<z.ZodEnum<["auto", "solo", "duo", "trio", "fusion", "hive", "swarm"]>>;
     }, "strip", z.ZodTypeAny, {
+        preset?: "auto" | "solo" | "duo" | "trio" | "fusion" | "hive" | "swarm" | undefined;
         fallback_chain?: string[] | undefined;
         auto_failover?: boolean | undefined;
     }, {
+        preset?: "auto" | "solo" | "duo" | "trio" | "fusion" | "hive" | "swarm" | undefined;
         fallback_chain?: string[] | undefined;
         auto_failover?: boolean | undefined;
     }>>;
@@ -159,6 +163,7 @@ declare const ChimeraConfigSchema: z.ZodEffects<z.ZodEffects<z.ZodObject<{
         } | undefined;
     }[];
     defaults?: {
+        preset?: "auto" | "solo" | "duo" | "trio" | "fusion" | "hive" | "swarm" | undefined;
         fallback_chain?: string[] | undefined;
         auto_failover?: boolean | undefined;
     } | undefined;
@@ -183,6 +188,7 @@ declare const ChimeraConfigSchema: z.ZodEffects<z.ZodEffects<z.ZodObject<{
         } | undefined;
     }[];
     defaults?: {
+        preset?: "auto" | "solo" | "duo" | "trio" | "fusion" | "hive" | "swarm" | undefined;
         fallback_chain?: string[] | undefined;
         auto_failover?: boolean | undefined;
     } | undefined;
@@ -207,6 +213,7 @@ declare const ChimeraConfigSchema: z.ZodEffects<z.ZodEffects<z.ZodObject<{
         } | undefined;
     }[];
     defaults?: {
+        preset?: "auto" | "solo" | "duo" | "trio" | "fusion" | "hive" | "swarm" | undefined;
         fallback_chain?: string[] | undefined;
         auto_failover?: boolean | undefined;
     } | undefined;
@@ -231,6 +238,7 @@ declare const ChimeraConfigSchema: z.ZodEffects<z.ZodEffects<z.ZodObject<{
         } | undefined;
     }[];
     defaults?: {
+        preset?: "auto" | "solo" | "duo" | "trio" | "fusion" | "hive" | "swarm" | undefined;
         fallback_chain?: string[] | undefined;
         auto_failover?: boolean | undefined;
     } | undefined;
@@ -255,6 +263,7 @@ declare const ChimeraConfigSchema: z.ZodEffects<z.ZodEffects<z.ZodObject<{
         } | undefined;
     }[];
     defaults?: {
+        preset?: "auto" | "solo" | "duo" | "trio" | "fusion" | "hive" | "swarm" | undefined;
         fallback_chain?: string[] | undefined;
         auto_failover?: boolean | undefined;
     } | undefined;
@@ -279,6 +288,7 @@ declare const ChimeraConfigSchema: z.ZodEffects<z.ZodEffects<z.ZodObject<{
         } | undefined;
     }[];
     defaults?: {
+        preset?: "auto" | "solo" | "duo" | "trio" | "fusion" | "hive" | "swarm" | undefined;
         fallback_chain?: string[] | undefined;
         auto_failover?: boolean | undefined;
     } | undefined;
@@ -299,6 +309,12 @@ export interface ResolvedProvider {
 }
 export declare function configExists(cwd?: string): boolean;
 export declare function loadConfig(cwd?: string): ChimeraConfig | null;
+/**
+ * The preset from `defaults.preset` in .chimera/config.yaml, if set.
+ * Used to seed the initial preset for the legacy REPL and the plain
+ * `ask`/`plan` subcommands. Explicit `--preset` overrides it.
+ */
+export declare function getDefaultPreset(): DeliberationMode | undefined;
 export declare function saveConfig(config: ChimeraConfig, cwd?: string): void;
 /**
  * Resolve all provider api_key references from environment variables.

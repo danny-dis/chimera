@@ -113,6 +113,8 @@ export interface AgentOutput {
         severity: 'high' | 'med' | 'low';
         evidence: string;
     }>;
+    /** Alternative approaches with tradeoffs, if any (challenger output). */
+    alternatives?: string[];
 }
 export interface OrchestratorResult {
     status: 'done' | 'blocked' | 'needs_user' | 'error';
