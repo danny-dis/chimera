@@ -786,10 +786,19 @@ export class CliRouter {
         const challenger = mapped.challenger ? adaptProvider(mapped.challenger) : undefined;
 
         try {
+          // Continue from restored state: feed the prior writer conversation
+          // (user/assistant turns only — drop system prompts) as history so
+          // execute() builds on it instead of re-planning from turn zero.
+          const priorHistory = Array.isArray((checkpoint as any).messages)
+            ? (checkpoint as any).messages.filter(
+                (m: { role: string }) => m.role === 'user' || m.role === 'assistant',
+              )
+            : undefined;
           const result = await orchestrator.execute({
             task: checkpoint.task,
             mode: checkpoint.mode,
             providers: { writer, reviewer, ...(challenger ? { challenger } : {}) },
+            conversationHistory: priorHistory,
           });
           this.printResult(result);
         } catch (err) {

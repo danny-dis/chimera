@@ -41,7 +41,9 @@ const core_1 = require("@chimera/core");
 const providers_1 = require("@chimera/providers");
 const session_1 = require("@chimera/session");
 const learning_1 = require("@chimera/learning");
+const learning_2 = require("@chimera/learning");
 const tools_1 = require("@chimera/tools");
+const tools_2 = require("@chimera/tools");
 const eval_runner_js_1 = require("./eval-runner.js");
 const registry_js_1 = require("./commands/registry.js");
 const skill_js_1 = require("./commands/skill.js");
@@ -150,20 +152,39 @@ function formatProviderError(err, providerName) {
     }
     return err instanceof Error ? err.message : String(err);
 }
+/** Render a tiered message for the given skill tier, logging the reason in dev. */
+function renderTiered(msg, tier) {
+    if (process.env.CHIMERA_DEV || process.argv.includes('--verbose')) {
+        // dev-only single-line signal trace
+        console.debug(`[skill] (tierMessage) → ${tier}`);
+    }
+    return (0, learning_2.tierMessage)(msg, tier);
+}
 /**
  * Validate that at least one provider can be created successfully.
  * Called on startup to fail fast with a clear message instead of discovering
  * a missing API key mid-task.
  */
-function validateStartupProviders(mapped) {
+function validateStartupProviders(mapped, skillModel) {
+    const tier = skillModel?.tier() ?? 'intermediate';
     const real = mapped.fallback.filter((p) => p.getModel().provider !== 'mock');
     if (real.length === 0 && mapped.fallback.length > 0) {
         // Only mock providers — warn but don't block
-        console.log('  \u26a0 No real API keys found \u2014 using offline mock provider.');
+        const mockMsg = {
+            beginner: '  ⚠ No real API keys found — using the offline mock provider.\n  This lets you try the interface, but it won\'t actually call a model.\n  Run `chimera setup` to add a real provider and start getting real answers.',
+            intermediate: '  ⚠ No real API keys found — using offline mock provider.',
+            advanced: '  ⚠ No real API keys — mock provider active.',
+        };
+        console.log(renderTiered(mockMsg, tier));
         console.log('  Run `chimera setup` to configure real providers.\n');
     }
     if (mapped.fallback.length === 0) {
-        console.error('\n\u2717 No providers available. Configure at least one provider:');
+        const noneMsg = {
+            beginner: '\n✗ No providers available. You need at least one provider to run Chimera.\n  - Run `chimera setup` for an interactive walkthrough\n  - Or set ANTHROPIC_API_KEY, OPENAI_API_KEY, or GOOGLE_API_KEY in your .env file',
+            intermediate: '\n✗ No providers available. Configure at least one provider:',
+            advanced: '\n✗ No providers configured.',
+        };
+        console.error(renderTiered(noneMsg, tier));
         console.error('  - Run `chimera setup` for interactive configuration');
         console.error('  - Or set ANTHROPIC_API_KEY, OPENAI_API_KEY, or GOOGLE_API_KEY in .env\n');
         process.exit(1);
@@ -273,6 +294,7 @@ class CliRouter {
             budgetEnforcer,
             rateLimiter,
             memoryPersistence: this.memoryPersistence,
+            lspDiagnostics: (file) => (0, tools_1.getDiagnosticsForFile)(process.cwd(), file),
         });
         return {
             orchestrator,
@@ -391,6 +413,15 @@ class CliRouter {
             oal: 'Optimizing',
             auto: 'Auto-selecting',
         };
+        // Per-invocation skill model (one-shot path has no persistent session).
+        const skillModel = new learning_2.UserSkillModel();
+        const opts = this.program.opts();
+        const scripted = !!process.env.NONINTERACTIVE ||
+            process.argv.includes('--yes') ||
+            process.argv.includes('-y') ||
+            opts.yes === true;
+        skillModel.observeCommandUsage({ flags: process.argv.slice(2), usedPreset: !!preset && preset !== 'solo', scripted, configOverridden: false });
+        skillModel.observeMessage(task);
         console.log(`\n\u2699 Chimera [${mode}] \u2014 ${label[mode]}...\n`);
         // Auto-generate config from env vars (fetches models from API if needed)
         if (!(0, config_loader_js_1.configExists)()) {
@@ -401,7 +432,7 @@ class CliRouter {
         }
         const mapped = await this.getRoleMappedProviders();
         // #6 — Validate providers on startup (fail fast)
-        validateStartupProviders(mapped);
+        validateStartupProviders(mapped, skillModel);
         // #1 — Use FallbackChain when multiple providers are available.
         // Instead of a single writer that dies on the first 429, the fallback
         // chain tries each provider in order before giving up.
@@ -417,7 +448,18 @@ class CliRouter {
             ? adaptProvider(mapped.reviewer)
             : (allProviders.length > 1 ? (0, fallback_provider_js_1.createFallbackProvider)(allProviders) : adaptProvider(allProviders[0]));
         const challenger = mapped.challenger ? adaptProvider(mapped.challenger) : undefined;
-        const orchestrator = await this.initOrchestrator();
+        const ctx = await this.buildRunContext();
+        const orchestrator = ctx.orchestrator;
+        // #1d/#1e/#3d — Mode-based permission gating.
+        // plan/ask/review become read-only (no writes); `code`/`debug` permit edits.
+        // `--yolo` opts into full-access (off by default, for CI/trusted automation).
+        const yolo = process.argv.includes('--yolo') || opts.yolo === true;
+        const profile = yolo ? tools_2.fullAccessProfile
+            : mode === 'plan' || mode === 'ask' || mode === 'review'
+                ? tools_2.readOnlyProfile
+                : tools_2.editFilesProfile;
+        const permissionEngine = new tools_2.PermissionEngine(profile);
+        ctx.toolExecutor.setPermissionEngine(permissionEngine);
         // #4 — Tool execution visibility: stream tool activity to the terminal
         // so the user sees what the agent is doing in real time.
         orchestrator.getEventStream().subscribe('*', (event) => {
@@ -448,7 +490,13 @@ class CliRouter {
                 preset,
                 providers: { writer, reviewer, ...(challenger ? { challenger } : {}) },
             });
-            this.printResult(result);
+            skillModel.observeTaskOutcome({ clean: result.status === 'done' });
+            if (opts.json === true) {
+                process.stdout.write(JSON.stringify(result) + '\n');
+            }
+            else {
+                this.printResult(result, skillModel);
+            }
         }
         catch (err) {
             // #3 — Better error messages for provider failures
@@ -457,7 +505,7 @@ class CliRouter {
             process.exit(1);
         }
     }
-    printResult(result) {
+    printResult(result, skillModel) {
         const statusIcon = {
             done: '✓',
             blocked: '⚠',
@@ -471,7 +519,14 @@ class CliRouter {
             console.log(`\n${result.output}\n`);
         }
         else {
-            console.log(`\n⚠ Empty response. The model returned no content.`);
+            const tier = skillModel?.tier() ?? 'intermediate';
+            const emptyMsg = {
+                beginner: '\n⚠ Empty response. The model returned no content.',
+                intermediate: '\n⚠ Empty response. The model returned no content.',
+                // Advanced users already know the usual culprits — skip the API-key primer.
+                advanced: '\n⚠ Empty response.',
+            };
+            console.log(renderTiered(emptyMsg, tier));
             console.log(`  Check your API key, model availability, and provider status.\n`);
         }
     }
@@ -532,6 +587,8 @@ class CliRouter {
             .command('ask <task>')
             .description('Ask a question')
             .option('--tui', 'use TUI for this task')
+            .option('--json', 'emit a JSON result instead of human-readable output')
+            .option('--yolo', 'auto-approve all tool calls (off by default; for CI/trusted automation)')
             .action(async (task, options) => {
             this.verbose = this.program.opts().verbose ?? false;
             if (options.tui) {
@@ -544,6 +601,8 @@ class CliRouter {
         this.program
             .command('plan <task>')
             .description('Create a plan')
+            .option('--json', 'emit a JSON result instead of human-readable output')
+            .option('--yolo', 'auto-approve all tool calls (off by default; for CI/trusted automation)')
             .action(async (task) => {
             this.verbose = this.program.opts().verbose ?? false;
             await this.run('plan', task);
@@ -552,6 +611,8 @@ class CliRouter {
             .command('code <task>')
             .description('Write code')
             .option('--preset <mode>', 'deliberation preset (solo|duo|trio|fusion|hive|swarm|auto)', 'solo')
+            .option('--json', 'emit a JSON result instead of human-readable output')
+            .option('--yolo', 'auto-approve all tool calls (off by default; for CI/trusted automation)')
             .action(async (task, options) => {
             this.verbose = this.program.opts().verbose ?? false;
             await this.run('code', task, options.preset);
@@ -560,6 +621,8 @@ class CliRouter {
             .command('debug <task>')
             .description('Debug an issue')
             .option('--preset <mode>', 'deliberation preset (solo|duo|trio|fusion|hive|swarm|auto)', 'solo')
+            .option('--json', 'emit a JSON result instead of human-readable output')
+            .option('--yolo', 'auto-approve all tool calls (off by default; for CI/trusted automation)')
             .action(async (task, options) => {
             this.verbose = this.program.opts().verbose ?? false;
             await this.run('debug', task, options.preset);
@@ -568,6 +631,8 @@ class CliRouter {
             .command('review <task>')
             .description('Review code')
             .option('--preset <mode>', 'deliberation preset (solo|duo|trio|fusion|hive|swarm|auto)', 'solo')
+            .option('--json', 'emit a JSON result instead of human-readable output')
+            .option('--yolo', 'auto-approve all tool calls (off by default; for CI/trusted automation)')
             .action(async (task, options) => {
             this.verbose = this.program.opts().verbose ?? false;
             await this.run('review', task, options.preset);
@@ -646,10 +711,17 @@ class CliRouter {
             const reviewer = adaptProvider(mapped.reviewer ?? mapped.writer ?? mapped.fallback[0]);
             const challenger = mapped.challenger ? adaptProvider(mapped.challenger) : undefined;
             try {
+                // Continue from restored state: feed the prior writer conversation
+                // (user/assistant turns only — drop system prompts) as history so
+                // execute() builds on it instead of re-planning from turn zero.
+                const priorHistory = Array.isArray(checkpoint.messages)
+                    ? checkpoint.messages.filter((m) => m.role === 'user' || m.role === 'assistant')
+                    : undefined;
                 const result = await orchestrator.execute({
                     task: checkpoint.task,
                     mode: checkpoint.mode,
                     providers: { writer, reviewer, ...(challenger ? { challenger } : {}) },
+                    conversationHistory: priorHistory,
                 });
                 this.printResult(result);
             }
@@ -785,6 +857,9 @@ class CliRouter {
         // Lazy-load Ink/TUI: it's an ESM module with top-level await and cannot be
         // required() synchronously from this CJS CLI. Dynamic import keeps boot clean.
         const { runTUI } = await import('@chimera/tui');
+        // TUI owns its own skill model instance (it feeds its own signals; the
+        // per-turn REPL feeding path is a separate launch and need not share this).
+        const skillModel = new learning_2.UserSkillModel();
         // Auto-generate config from env vars (fetches models from API if needed)
         if (!(0, config_loader_js_1.configExists)()) {
             const generated = await (0, config_loader_js_1.autoGenerateConfig)();
@@ -947,6 +1022,7 @@ class CliRouter {
             sessionId,
             activeTool,
             workingDir: workspaceRoot,
+            skillModel,
             onSendMessage: async (text) => {
                 // Reset agents at the start of each new task so they don't accumulate
                 currentAgents = [];
@@ -1295,6 +1371,13 @@ class CliRouter {
         const history = [];
         const conversationHistory = [];
         let loopState = null;
+        // One skill model per session — fed by signals as they occur.
+        const skillModel = new learning_2.UserSkillModel();
+        // Capabilities the user has touched this session (drives the value nudge).
+        const seenCapabilities = new Set();
+        // Surface one underused capability at a natural pause (task completion),
+        // throttled so it never interrupts mid-task (Step 4 of adaptive onboarding).
+        let turnsSinceNudge = 0;
         const rl = readline.createInterface({
             input: process.stdin,
             output: process.stdout,
@@ -1306,6 +1389,7 @@ class CliRouter {
             setMode: (m) => { currentMode = m; },
             sessionId,
             history,
+            skillModel,
             latestReplResult: null,
             setLatestReplResult: () => { },
             currentOrchestrator: null,
@@ -1316,7 +1400,7 @@ class CliRouter {
             adaptProvider,
             getProviders: () => this.getProviders(),
             getSessionStore: () => this.sessionStore,
-            printResult: (r) => this.printResult(r),
+            printResult: (r) => this.printResult(r, skillModel),
             initOrchestrator: () => this.initOrchestrator(),
         };
         rl.prompt();
@@ -1339,6 +1423,15 @@ class CliRouter {
             }
             // Process task
             history.push(input);
+            // Feed observable behavior into the skill model so explanation depth
+            // tracks the user in real time (Step 2 of the adaptive-onboarding work).
+            skillModel.observeMessage(input);
+            if (/explain more|teach me|for a beginner|more detail|i'?m new|i am new/i.test(input)) {
+                skillModel.setExplainMore();
+            }
+            else if (/skip the explanation|explain less|less detail|don'?t explain|just do it|just do the task/i.test(input)) {
+                skillModel.setExplainLess();
+            }
             console.log(`\n⚙ [${currentMode}] processing...\n`);
             // Retrieve relevant memories
             let memoryContext = '';
@@ -1370,7 +1463,38 @@ class CliRouter {
                     preset: currentPreset,
                     conversationHistory,
                 });
-                this.printResult(result);
+                this.printResult(result, skillModel);
+                skillModel.observeTaskOutcome({ clean: result.status === 'done' });
+                // Track which capabilities the user has exercised (for the nudge).
+                const capFromInput = /^\/(loop|goal|sessions|resume|skill|learn|workflow|export|hooks|vim|teleport|eval|doctor|mcp|ide)/i.exec(input.trim());
+                if (capFromInput) {
+                    const map = {
+                        loop: 'loop', goal: 'goal', sessions: 'sessions', resume: 'sessions',
+                        skill: 'skill', learn: 'learn', workflow: 'workflow', export: 'export',
+                        hooks: 'hooks', vim: 'vim', teleport: 'teleport', eval: 'eval',
+                        doctor: 'doctor', mcp: 'mcp', ide: 'ide',
+                    };
+                    const cap = map[capFromInput[1].toLowerCase()];
+                    if (cap)
+                        seenCapabilities.add(cap);
+                    if (/--preset/.test(input))
+                        seenCapabilities.add('preset');
+                    if (/chimera (init|setup)|config\.yaml|CHIMERA_/i.test(input))
+                        seenCapabilities.add('config');
+                }
+                // Natural-pause nudge: suggest ONE underused capability, throttled and
+                // non-intrusive (Step 4). Calibrated to the inferred skill level.
+                turnsSinceNudge += 1;
+                if (turnsSinceNudge >= 3 && result.status === 'done') {
+                    turnsSinceNudge = 0;
+                    const suggestion = (0, learning_2.suggestNextValue)(skillModel, Array.from(seenCapabilities));
+                    if (suggestion) {
+                        if (this.verbose) {
+                            console.log(`  [skill] ${skillModel.tierReason()} → suggesting "${suggestion.id}"`);
+                        }
+                        console.log(`\n  💡 ${suggestion.tip}\n`);
+                    }
+                }
                 // Accumulate conversation history for context
                 if (result.output && result.status === 'done') {
                     conversationHistory.push({ role: 'user', content: input });
