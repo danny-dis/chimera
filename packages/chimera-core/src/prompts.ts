@@ -197,6 +197,21 @@ export const SMALL_MODEL_GUIDANCE = `SMALL MODEL MODE:
 - If unsure, pick the cheapest verifiable next step; say "UNCERTAIN" only if truly unknown.`;
 
 /**
+ * Natural-language → tool mapping. The model must infer the right tool from
+ * the user's plain words (we do NOT want users spelling out tool names). On
+ * cheap models this is the difference between "it found my folder" and
+ * "it ran cd and failed again". Injected into both prompt tiers.
+ */
+export const TOOL_USE_GUIDANCE = `Translate the user's plain words into the right tool — act, don't narrate:
+- "find / locate a folder or directory called X" or "where is the X folder?" → find_folder({ name: "X" })
+- "go into / cd to / switch to the X folder" → find_folder first, then run_shell_command({ cwd: <path>, command: "..." })
+- "search the code / find usages of X / grep for text" → search_files({ pattern: "X" })
+- "list files matching *.ts / show files named X" → glob_files({ pattern: "*.ts" })
+- "read / open a file" → read_file
+- "run / execute a command [in folder X]" → run_shell_command({ command: "...", cwd: "<X>" })
+RULE: cd does NOT persist between tool calls. Never call cd alone. To work in a folder, pass cwd: "<absolute path>" to run_shell_command. Use find_folder to discover that path first if unsure.`;
+
+/**
  * Compact role prompt for the cheap tier. Returns writer/reviewer essentials
  * without decorative headers and with the proactive-vs-ask tension resolved.
  * For other roles it defers to the full AGENT_PROMPTS[role].system so the
@@ -212,6 +227,8 @@ You implement code changes with the smallest reversible patch.
 - Verify via test/lint/type-check after editing.
 - Reuse existing helpers; no new deps; deletion over addition.
 - If a tool is missing, state the action and proceed as far as possible.
+
+${TOOL_USE_GUIDANCE}
 [!] AS YOU WISH [!]`;
 
   const reviewer =
@@ -580,6 +597,8 @@ instead of describing the action in prose:
 - EDIT FILES: when you propose a code change, PERFORM it via the edit
   tool. Never paste a diff or replacement block in prose — apply it.
 - RUN COMMANDS: shell, build, type-check, and linter commands to verify.
+
+${TOOL_USE_GUIDANCE}
 
 If the task requires a change, end with the change applied and verified —
 not a description of the change. If a needed tool is not offered, state the

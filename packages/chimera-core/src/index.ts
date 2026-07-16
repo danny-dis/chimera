@@ -7,7 +7,7 @@ export { TaskRouter } from './task-router.js';
 export { CostTracker } from './cost-tracker.js';
 export { SessionOrchestrator } from './session-orchestrator.js';
 export { ResponseSynthesizer } from './response-synthesizer.js';
-export { AGENT_PROMPTS, MODE_INSTRUCTIONS, RECOVERY_PROMPTS, buildMessages, buildWorkflowGeneratorPrompt, COMPACT_CORE_IDENTITY, SMALL_MODEL_GUIDANCE, compactAgentPrompt } from './prompts.js';
+export { AGENT_PROMPTS, MODE_INSTRUCTIONS, RECOVERY_PROMPTS, buildMessages, buildWorkflowGeneratorPrompt, COMPACT_CORE_IDENTITY, SMALL_MODEL_GUIDANCE, TOOL_USE_GUIDANCE, compactAgentPrompt } from './prompts.js';
 export { bootstrap } from './bootstrap.js';
 export type { BootstrapResult } from './bootstrap.js';
 

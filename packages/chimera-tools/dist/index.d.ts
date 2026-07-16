@@ -6,6 +6,7 @@ export { ToolExecutor, type PermissionChecker } from './tool-executor.js';
 export { readFileTool, writeFileTool, listDirectoryTool } from './tools/filesystem.js';
 export { type MediaBlock, MediaBlockSchema } from './tools/media-types.js';
 export { searchFilesTool, globFilesTool } from './tools/search.js';
+export { findFolderTool } from './tools/find-folder.js';
 export { runShellCommandTool } from './tools/shell.js';
 export { gitStatusTool, gitDiffTool, gitLogTool, gitBranchTool, gitInitTool, gitAddTool, gitCommitTool, gitPushTool } from './tools/git.js';
 export { applyPatchTool, editBlockTool, editFileTool, searchReplaceTool } from './tools/edit.js';
@@ -312,6 +313,36 @@ export declare const allTools: readonly [ToolDefinition<import("zod").ZodEffects
 }, {
     files?: string[];
     count?: number;
+}>>, ToolDefinition<import("zod").ZodObject<{
+    name: import("zod").ZodString;
+    path: import("zod").ZodOptional<import("zod").ZodString>;
+    maxResults: import("zod").ZodDefault<import("zod").ZodNumber>;
+    depth: import("zod").ZodDefault<import("zod").ZodNumber>;
+    caseSensitive: import("zod").ZodDefault<import("zod").ZodBoolean>;
+}, "strip", import("zod").ZodTypeAny, {
+    path?: string;
+    name?: string;
+    depth?: number;
+    caseSensitive?: boolean;
+    maxResults?: number;
+}, {
+    path?: string;
+    name?: string;
+    depth?: number;
+    caseSensitive?: boolean;
+    maxResults?: number;
+}>, import("zod").ZodObject<{
+    folders: import("zod").ZodArray<import("zod").ZodString, "many">;
+    count: import("zod").ZodNumber;
+    searched: import("zod").ZodString;
+}, "strip", import("zod").ZodTypeAny, {
+    count?: number;
+    folders?: string[];
+    searched?: string;
+}, {
+    count?: number;
+    folders?: string[];
+    searched?: string;
 }>>, ToolDefinition<import("zod").ZodObject<{
     command: import("zod").ZodString;
     cwd: import("zod").ZodOptional<import("zod").ZodString>;

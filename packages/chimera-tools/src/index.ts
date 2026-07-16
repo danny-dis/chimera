@@ -41,6 +41,7 @@ export { type MediaBlock, MediaBlockSchema } from './tools/media-types.js';
 
 // Search tools
 export { searchFilesTool, globFilesTool } from './tools/search.js';
+export { findFolderTool } from './tools/find-folder.js';
 
 // Shell tools
 export { runShellCommandTool } from './tools/shell.js';
@@ -80,6 +81,7 @@ export type { McpConfigFile } from './mcp-client.js';
 // All tools array for bulk registration
 import { readFileTool, writeFileTool, listDirectoryTool } from './tools/filesystem.js';
 import { searchFilesTool, globFilesTool } from './tools/search.js';
+import { findFolderTool } from './tools/find-folder.js';
 import { runShellCommandTool } from './tools/shell.js';
 import { gitStatusTool, gitDiffTool, gitLogTool, gitBranchTool, gitInitTool, gitAddTool, gitCommitTool, gitPushTool } from './tools/git.js';
 import { applyPatchTool, editBlockTool, editFileTool, searchReplaceTool } from './tools/edit.js';
@@ -95,6 +97,7 @@ export const allTools = [
   listDirectoryTool,
   searchFilesTool,
   globFilesTool,
+  findFolderTool,
   runShellCommandTool,
   gitStatusTool,
   gitDiffTool,

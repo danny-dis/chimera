@@ -5,7 +5,21 @@ import {
   compactAgentPrompt,
   CHIMERA_CORE_IDENTITY,
   AGENT_PROMPTS,
+  TOOL_USE_GUIDANCE,
 } from '../prompts.js';
+
+describe('TOOL_USE_GUIDANCE', () => {
+  it('maps natural-language folder/cd intents to the right tools', () => {
+    expect(TOOL_USE_GUIDANCE).toContain('find_folder');
+    expect(TOOL_USE_GUIDANCE).toContain('run_shell_command');
+    expect(TOOL_USE_GUIDANCE.toLowerCase()).toContain('cd does not persist');
+  });
+
+  it('is injected into both the cheap and frontier writer prompts', () => {
+    expect(compactAgentPrompt('writer')).toContain(TOOL_USE_GUIDANCE);
+    expect(AGENT_PROMPTS.writer.system).toContain(TOOL_USE_GUIDANCE);
+  });
+});
 
 describe('compact tier prompts', () => {
   describe('COMPACT_CORE_IDENTITY', () => {

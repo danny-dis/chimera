@@ -1,8 +1,8 @@
 "use strict";
 // @chimera/tools — Tool registry and core tools
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.McpClient = exports.formatDiagnostics = exports.getDiagnosticsForFile = exports.lspTool = exports.createWorkflowTool = exports.createSkillTool = exports.skillLoadTool = exports.TaskStatusSchema = exports.TaskSchema = exports.taskUpdateTool = exports.taskListTool = exports.taskCreateTool = exports.questionTool = exports.todoReadTool = exports.todoWriteTool = exports.webSearchTool = exports.webFetchTool = exports.searchReplaceTool = exports.editFileTool = exports.editBlockTool = exports.applyPatchTool = exports.gitPushTool = exports.gitCommitTool = exports.gitAddTool = exports.gitInitTool = exports.gitBranchTool = exports.gitLogTool = exports.gitDiffTool = exports.gitStatusTool = exports.runShellCommandTool = exports.globFilesTool = exports.searchFilesTool = exports.MediaBlockSchema = exports.listDirectoryTool = exports.writeFileTool = exports.readFileTool = exports.ToolExecutor = exports.ToolRegistry = exports.buildTool = exports.TOOL_DEFAULTS = exports.IGNORED_DIRS = exports.MAX_SHELL_TIMEOUT = exports.DEFAULT_SHELL_TIMEOUT = exports.MAX_OUTPUT_SIZE = exports.MAX_FILE_SIZE = exports.GitCommitSchema = exports.GitFileStatusSchema = exports.SearchMatchSchema = exports.FileEntrySchema = exports.PathSchema = void 0;
-exports.SecretDetector = exports.EnvironmentFilter = exports.PTYExecutor = exports.Sandbox = exports.createBuiltinPolicy = exports.getBuiltinPolicyNames = exports.networkPolicy = exports.destructiveCommandsPolicy = exports.maxToolCallsPolicy = exports.costBudgetPolicy = exports.trustedProjectPolicy = exports.workspaceWritePolicy = exports.readOnlyPolicy = exports.askOnOsTools = exports.createPolicyStackFromConfig = exports.PolicyStack = exports.PathRestrictionEngine = exports.CommandPolicy = exports.fullAccessProfile = exports.editFilesProfile = exports.readOnlyProfile = exports.PermissionEngine = exports.allTools = exports.initializeMcpTools = exports.McpManager = void 0;
+exports.formatDiagnostics = exports.getDiagnosticsForFile = exports.lspTool = exports.createWorkflowTool = exports.createSkillTool = exports.skillLoadTool = exports.TaskStatusSchema = exports.TaskSchema = exports.taskUpdateTool = exports.taskListTool = exports.taskCreateTool = exports.questionTool = exports.todoReadTool = exports.todoWriteTool = exports.webSearchTool = exports.webFetchTool = exports.searchReplaceTool = exports.editFileTool = exports.editBlockTool = exports.applyPatchTool = exports.gitPushTool = exports.gitCommitTool = exports.gitAddTool = exports.gitInitTool = exports.gitBranchTool = exports.gitLogTool = exports.gitDiffTool = exports.gitStatusTool = exports.runShellCommandTool = exports.findFolderTool = exports.globFilesTool = exports.searchFilesTool = exports.MediaBlockSchema = exports.listDirectoryTool = exports.writeFileTool = exports.readFileTool = exports.ToolExecutor = exports.ToolRegistry = exports.buildTool = exports.TOOL_DEFAULTS = exports.IGNORED_DIRS = exports.MAX_SHELL_TIMEOUT = exports.DEFAULT_SHELL_TIMEOUT = exports.MAX_OUTPUT_SIZE = exports.MAX_FILE_SIZE = exports.GitCommitSchema = exports.GitFileStatusSchema = exports.SearchMatchSchema = exports.FileEntrySchema = exports.PathSchema = void 0;
+exports.SecretDetector = exports.EnvironmentFilter = exports.PTYExecutor = exports.Sandbox = exports.createBuiltinPolicy = exports.getBuiltinPolicyNames = exports.networkPolicy = exports.destructiveCommandsPolicy = exports.maxToolCallsPolicy = exports.costBudgetPolicy = exports.trustedProjectPolicy = exports.workspaceWritePolicy = exports.readOnlyPolicy = exports.askOnOsTools = exports.createPolicyStackFromConfig = exports.PolicyStack = exports.PathRestrictionEngine = exports.CommandPolicy = exports.fullAccessProfile = exports.editFilesProfile = exports.readOnlyProfile = exports.PermissionEngine = exports.allTools = exports.initializeMcpTools = exports.McpManager = exports.McpClient = void 0;
 exports.loadAllTools = loadAllTools;
 // Schema and types
 var tool_schema_js_1 = require("./tool-schema.js");
@@ -37,6 +37,8 @@ Object.defineProperty(exports, "MediaBlockSchema", { enumerable: true, get: func
 var search_js_1 = require("./tools/search.js");
 Object.defineProperty(exports, "searchFilesTool", { enumerable: true, get: function () { return search_js_1.searchFilesTool; } });
 Object.defineProperty(exports, "globFilesTool", { enumerable: true, get: function () { return search_js_1.globFilesTool; } });
+var find_folder_js_1 = require("./tools/find-folder.js");
+Object.defineProperty(exports, "findFolderTool", { enumerable: true, get: function () { return find_folder_js_1.findFolderTool; } });
 // Shell tools
 var shell_js_1 = require("./tools/shell.js");
 Object.defineProperty(exports, "runShellCommandTool", { enumerable: true, get: function () { return shell_js_1.runShellCommandTool; } });
@@ -93,6 +95,7 @@ Object.defineProperty(exports, "initializeMcpTools", { enumerable: true, get: fu
 // All tools array for bulk registration
 const filesystem_js_2 = require("./tools/filesystem.js");
 const search_js_2 = require("./tools/search.js");
+const find_folder_js_2 = require("./tools/find-folder.js");
 const shell_js_2 = require("./tools/shell.js");
 const git_js_2 = require("./tools/git.js");
 const edit_js_2 = require("./tools/edit.js");
@@ -107,6 +110,7 @@ exports.allTools = [
     filesystem_js_2.listDirectoryTool,
     search_js_2.searchFilesTool,
     search_js_2.globFilesTool,
+    find_folder_js_2.findFolderTool,
     shell_js_2.runShellCommandTool,
     git_js_2.gitStatusTool,
     git_js_2.gitDiffTool,

@@ -26,6 +26,13 @@ export declare const COMPACT_CORE_IDENTITY = "[!] CHIMERA CORE PACT [!]\n\nYou a
  */
 export declare const SMALL_MODEL_GUIDANCE = "SMALL MODEL MODE:\n- Take ONE best action now; don't list options and wait.\n- If the schema needs JSON, emit ONLY valid JSON. No prose, no fences.\n- Skip pleasantries. Get to the point in 1-2 sentences.\n- If unsure, pick the cheapest verifiable next step; say \"UNCERTAIN\" only if truly unknown.";
 /**
+ * Natural-language → tool mapping. The model must infer the right tool from
+ * the user's plain words (we do NOT want users spelling out tool names). On
+ * cheap models this is the difference between "it found my folder" and
+ * "it ran cd and failed again". Injected into both prompt tiers.
+ */
+export declare const TOOL_USE_GUIDANCE = "Translate the user's plain words into the right tool \u2014 act, don't narrate:\n- \"find / locate a folder or directory called X\" or \"where is the X folder?\" \u2192 find_folder({ name: \"X\" })\n- \"go into / cd to / switch to the X folder\" \u2192 find_folder first, then run_shell_command({ cwd: <path>, command: \"...\" })\n- \"search the code / find usages of X / grep for text\" \u2192 search_files({ pattern: \"X\" })\n- \"list files matching *.ts / show files named X\" \u2192 glob_files({ pattern: \"*.ts\" })\n- \"read / open a file\" \u2192 read_file\n- \"run / execute a command [in folder X]\" \u2192 run_shell_command({ command: \"...\", cwd: \"<X>\" })\nRULE: cd does NOT persist between tool calls. Never call cd alone. To work in a folder, pass cwd: \"<absolute path>\" to run_shell_command. Use find_folder to discover that path first if unsure.";
+/**
  * Compact role prompt for the cheap tier. Returns writer/reviewer essentials
  * without decorative headers and with the proactive-vs-ask tension resolved.
  * For other roles it defers to the full AGENT_PROMPTS[role].system so the
