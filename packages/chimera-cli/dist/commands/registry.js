@@ -94,6 +94,9 @@ async function runSlashCommand(cmd, args, ctx) {
             }
             return handleGoal(ctx, goal);
         }
+        case 'schedule': {
+            return handleSchedule(ctx, args);
+        }
         case 'theme':
             return handleTheme(args);
         case 'output-style':
@@ -242,6 +245,67 @@ async function handleGoal(ctx, goal) {
         ctx.setLoopState({ ...state, status: 'failed' });
         console.log(`  ✗ Goal not achieved: ${result.error}`);
     }
+    return 'continue';
+}
+/**
+ * /schedule add <cron> <task>   — create a recurring loop schedule
+ * /schedule list                — show all schedules
+ * /schedule remove <id>         — delete a schedule
+ * /schedule on|off <id>         — enable/disable a schedule
+ */
+async function handleSchedule(ctx, args) {
+    const scheduler = ctx.getScheduler();
+    if (!scheduler) {
+        console.log('  Scheduler not available in this context.');
+        return 'continue';
+    }
+    const sub = args[0]?.toLowerCase();
+    if (!sub || sub === 'list') {
+        const list = scheduler.listSchedules();
+        if (list.length === 0) {
+            console.log('  No schedules. Add one: /schedule add "0 9 * * *" <task>');
+        }
+        else {
+            for (const s of list) {
+                console.log(`  ${s.enabled ? '✓' : '✗'} ${s.id}  ${s.cron}  ${s.enabled ? '' : '(disabled) '}${s.task ?? ''}`);
+            }
+        }
+        return 'continue';
+    }
+    if (sub === 'add') {
+        // /schedule add "<cron>" <task...>  — cron is the first token.
+        const rest = args.slice(1);
+        if (rest.length < 2) {
+            console.log('  Usage: /schedule add "<cron>" <task>');
+            console.log('  Example: /schedule add "0 9 * * *" run the morning build');
+            return 'continue';
+        }
+        const cron = rest[0];
+        const task = rest.slice(1).join(' ');
+        const entry = scheduler.addSchedule({ workflow: task.slice(0, 40), name: task.slice(0, 40), cron, task, enabled: true });
+        console.log(`  ✓ Scheduled ${entry.id}: "${cron}" → ${task}`);
+        return 'continue';
+    }
+    if (sub === 'remove' || sub === 'rm') {
+        const id = args[1];
+        if (!id) {
+            console.log('  Usage: /schedule remove <id>');
+            return 'continue';
+        }
+        console.log(scheduler.removeSchedule(id) ? '  ✓ Removed.' : '  ✗ No such schedule.');
+        return 'continue';
+    }
+    if (sub === 'on' || sub === 'off') {
+        const id = args[1];
+        if (!id) {
+            console.log(`  Usage: /schedule ${sub} <id>`);
+            return 'continue';
+        }
+        const ok = sub === 'on' ? scheduler.enableSchedule(id) : scheduler.disableSchedule(id);
+        console.log(ok ? `  ✓ ${sub === 'on' ? 'Enabled' : 'Disabled'}.` : '  ✗ No such schedule.');
+        return 'continue';
+    }
+    console.log('  Usage: /schedule [list|add|remove|on|off] ...');
     return 'continue';
 }
 function handleCost(ctx) {

@@ -15,6 +15,7 @@ export { workflowLoaderSchema } from './loader.js';
 
 // Runner — pure interpreter; no LLM/IO of its own, all side effects via handlers.
 export { runWorkflow } from './runner.js';
+export { SchedulerManager, parseCron, matchesCron } from './scheduler.js';
 export type { WorkflowHandlers, RunWorkflowOptions } from './runner.js';
 
 // Loop helpers — exported for direct use by command handlers.

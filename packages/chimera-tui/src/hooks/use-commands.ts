@@ -14,14 +14,14 @@ export interface UseCommandsOptions {
 }
 
 export interface UseCommandsResult {
-  execute: (input: string) => CommandResult;
+  execute: (input: string) => Promise<CommandResult>;
   autocomplete: (partial: string) => string[];
 }
 
 export function useCommands(options: UseCommandsOptions): UseCommandsResult {
   const historyRef = useRef<string[]>([]);
 
-  const execute = useCallback((input: string): CommandResult => {
+  const execute = useCallback(async (input: string): Promise<CommandResult> => {
     const ctx: CommandContext = {
       getMode: () => options.mode,
       setMode: (m) => options.onModeChange(m),
@@ -32,7 +32,7 @@ export function useCommands(options: UseCommandsOptions): UseCommandsResult {
       sessionId: options.sessionId,
     };
 
-    const result = runCommand(input, ctx);
+    const result = await runCommand(input, ctx);
     historyRef.current.push(input);
     return result;
   }, [options]);

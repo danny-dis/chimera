@@ -1371,6 +1371,22 @@ class CliRouter {
         const history = [];
         const conversationHistory = [];
         let loopState = null;
+        // Scheduler: 60s cron timer that fires loop workflows. Provider factory
+        // is injected so schedules actually run; null factory → no-op triggers.
+        // ponytail: single in-process timer, fine for one REPL; per-workspace
+        // instances if multiple REPLs ever share a root.
+        const scheduler = new core_1.SchedulerManager(null, new core_1.EventStream(), process.cwd(), async () => {
+            const mapped = await this.getRoleMappedProviders();
+            if (mapped.fallback.length === 0)
+                return null;
+            return {
+                providers: {
+                    writer: adaptProvider(mapped.writer ?? mapped.fallback[0]),
+                    reviewer: adaptProvider(mapped.reviewer ?? mapped.writer ?? mapped.fallback[0]),
+                },
+            };
+        });
+        scheduler.start();
         // One skill model per session — fed by signals as they occur.
         const skillModel = new learning_2.UserSkillModel();
         // Capabilities the user has touched this session (drives the value nudge).
@@ -1396,6 +1412,7 @@ class CliRouter {
             setCurrentOrchestrator: () => { },
             getLoopState: () => loopState,
             setLoopState: (s) => { loopState = s; },
+            getScheduler: () => scheduler,
             memory: this.memory,
             adaptProvider,
             getProviders: () => this.getProviders(),

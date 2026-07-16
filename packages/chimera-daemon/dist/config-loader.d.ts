@@ -120,6 +120,7 @@ declare const ChimeraConfigSchema: z.ZodObject<{
             rate_limit_rpm?: number | undefined;
         } | undefined;
     }>, "many">;
+    backend: z.ZodOptional<z.ZodEnum<["direct", "dmrx"]>>;
     defaults: z.ZodOptional<z.ZodObject<{
         fallback_chain: z.ZodOptional<z.ZodArray<z.ZodString, "many">>;
         auto_failover: z.ZodOptional<z.ZodBoolean>;
@@ -149,6 +150,7 @@ declare const ChimeraConfigSchema: z.ZodObject<{
             rate_limit_rpm?: number | undefined;
         } | undefined;
     }[];
+    backend?: "direct" | "dmrx" | undefined;
     defaults?: {
         fallback_chain?: string[] | undefined;
         auto_failover?: boolean | undefined;
@@ -172,6 +174,7 @@ declare const ChimeraConfigSchema: z.ZodObject<{
             rate_limit_rpm?: number | undefined;
         } | undefined;
     }[];
+    backend?: "direct" | "dmrx" | undefined;
     defaults?: {
         fallback_chain?: string[] | undefined;
         auto_failover?: boolean | undefined;
@@ -200,7 +203,7 @@ export declare function resolveProviders(config: ChimeraConfig): ResolvedProvide
 /**
  * Get providers grouped by role.
  */
-export declare function getProvidersByRole(config: ChimeraConfig): {
+export declare function getProvidersByRole(config: ChimeraConfig, mode?: string): {
     writer?: ResolvedProvider;
     reviewer?: ResolvedProvider;
     challenger?: ResolvedProvider;

@@ -108,10 +108,11 @@ export interface LoopPauseContext {
  */
 export interface ScheduleEntry {
     id: string;
-    workflow: string;
+    workflow?: string;
+    name?: string;
     task?: string;
     cron: string;
-    inputs: Record<string, unknown>;
+    inputs?: Record<string, unknown>;
     enabled: boolean;
     createdAt: number | string;
     lastRunAt?: number;

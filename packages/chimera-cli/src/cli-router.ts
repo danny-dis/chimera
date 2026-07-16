@@ -1,7 +1,7 @@
 import { Command } from 'commander';
 import * as readline from 'readline';
 import { resolve } from 'path';
-import { SessionOrchestrator, EventStream, LongTermMemory, MemoryPersistence, CoordinatorEngine, runWorkflow } from '@chimera/core';
+import { SessionOrchestrator, EventStream, LongTermMemory, MemoryPersistence, CoordinatorEngine, runWorkflow, SchedulerManager } from '@chimera/core';
 import type { LLMProvider, OrchestratorResult, ToolExecutorInterface, ToolRegistryInterface, WorkflowDefinition } from '@chimera/core';
 import type { Mode, DeliberationMode } from '@chimera/core';
 import { ProviderFactory, RateLimitError, ProviderUnavailableError, ProviderError, ModelRegistry, BudgetEnforcer, RateLimiter, ProviderCostTracker } from '@chimera/providers';
@@ -1485,6 +1485,27 @@ export class CliRouter {
     const conversationHistory: Array<{ role: string; content: string }> = [];
     let loopState: { kind: 'loop' | 'goal'; task: string; maxIterations: number; currentIteration: number; status: 'running' | 'completed' | 'failed'; startedAt: number } | null = null;
 
+    // Scheduler: 60s cron timer that fires loop workflows. Provider factory
+    // is injected so schedules actually run; null factory → no-op triggers.
+    // ponytail: single in-process timer, fine for one REPL; per-workspace
+    // instances if multiple REPLs ever share a root.
+    const scheduler = new SchedulerManager(
+      null,
+      new EventStream(),
+      process.cwd(),
+      async () => {
+        const mapped = await this.getRoleMappedProviders();
+        if (mapped.fallback.length === 0) return null;
+        return {
+          providers: {
+            writer: adaptProvider(mapped.writer ?? mapped.fallback[0]),
+            reviewer: adaptProvider(mapped.reviewer ?? mapped.writer ?? mapped.fallback[0]),
+          },
+        };
+      },
+    );
+    scheduler.start();
+
     // One skill model per session — fed by signals as they occur.
     const skillModel = new UserSkillModel();
     // Capabilities the user has touched this session (drives the value nudge).
@@ -1512,6 +1533,7 @@ export class CliRouter {
       setCurrentOrchestrator: () => {},
       getLoopState: () => loopState,
       setLoopState: (s) => { loopState = s; },
+      getScheduler: () => scheduler,
       memory: this.memory,
       adaptProvider,
       getProviders: () => this.getProviders(),

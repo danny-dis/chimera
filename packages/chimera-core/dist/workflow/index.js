@@ -1,7 +1,7 @@
 "use strict";
 // @chimera/core/workflow — declarative workflow types, registry, and YAML/JSON loader
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.defaultWorkflowFor = exports.registerBuiltInWorkflows = exports.DEFAULT_WORKFLOW_FOR_MODE = exports.BUILT_IN_WORKFLOWS = exports.WorkflowDispatcher = exports.detectCompletionSignal = exports.runLoopStep = exports.runWorkflow = exports.workflowLoaderSchema = exports.WorkflowAutoLoader = exports.WorkflowLoader = exports.WorkflowRegistry = void 0;
+exports.defaultWorkflowFor = exports.registerBuiltInWorkflows = exports.DEFAULT_WORKFLOW_FOR_MODE = exports.BUILT_IN_WORKFLOWS = exports.WorkflowDispatcher = exports.detectCompletionSignal = exports.runLoopStep = exports.matchesCron = exports.parseCron = exports.SchedulerManager = exports.runWorkflow = exports.workflowLoaderSchema = exports.WorkflowAutoLoader = exports.WorkflowLoader = exports.WorkflowRegistry = void 0;
 var registry_js_1 = require("./registry.js");
 Object.defineProperty(exports, "WorkflowRegistry", { enumerable: true, get: function () { return registry_js_1.WorkflowRegistry; } });
 var loader_js_1 = require("./loader.js");
@@ -12,6 +12,10 @@ Object.defineProperty(exports, "workflowLoaderSchema", { enumerable: true, get: 
 // Runner — pure interpreter; no LLM/IO of its own, all side effects via handlers.
 var runner_js_1 = require("./runner.js");
 Object.defineProperty(exports, "runWorkflow", { enumerable: true, get: function () { return runner_js_1.runWorkflow; } });
+var scheduler_js_1 = require("./scheduler.js");
+Object.defineProperty(exports, "SchedulerManager", { enumerable: true, get: function () { return scheduler_js_1.SchedulerManager; } });
+Object.defineProperty(exports, "parseCron", { enumerable: true, get: function () { return scheduler_js_1.parseCron; } });
+Object.defineProperty(exports, "matchesCron", { enumerable: true, get: function () { return scheduler_js_1.matchesCron; } });
 // Loop helpers — exported for direct use by command handlers.
 var runner_js_2 = require("./runner.js");
 Object.defineProperty(exports, "runLoopStep", { enumerable: true, get: function () { return runner_js_2.runLoopStep; } });

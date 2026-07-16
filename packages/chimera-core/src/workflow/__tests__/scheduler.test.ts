@@ -202,4 +202,33 @@ describe('SchedulerManager', () => {
     expect(list).toHaveLength(1);
     expect(list[0].name).toBe('persisted');
   });
+
+  it('triggers a workflow via injected provider factory', async () => {
+    const mgr = new SchedulerManager(
+      null,
+      undefined,
+      tempDir,
+      async () => ({
+        providers: {
+          writer: { complete: async () => ({ content: 'done', usage: { inputTokens: 0, outputTokens: 0 } }) } as any,
+          reviewer: { complete: async () => ({ content: 'ok', usage: { inputTokens: 0, outputTokens: 0 } }) } as any,
+        },
+      }),
+    );
+    const entry = mgr.addSchedule({ workflow: 'w', cron: '* * * * *', task: 'fire me', enabled: true });
+    await mgr.evaluate(new Date(2026, 5, 24, 14, 0, 0));
+    // trigger() ran end-to-end → lastRunAt stamped, proving the factory fired.
+    expect(mgr.getSchedule(entry.id)?.lastRunAt).toBeTypeOf('number');
+  });
+
+  it('delegates to onTrigger when set (daemon path)', async () => {
+    let captured: any = null;
+    const mgr = new SchedulerManager(null, undefined, tempDir);
+    mgr.onTrigger = (entry, workflow) => { captured = { entry, workflow }; };
+    mgr.addSchedule({ workflow: 'w', cron: '* * * * *', task: 'headless', enabled: true });
+    await mgr.evaluate(new Date(2026, 5, 24, 14, 0, 0));
+    expect(captured).not.toBeNull();
+    expect(captured.entry.task).toBe('headless');
+    expect(captured.workflow.steps[0].kind).toBe('loop');
+  });
 });

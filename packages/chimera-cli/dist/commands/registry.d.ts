@@ -1,6 +1,8 @@
 import type { LLMProvider, LongTermMemory, Mode, OrchestratorResult, SessionOrchestrator } from '@chimera/core';
+import { SchedulerManager } from '@chimera/core';
 import type { ModelProvider } from '@chimera/providers';
 import type { CheckpointStore } from '@chimera/session';
+import type { UserSkillModel } from '@chimera/learning';
 /**
  * Lightweight handle to the live REPL state. The router constructs one of
  * these per session and hands it to `printHelp` / `runSlashCommand`. We
@@ -23,6 +25,8 @@ export interface ReplContext {
     sessionId: string;
     /** Full history of user inputs in this session. */
     history: string[];
+    /** Behavior-derived skill model; drives explanation depth across the REPL. */
+    skillModel?: UserSkillModel;
     /** Result from the most recent task; used by /cost and /status. */
     latestReplResult: OrchestratorResult | null;
     setLatestReplResult(r: OrchestratorResult | null): void;
@@ -32,6 +36,8 @@ export interface ReplContext {
     /** Current loop/goal state for /status display. */
     getLoopState(): LoopState | null;
     setLoopState(s: LoopState | null): void;
+    /** Scheduler for /schedule (add/list/remove). Null if not wired. */
+    getScheduler(): SchedulerManager | null;
     /** Long-term memory store used to seed context on each turn. */
     memory: LongTermMemory;
     /** Bridge from `ModelProvider` (chimera/providers) to `LLMProvider`. */

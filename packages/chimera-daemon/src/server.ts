@@ -3,7 +3,7 @@
 // ---------------------------------------------------------------------------
 
 import path from 'path';
-import { EventStream, SessionOrchestrator, type ChimeraEvent } from '@chimera/core';
+import { EventStream, SessionOrchestrator, SchedulerManager, type ChimeraEvent } from '@chimera/core';
 import { bootstrap, type WorkflowRegistry } from './bootstrap.js';
 import { writeMessage, success, error, ErrorCodes } from './json-rpc.js';
 import type {
@@ -32,9 +32,25 @@ export class ChimeraDaemon {
   private readonly startTime = Date.now();
   private eventStream: EventStream;
   private activeSubscriptions = new Map<string, () => void>();
+  private scheduler: SchedulerManager;
 
   constructor() {
     this.eventStream = new EventStream();
+    // Headless schedule management. onTrigger routes scheduled work through
+    // executeTask — the daemon's single execution path. (Note: executeTask
+    // currently uses a stub writer until real provider bridging lands, so
+    // scheduled runs mirror that limitation rather than faking agents.)
+    this.scheduler = new SchedulerManager(null, this.eventStream, process.cwd());
+    this.scheduler.onTrigger = (entry, _workflow) => {
+      void this.executeTask({
+        task: (entry.task as string) ?? '',
+        mode: 'code',
+        workspaceRoot: process.cwd(),
+      }).catch((err) => {
+        this.eventStream.append({ type: 'workflow_dispatch_failed' as any, error: String(err) } as any);
+      });
+    };
+    this.scheduler.start();
   }
 
   getEventStream(): EventStream {
@@ -86,6 +102,26 @@ export class ChimeraDaemon {
 
         case 'stream_events':
           return this.streamEvents(id as string | number);
+
+        // ── Scheduling ───────────────────────────────────────────────
+        case 'schedule_list':
+          return writeMessage(success(id, this.scheduler.listSchedules()));
+
+        case 'schedule_add':
+          return writeMessage(
+            success(id, this.scheduler.addSchedule(params as unknown as Parameters<SchedulerManager['addSchedule']>[0])),
+          );
+
+        case 'schedule_remove':
+          return writeMessage(
+            success(id, this.scheduler.removeSchedule((params as { id: string }).id)),
+          );
+
+        case 'schedule_toggle': {
+          const { id, enabled } = params as { id: string; enabled: boolean };
+          const ok = enabled ? this.scheduler.enableSchedule(id) : this.scheduler.disableSchedule(id);
+          return writeMessage(success(id, { ok }));
+        }
 
         default:
           return writeMessage(error(id, ErrorCodes.METHOD_NOT_FOUND, `Unknown method: ${method}`));

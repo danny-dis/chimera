@@ -6,6 +6,7 @@ export declare class ChimeraDaemon {
     private readonly startTime;
     private eventStream;
     private activeSubscriptions;
+    private scheduler;
     constructor();
     getEventStream(): EventStream;
     handleRequest(request: JsonRpcRequest): Promise<void>;

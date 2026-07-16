@@ -12,6 +12,7 @@ import type { EventStream } from '../event-stream.js';
 import type { ScheduleEntry } from './types.js';
 import type { WorkflowDispatcher } from './dispatcher.js';
 import type { WorkflowHandlers } from './runner.js';
+import { runWorkflow } from './runner.js';
 
 // ---------------------------------------------------------------------------
 // Cron parsing (minimal, zero-dependency)
@@ -108,14 +109,23 @@ export class SchedulerManager {
   private timer: ReturnType<typeof setInterval> | null = null;
   private readonly filePath: string;
   private lastEvalMinute = -1;
+  private readonly providerFactory?: () => Promise<WorkflowHandlers | null>;
+  /**
+   * Optional override. If set, the manager calls it INSTEAD of running the
+   * workflow inline — lets a host (daemon) route scheduled work through its
+   * own execution path. Receives the built loop workflow + schedule entry.
+   */
+  onTrigger?: (entry: ScheduleEntry, workflow: unknown) => Promise<void> | void;
 
   constructor(
     private readonly dispatcher: WorkflowDispatcher | null,
     private readonly eventStream?: EventStream,
     workspaceRoot?: string,
+    providerFactory?: () => Promise<WorkflowHandlers | null>,
   ) {
     const root = workspaceRoot ?? process.cwd();
     this.filePath = join(root, '.chimera', 'schedules.json');
+    this.providerFactory = providerFactory;
     this.load();
   }
 
@@ -228,27 +238,35 @@ export class SchedulerManager {
       }],
     };
 
+    // No provider factory wired → the trigger is a no-op. The caller
+    // (CLI REPL / daemon) must inject one via the constructor, or set onTrigger.
+    if (!this.providerFactory && !this.onTrigger) return;
+
+    if (this.onTrigger) {
+      await this.onTrigger(entry, workflow);
+      return;
+    }
+
+    const handlers = await this.providerFactory!();
+    if (!handlers) return;
+
     // Use dispatcher if available, otherwise run directly
     if (this.dispatcher) {
-      const providers = await this.getDefaultProviders();
-      if (providers) {
-        this.dispatcher.dispatch(workflow as any, {
-          handlers: providers,
-          runId: `schedule-${entry.id}-${Date.now()}`,
-        });
-      }
+      this.dispatcher.dispatch(workflow as any, {
+        handlers,
+        runId: `schedule-${entry.id}-${Date.now()}`,
+      });
+    } else {
+      // ponytail: no dispatcher → run inline (caller owns concurrency limits)
+      runWorkflow(workflow as any, { handlers }).catch((err) => {
+        this.eventStream?.append({ type: 'workflow_dispatch_failed' as any, error: String(err) } as any);
+      });
     }
 
     // Update last run info
     this.updateSchedule(entry.id, {
       lastRunAt: Date.now(),
     });
-  }
-
-  private async getDefaultProviders(): Promise<WorkflowHandlers | null> {
-    // Return null if no providers configured — the trigger will be a no-op
-    // The actual provider setup should come from the caller (CLI/daemon)
-    return null;
   }
 
   // ── Persistence ────────────────────────────────────────────────────

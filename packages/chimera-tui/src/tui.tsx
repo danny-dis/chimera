@@ -97,9 +97,9 @@ export const TUI: React.FC<TUIProps> = ({
     skillModel,
   }), [mode, preset, costData, commandHistory, sessionId, onModeChange, onPresetChange, skillModel]);
 
-  const handleSlashCommand = useCallback((text: string) => {
+  const handleSlashCommand = useCallback(async (text: string) => {
     const ctx = buildCommandContext();
-    const result = runCommand(text, ctx);
+    const result = await runCommand(text, ctx);
 
     if (result.clearMessages) {
       setMessages([]);

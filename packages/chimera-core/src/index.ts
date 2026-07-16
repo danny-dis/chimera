@@ -76,8 +76,9 @@ export { checkUserInput, checkToolOutput, sanitizeForPrompt, AuditLog, SecretDet
 export type { InjectionCheck, InjectionFlag, AuditEntry, AuditQuery, SecretMatch } from './security/index.js';
 
 // Workflow
-export { WorkflowRegistry, WorkflowAutoLoader, WorkflowLoader, WorkflowDispatcher, runWorkflow, registerBuiltInWorkflows, defaultWorkflowFor, runLoopStep, detectCompletionSignal } from './workflow/index.js';
+export { WorkflowRegistry, WorkflowAutoLoader, WorkflowLoader, WorkflowDispatcher, runWorkflow, registerBuiltInWorkflows, defaultWorkflowFor, runLoopStep, detectCompletionSignal, SchedulerManager, parseCron, matchesCron } from './workflow/index.js';
 export type { WorkflowDefinition, WorkflowStep, WorkflowContext, WorkflowRunResult, WorkflowRunStatus, WorkflowStepKind } from './workflow/types.js';
+export type { WorkflowHandlers } from './workflow/index.js';
 export type { DispatchOptions, DispatchResult, WorkflowDispatcherOptions } from './workflow/dispatcher.js';
 
 // Skills

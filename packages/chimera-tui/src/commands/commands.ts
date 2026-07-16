@@ -79,6 +79,13 @@ export interface CommandContext {
   readConfig?: () => Promise<Record<string, unknown> | null>;
   /** Optional per-session skill model for tiered (adaptive) help copy. */
   skillModel?: SkillModelView;
+  /**
+   * Runs a task through the agent engine (loop/goal). Populated by a host
+   * that can actually execute agents (CLI REPL, daemon). Absent in the bare
+   * TUI, where these commands degrade to an honest "use the CLI" message
+   * instead of faking a run.
+   */
+  runTask?: (task: string, opts: { kind: 'loop' | 'goal'; maxIterations?: number }) => Promise<{ status: string; output: string; cost: number }>;
 }
 
 // ── Help text ────────────────────────────────────────────────────────────
@@ -189,10 +196,10 @@ export function getHelpText(model?: SkillModelView): string[] {
 
 // ── Dispatch ─────────────────────────────────────────────────────────────
 
-export function runCommand(
+export async function runCommand(
   input: string,
   ctx: CommandContext,
-): CommandResult {
+): Promise<CommandResult> {
   const trimmed = input.trim();
   if (!trimmed.startsWith('/')) {
     return { output: [] };
@@ -374,7 +381,15 @@ export function runCommand(
       if (isNaN(turns) || turns < 1 || !task) {
         return { output: ['Usage: /loop <turns> <task>', 'Example: /loop 5 refactor this module'] };
       }
-      return { output: [`Loop: running "${task}" ${turns} time(s)...`], viewHint: null };
+      if (!ctx.runTask) {
+        return { output: [
+          'Loop runs in the CLI, not the TUI.',
+          'Run it there: chimera then /loop ' + turns + ' ' + task,
+          'Or schedule it headlessly: /schedule add "*/' + turns + ' * * * *" ' + task,
+        ] };
+      }
+      const res = await ctx.runTask(task, { kind: 'loop', maxIterations: turns });
+      return { output: [`Loop (${turns}x): ${res.status}`, res.output] };
     }
 
     case 'goal': {
@@ -382,7 +397,14 @@ export function runCommand(
       if (!goal) {
         return { output: ['Usage: /goal <description>', 'Example: /goal all tests pass'] };
       }
-      return { output: [`Goal: "${goal}" — running until achieved...`], viewHint: null };
+      if (!ctx.runTask) {
+        return { output: [
+          'Goal runs in the CLI, not the TUI.',
+          'Run it there: chimera then /goal ' + goal,
+        ] };
+      }
+      const res = await ctx.runTask(goal, { kind: 'goal' });
+      return { output: [`Goal: ${res.status}`, res.output] };
     }
 
     case 'rewind': {

@@ -1,6 +1,7 @@
 import type { EventStream } from '../event-stream.js';
 import type { ScheduleEntry } from './types.js';
 import type { WorkflowDispatcher } from './dispatcher.js';
+import type { WorkflowHandlers } from './runner.js';
 interface CronField {
     type: 'any' | 'values';
     values: number[];
@@ -21,7 +22,14 @@ export declare class SchedulerManager {
     private timer;
     private readonly filePath;
     private lastEvalMinute;
-    constructor(dispatcher: WorkflowDispatcher | null, eventStream?: EventStream, workspaceRoot?: string);
+    private readonly providerFactory?;
+    /**
+     * Optional override. If set, the manager calls it INSTEAD of running the
+     * workflow inline — lets a host (daemon) route scheduled work through its
+     * own execution path. Receives the built loop workflow + schedule entry.
+     */
+    onTrigger?: (entry: ScheduleEntry, workflow: unknown) => Promise<void> | void;
+    constructor(dispatcher: WorkflowDispatcher | null, eventStream?: EventStream, workspaceRoot?: string, providerFactory?: () => Promise<WorkflowHandlers | null>);
     /** Start the evaluation timer (checks every 60 seconds). */
     start(): void;
     /** Stop the evaluation timer. */
@@ -36,7 +44,6 @@ export declare class SchedulerManager {
     enableSchedule(id: string): boolean;
     disableSchedule(id: string): boolean;
     private trigger;
-    private getDefaultProviders;
     private load;
     private persist;
 }

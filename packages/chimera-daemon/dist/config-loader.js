@@ -75,6 +75,10 @@ const ProviderEntrySchema = zod_1.z.object({
 });
 const ChimeraConfigSchema = zod_1.z.object({
     providers: zod_1.z.array(ProviderEntrySchema).min(1),
+    // `dmrx` rewrites every role's model to the DMR-X optimized meta-model
+    // (auto-coding / auto-smart / auto-fast / auto-agentic). Provider entries
+    // must already point at the DMR-X gateway. `direct` (or unset) = normal.
+    backend: zod_1.z.enum(['direct', 'dmrx']).optional(),
     defaults: zod_1.z
         .object({
         fallback_chain: zod_1.z.array(zod_1.z.string()).optional(),
@@ -153,8 +157,16 @@ function resolveProviders(config) {
 /**
  * Get providers grouped by role.
  */
-function getProvidersByRole(config) {
-    const resolved = resolveProviders(config);
+function getProvidersByRole(config, mode) {
+    const routed = (0, providers_1.applyDmrxRouting)(config, config.backend, mode).providers;
+    const resolved = routed.map((p) => ({
+        name: p.name,
+        provider: p.provider,
+        model: p.model,
+        apiKey: resolveEnvRef(p.api_key),
+        baseUrl: p.base_url,
+        role: p.role,
+    }));
     const byRole = {};
     for (const p of resolved) {
         if (p.role === 'writer')

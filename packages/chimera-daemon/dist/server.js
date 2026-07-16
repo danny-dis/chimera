@@ -51,8 +51,24 @@ class ChimeraDaemon {
     startTime = Date.now();
     eventStream;
     activeSubscriptions = new Map();
+    scheduler;
     constructor() {
         this.eventStream = new core_1.EventStream();
+        // Headless schedule management. onTrigger routes scheduled work through
+        // executeTask — the daemon's single execution path. (Note: executeTask
+        // currently uses a stub writer until real provider bridging lands, so
+        // scheduled runs mirror that limitation rather than faking agents.)
+        this.scheduler = new core_1.SchedulerManager(null, this.eventStream, process.cwd());
+        this.scheduler.onTrigger = (entry, _workflow) => {
+            void this.executeTask({
+                task: entry.task ?? '',
+                mode: 'code',
+                workspaceRoot: process.cwd(),
+            }).catch((err) => {
+                this.eventStream.append({ type: 'workflow_dispatch_failed', error: String(err) });
+            });
+        };
+        this.scheduler.start();
     }
     getEventStream() {
         return this.eventStream;
@@ -79,6 +95,18 @@ class ChimeraDaemon {
                     return (0, json_rpc_js_1.writeMessage)((0, json_rpc_js_1.success)(id, this.checkHealth()));
                 case 'stream_events':
                     return this.streamEvents(id);
+                // ── Scheduling ───────────────────────────────────────────────
+                case 'schedule_list':
+                    return (0, json_rpc_js_1.writeMessage)((0, json_rpc_js_1.success)(id, this.scheduler.listSchedules()));
+                case 'schedule_add':
+                    return (0, json_rpc_js_1.writeMessage)((0, json_rpc_js_1.success)(id, this.scheduler.addSchedule(params)));
+                case 'schedule_remove':
+                    return (0, json_rpc_js_1.writeMessage)((0, json_rpc_js_1.success)(id, this.scheduler.removeSchedule(params.id)));
+                case 'schedule_toggle': {
+                    const { id, enabled } = params;
+                    const ok = enabled ? this.scheduler.enableSchedule(id) : this.scheduler.disableSchedule(id);
+                    return (0, json_rpc_js_1.writeMessage)((0, json_rpc_js_1.success)(id, { ok }));
+                }
                 default:
                     return (0, json_rpc_js_1.writeMessage)((0, json_rpc_js_1.error)(id, json_rpc_js_1.ErrorCodes.METHOD_NOT_FOUND, `Unknown method: ${method}`));
             }
@@ -131,7 +159,7 @@ class ChimeraDaemon {
             // Get final state
             const state = orchestrator.getState();
             const costTracker = orchestrator.getCostTracker();
-            const byRole = configLoader.getProvidersByRole(cfg);
+            const byRole = configLoader.getProvidersByRole(cfg, mode);
             const resolvedProviders = configLoader.resolveProviders(cfg);
             const totalCost = resolvedProviders.reduce((acc, p) => acc + costTracker.getSpend(p.name), 0);
             return {

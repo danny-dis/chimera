@@ -61,7 +61,12 @@ function printReport(report, applied) {
     console.log(`  Completed at: ${report.completedAt}`);
     console.log('');
     if (totalCreated === 0 && totalUpdated === 0) {
-        console.log('  No new artifacts to synthesize. Need more session data.\n');
+        const noArtifacts = {
+            beginner: '  Nothing new to learn from yet — Chimera synthesizes skills after it has seen at least\n  2 sessions of your work. Run a couple of tasks first, then try `chimera learn` again.\n',
+            intermediate: '  No new artifacts to synthesize. Need more session data.\n',
+            advanced: '  No new artifacts (minSessionsThreshold=2 not met). Run more sessions or widen --session scope.\n',
+        };
+        console.log((0, learning_1.tierMessage)(noArtifacts, (0, learning_1.skillTierFromCli)()));
         return;
     }
     if (totalCreated > 0) {
