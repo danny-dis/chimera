@@ -24,7 +24,7 @@
     "chimera": "./dist/index.js"
   },
   "scripts": {
-    "build": "tsc",
+    "build": "tsc && node -e \"require('fs').cpSync('src/commands/projects-ui.html','dist/commands/projects-ui.html',{force:true})\"",
     "dev": "tsc --watch",
     "test": "vitest",
     "lint": "eslint src/",

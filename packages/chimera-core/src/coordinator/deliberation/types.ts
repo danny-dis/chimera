@@ -205,4 +205,6 @@ export interface DeliberationEngineDeps {
   workspaceRoot?: string;
   toolExecutor?: import('../../session-orchestrator.js').ToolExecutorInterface;
   toolRegistry?: import('../../session-orchestrator.js').ToolRegistryInterface;
+  /** Resolved output style, injected by the caller (which owns `learning`). */
+  style?: import('../../output-styles/index.js').OutputStyle;
 }

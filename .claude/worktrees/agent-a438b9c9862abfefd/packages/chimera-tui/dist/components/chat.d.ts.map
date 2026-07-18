@@ -1,1 +1,0 @@
-{"version":3,"file":"chat.d.ts","sourceRoot":"","sources":["../../src/components/chat.tsx"],"names":[],"mappings":"AAAA,OAAO,KAA4B,MAAM,OAAO,CAAC;AAEjD,OAAO,KAAK,EAAE,OAAO,EAAqB,MAAM,aAAa,CAAC;AAE9D,UAAU,SAAS;IACjB,QAAQ,EAAE,OAAO,EAAE,CAAC;IACpB,SAAS,CAAC,EAAE,MAAM,CAAC;CACpB;AAqDD,eAAO,MAAM,IAAI,EAAE,KAAK,CAAC,EAAE,CAAC,SAAS,CAsBpC,CAAC"}

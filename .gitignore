@@ -6,3 +6,7 @@ node_modules/
 .DS_Store
 chimera/
 .mimocode/
+dist/
+.chimera/
+.chimera-worktrees/
+.claude/worktrees/

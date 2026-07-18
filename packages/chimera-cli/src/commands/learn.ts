@@ -26,9 +26,19 @@ export function registerLearnCommand(parent: Command): Command {
     .option('--session <id>', 'Learn from a specific session ID')
     .option('--inventory', 'Show all synthesized artifacts')
     .option('--sessions-dir <path>', 'Path to sessions directory')
+    .option('--reset-style', 'Delete the self-built output style (it regenerates next run)', false)
     .action(async (opts) => {
       const root = workspaceRoot();
       const sessionsDir = opts.sessionsDir ?? resolve(root, '.chimera', 'sessions');
+
+      if (opts.resetStyle) {
+        const { resetAutoStyle } = await import('@chimera/learning');
+        const removed = await resetAutoStyle(root);
+        console.log(removed
+          ? '\n  Removed self-built output style (.chimera/output-styles/auto.chimera-style.md).\n  A fresh one synthesizes from your usage on the next task.\n'
+          : '\n  No self-built output style found — nothing to remove.\n');
+        return;
+      }
 
       const engine = new LearningEngine({
         sessionDir: sessionsDir,

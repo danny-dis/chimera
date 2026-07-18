@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Project Tracker</title>
+<style>
+:root{--bg:#0f1115;--card:#181b22;--line:#262b35;--fg:#e6e9ef;--mut:#8b93a3;--acc:#5b8cff}
+*{box-sizing:border-box}body{margin:0;font:14px/1.5 system-ui,Segoe UI,Roboto,sans-serif;background:var(--bg);color:var(--fg)}
+.wrap{max-width:760px;margin:0 auto;padding:24px 16px 64px}
+h1{font-size:20px;margin:0 0 4px}.sub{color:var(--mut);margin:0 0 20px}
+.counts{display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap}
+.pill{background:var(--card);border:1px solid var(--line);border-radius:999px;padding:4px 12px;color:var(--mut)}
+.pill b{color:var(--fg)}
+form{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px;display:grid;gap:10px;grid-template-columns:1fr 1fr;margin-bottom:18px}
+form .full{grid-column:1/-1}
+input,select,textarea,button{font:inherit;color:var(--fg);background:#10131a;border:1px solid var(--line);border-radius:8px;padding:8px 10px}
+textarea{resize:vertical;min-height:48px}
+button{cursor:pointer;border-color:var(--acc);background:var(--acc);color:#fff;font-weight:600}
+button.ghost{background:#10131a;color:var(--fg);border-color:var(--line);font-weight:500}
+.filters{display:flex;gap:6px;margin-bottom:14px}
+.filters button{background:#10131a;color:var(--mut);border-color:var(--line);font-weight:500;padding:6px 12px}
+.filters button.on{color:#fff;border-color:var(--acc)}
+.proj{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:12px 14px;margin-bottom:10px}
+.proj.done{opacity:.55}.top{display:flex;align-items:center;gap:10px}
+.top h3{margin:0;font-size:15px;flex:1}
+.tag{font-size:11px;padding:2px 8px;border-radius:999px;border:1px solid var(--line);color:var(--mut)}
+.tag.active{color:#7ee0a1;border-color:#2e5d42}.tag.hold{color:#e0c97e;border-color:#5d542e}.tag.done{color:#9aa3b2}
+.meta{color:var(--mut);font-size:12px;margin-top:6px;display:flex;gap:14px;flex-wrap:wrap}
+.notes{margin-top:8px;white-space:pre-wrap}
+.row{display:flex;gap:6px;margin-top:10px}.row button{padding:5px 10px;font-size:12px}
+.empty{color:var(--mut);text-align:center;padding:30px;border:1px dashed var(--line);border-radius:10px}
+</style>
+</head>
+<body>
+<div class="wrap">
+<h1>Project Tracker</h1>
+<p class="sub">Your active projects (chimera projects).</p>
+<div class="counts" id="counts"></div>
+<form id="add">
+<input class="full" id="f-name" placeholder="Project name" required />
+<select id="f-status"><option value="active">Active</option><option value="hold">On hold</option><option value="done">Done</option></select>
+<select id="f-priority"><option value="low">Low</option><option value="med" selected>Medium</option><option value="high">High</option></select>
+<input id="f-due" type="date" />
+<textarea class="full" id="f-notes" placeholder="Notes (optional)"></textarea>
+<button class="full" type="submit">Add project</button>
+</form>
+<div class="filters" id="filters">
+<button data-f="all" class="on">All</button>
+<button data-f="active">Active</button>
+<button data-f="hold">On hold</button>
+<button data-f="done">Done</button>
+</div>
+<div id="list"></div>
+</div>
+<script>
+const esc = s => String(s).replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
+const api = async (m, o) => {
+  const r = await fetch('/api', { method: m, headers: { 'content-type': 'application/json' }, body: o ? JSON.stringify(o) : undefined });
+  return r.json();
+};
+const render = async () => {
+  const ps = await api('GET');
+  const c = { active: 0, hold: 0, done: 0 };
+  ps.forEach(p => c[p.status]++);
+  document.getElementById('counts').innerHTML =
+    '<span class="pill">Active <b>' + c.active + '</b></span>' +
+    '<span class="pill">On hold <b>' + c.hold + '</b></span>' +
+    '<span class="pill">Done <b>' + c.done + '</b></span>';
+  const f = document.getElementById('filters').querySelector('.on').dataset.f;
+  const v = f === 'all' ? ps : ps.filter(p => p.status === f);
+  if (!v.length) { document.getElementById('list').innerHTML = '<div class="empty">No projects here yet.</div>'; return; }
+  document.getElementById('list').innerHTML = v.map(p =>
+    '<div class="proj ' + p.status + '">' +
+      '<div class="top"><h3>' + esc(p.name) + '</h3>' +
+        '<span class="tag ' + p.status + '">' + p.status + '</span>' +
+        '<span class="tag">' + p.priority + '</span></div>' +
+      '<div class="meta">' + (p.due ? '<span>Due ' + esc(p.due) + '</span>' : '') +
+        '<span>' + new Date(p.created).toLocaleDateString() + '</span></div>' +
+      (p.notes ? '<div class="notes">' + esc(p.notes) + '</div>' : '') +
+      '<div class="row"><button class="ghost" onclick="cyc(\'' + p.id + '\')">Cycle</button>' +
+        '<button class="ghost" onclick="del(\'' + p.id + '\')">Delete</button></div>' +
+    '</div>'
+  ).join('');
+};
+window.del = id => api('DELETE', { id }).then(render);
+window.cyc = id => api('POST', { id }).then(render);
+document.getElementById('add').addEventListener('submit', async e => {
+  e.preventDefault();
+  await api('PUT', {
+    name: document.getElementById('f-name').value.trim(),
+    status: document.getElementById('f-status').value,
+    priority: document.getElementById('f-priority').value,
+    due: document.getElementById('f-due').value,
+    notes: document.getElementById('f-notes').value.trim(),
+  });
+  e.target.reset();
+  render();
+});
+document.getElementById('filters').addEventListener('click', e => {
+  const b = e.target.closest('button');
+  if (!b) return;
+  [...document.getElementById('filters').children].forEach(x => x.classList.toggle('on', x === b));
+  render();
+});
+render();
+</script>
+</body>
+</html>

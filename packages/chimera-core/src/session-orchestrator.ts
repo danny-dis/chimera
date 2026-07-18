@@ -36,6 +36,8 @@ import { runCompactionPipeline } from '@chimera/context';
 import { BudgetEnforcer, type BudgetCheckResult } from '@chimera/providers';
 import { RateLimiter } from '@chimera/providers';
 import type { ModelRegistry } from '@chimera/providers';
+import type { UserSkillModel } from '@chimera/learning';
+import type { OutputStyle } from './output-styles/index.js';
 import { discoverInstructions, buildInstructionContext } from './instruction-discovery.js';
 import { detectProjectContext } from './project-detection.js';
 import { DeliberationEngine } from './coordinator/deliberation/engine.js';
@@ -318,6 +320,7 @@ export class SessionOrchestrator {
   private handoffProtocol: HandoffProtocol;
   private linter: BiomeLinter;
   private _workspaceRoot: string;
+  private _activeStyle?: OutputStyle;
   private toolRelay: ToolContextRelay;
   private workflowExecutor: { execute(script: string): Promise<any> } | null = null;
   private _sessionId: string = `session-${Date.now()}`;
@@ -492,8 +495,11 @@ export class SessionOrchestrator {
     maxRetries?: number;
     costCap?: number;
     conversationHistory?: Array<{ role: string; content: string }>;
+    skillModel?: UserSkillModel;
+    /** Already-resolved output style (CLI layer owns `learning`). core does not import `learning`. */
+    style?: OutputStyle;
   }): Promise<OrchestratorResult> {
-    const { task, mode, providers, preset, costCap = 10, conversationHistory } = params;
+    const { task, mode, providers, preset, costCap = 10, conversationHistory, skillModel, style } = params;
     // Snapshot the task's target file on disk BEFORE deliberation runs, so
     // the completion gate can tell a real edit (mtime/size change) from a
     // no-op: an edit of a pre-existing file always "exists", which would be
@@ -510,6 +516,10 @@ export class SessionOrchestrator {
     // iteration cap.
     const ac = new AbortController();
     const executeSignal = composeAbortSignals([ac.signal, buildTimeoutSignal(EXECUTE_TIMEOUT_MS)]);
+    // Style is resolved by the caller (CLI layer owns the `learning`
+    // dependency) and injected here. Never blocks. Injected LAST in the
+    // system prompt so it can never override the core pact or safety gates.
+    this._activeStyle = style;
 
     // Validate mode+preset combination (skip validation for 'auto' preset)
     const resolvedPreset = preset ?? this.mapModeToDeliberationMode(mode);
@@ -1194,6 +1204,10 @@ export class SessionOrchestrator {
       // Required by the swarm preset (runSwarm) and auto preset to build the
       // provider pool. Without it, swarm silently degrades to "no providers".
       availableProviders: ['writer', 'reviewer', 'challenger'],
+      // Resolved output style (already resolved from `learning` by the CLI
+      // caller) — threaded down so trio's draft prompt can use it. core
+      // never imports `learning` (dependency cycle).
+      ...(this._activeStyle ? { style: this._activeStyle } : {}),
     });
 
     const config = this.buildDeliberationConfig(task, mode, providers, costCap, preset, complexity, context, conversationHistory);
@@ -2062,14 +2076,14 @@ export class SessionOrchestrator {
     return true;
   }
 
-  buildWriterPrompt(task: string, mode: Mode, conversationHistory?: Array<{ role: string; content: string }>, context?: string, tier: 'cheap' | 'mid' | 'frontier' | 'reasoning' = 'mid'): Array<{ role: string; content: string }> {
+  buildWriterPrompt(task: string, mode: Mode, conversationHistory?: Array<{ role: string; content: string }>, context?: string, tier: 'cheap' | 'mid' | 'frontier' | 'reasoning' = 'mid', style?: OutputStyle): Array<{ role: string; content: string }> {
     // Tier-aware prompt compression (Stream C + Stream A). Cheap models get a
     // compact identity + compact role prompt + small-model guidance so they
     // stay coherent; frontier/mid get the full prompt (byte-identical to before).
     const identity = tier === 'cheap' ? COMPACT_CORE_IDENTITY : CHIMERA_CORE_IDENTITY;
     const rolePrompt = tier === 'cheap' ? compactAgentPrompt('writer') : AGENT_PROMPTS.writer.system;
     const smallModelSuffix = tier === 'cheap' ? `\n\n${SMALL_MODEL_GUIDANCE}` : '';
-    const messages = buildMessages({ role: 'writer', mode, task, context, workspaceRoot: this._workspaceRoot, cacheControl: DEFAULT_CACHE_CONTROL });
+    const messages = buildMessages({ role: 'writer', mode, task, context, workspaceRoot: this._workspaceRoot, cacheControl: DEFAULT_CACHE_CONTROL, style: this._activeStyle });
     // Inject the tier-specific identity + role prompt at the front (after the
     // leading system message that buildMessages emits).
     if (messages.length > 0 && messages[0].role === 'system') {
@@ -2141,6 +2155,7 @@ export class SessionOrchestrator {
     mode: Mode,
     conversationHistory?: Array<{ role: string; content: string }>,
     context?: string,
+    style?: OutputStyle,
   ): Array<{ role: string; content: string }> {
     const messages = buildMessages({
       role: 'reviewer',
@@ -2154,6 +2169,7 @@ export class SessionOrchestrator {
       context,
       workspaceRoot: this._workspaceRoot,
       cacheControl: DEFAULT_CACHE_CONTROL,
+      style: this._activeStyle,
     });
 
     const outputInstructions = [
@@ -2221,6 +2237,7 @@ export class SessionOrchestrator {
       context,
       workspaceRoot: this._workspaceRoot,
       cacheControl: DEFAULT_CACHE_CONTROL,
+      style: this._activeStyle,
     });
 
     const outputInstructions = [

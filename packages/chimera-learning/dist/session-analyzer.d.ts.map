@@ -1,1 +1,0 @@
-{"version":3,"file":"session-analyzer.d.ts","sourceRoot":"","sources":["../src/session-analyzer.ts"],"names":[],"mappings":"AAcA,OAAO,KAAK,EAAE,iBAAiB,EAAE,MAAM,kBAAkB,CAAC;AAC1D,OAAO,KAAK,EACV,cAAc,EAMd,iBAAiB,EAGlB,MAAM,YAAY,CAAC;AAyOpB,qBAAa,eAAe;IAC1B;;OAEG;IACH,OAAO,CAAC,UAAU,EAAE,iBAAiB,GAAG,cAAc;IAqBtD;;OAEG;IACH,YAAY,CAAC,WAAW,EAAE,iBAAiB,EAAE,GAAG,iBAAiB;CAqFlE"}

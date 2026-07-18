@@ -201,6 +201,46 @@ const FILE_NUDGE =
   'You have NOT created any files yet. The task requires you to CREATE files. ' +
   'Call write_file NOW for each file the task lists — do not summarize or explain, just write the files.';
 
+// ── LLM call retry/backoff ───────────────────────────────────────────────
+// The tool-execution path already retries transient write failures; the LLM
+// call did NOT — a single 429/500/network blip threw and aborted the whole
+// task with no recovery. `completeWithRetry` wraps `provider.complete` with a
+// bounded exponential backoff so one transient error can't kill a task.
+// ponytail: one global retry budget; if per-model 429 budgets ever matter,
+// move the cap into provider config. NOT retried on AbortSignal — out of
+// scope here; add a signal passthrough only if the loop gains cancellation.
+const LLM_MAX_RETRIES = 3;
+const LLM_BASE_BACKOFF_MS = 800;
+const LLM_MAX_BACKOFF_MS = 8000;
+
+async function completeWithRetry(
+  provider: LLMProvider,
+  messages: LoopChatMessage[],
+  options: Record<string, unknown>,
+  eventStream: EventStream,
+  label: string,
+): Promise<any> {
+  let attempt = 0;
+  for (;;) {
+    try {
+      return await provider.complete(messages as any, options as any);
+    } catch (err) {
+      if (attempt >= LLM_MAX_RETRIES) throw err;
+      const backoff = Math.min(LLM_BASE_BACKOFF_MS * 2 ** attempt, LLM_MAX_BACKOFF_MS);
+      eventStream.append({
+        type: 'llm_retry',
+        label,
+        attempt: attempt + 1,
+        maxRetries: LLM_MAX_RETRIES,
+        error: String((err as Error)?.message ?? err),
+        backoffMs: backoff,
+      } as any);
+      await new Promise((r) => setTimeout(r, backoff));
+      attempt++;
+    }
+  }
+}
+
 /**
  * Run the shared bounded tool loop.
  *
@@ -319,7 +359,7 @@ export async function runAgentToolLoop(
       : (wroteFileCount === 0 ? FILE_NUDGE : CONTINUE_NUDGE);
     messages.push({ role: 'user', content: nudge });
 
-    const r = await provider.complete(messages as any, options as any);
+    const r = await completeWithRetry(provider, messages, options, eventStream, 'loop');
     const nextContent = sanitizeFn(r.content ?? '');
     inputTokens += (r as any).usage?.inputTokens ?? 0;
     outputTokens += (r as any).usage?.outputTokens ?? 0;
@@ -371,9 +411,12 @@ export async function runAgentToolLoop(
           `PREVIOUS OUTPUT (for reference, do not copy):\n${lastContent.slice(0, 2000)}`,
       });
       try {
-        const forced = await provider.complete(
-          forceMessages as any,
-          { ...options, ...(toolDefs ? { tools: toolDefs } : {}) } as any,
+        const forced = await completeWithRetry(
+          provider,
+          forceMessages,
+          { ...options, ...(toolDefs ? { tools: toolDefs } : {}) },
+          eventStream,
+          'force',
         );
         const forcedContent = sanitizeFn(forced.content ?? '');
         inputTokens += (forced as any).usage?.inputTokens ?? 0;

@@ -35,6 +35,9 @@ importers:
       '@chimera/core':
         specifier: workspace:*
         version: link:../chimera-core
+      '@chimera/daemon':
+        specifier: workspace:*
+        version: link:../chimera-daemon
       '@chimera/eval':
         specifier: workspace:*
         version: link:../chimera-eval

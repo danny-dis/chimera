@@ -26,6 +26,9 @@ export {
   depthMessage,
   suggestNextValue,
   CAPABILITY_TIPS,
+  synthesizeStyle,
+  resolveActiveStyle,
+  resetAutoStyle,
 } from './guidance.js';
 export type { TieredMessage, CapabilityTip, ValueSuggestion } from './guidance.js';
 

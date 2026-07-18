@@ -8,7 +8,7 @@ import { ProviderFactory, RateLimitError, ProviderUnavailableError, ProviderErro
 import type { ModelProvider, ModelEntry } from '@chimera/providers';
 import { CheckpointStore } from '@chimera/session';
 import { LearningEngine } from '@chimera/learning';
-import { UserSkillModel, tierMessage, suggestNextValue } from '@chimera/learning';
+import { UserSkillModel, tierMessage, suggestNextValue, resolveActiveStyle } from '@chimera/learning';
 import type { ObservedCapability } from '@chimera/learning';
 import type { TieredMessage, SkillTier } from '@chimera/learning';
 import { ToolRegistry, ToolExecutor, allTools, getDiagnosticsForFile } from '@chimera/tools';
@@ -24,6 +24,7 @@ import type { ReplContext } from './commands/registry.js';
 import { registerSkillCommand } from './commands/skill.js';
 import { registerWorkflowCommand } from './commands/workflow.js';
 import { registerLearnCommand } from './commands/learn.js';
+import { registerProjectsCommand } from './commands/projects.js';
 import { autoGenerateConfig, configExists, loadConfig, getProvidersByRole, getDefaultPreset, type ResolvedProvider, type ChimeraConfig } from './config-loader.js';
 import { cleanupStaleWorktrees, removeWorktree } from '@chimera/isolation';
 // @chimera/tui depends on Ink, which is ESM with top-level await.
@@ -468,6 +469,12 @@ export class CliRouter {
     skillModel.observeCommandUsage({ flags: process.argv.slice(2), usedPreset: !!preset && preset !== 'solo', scripted, configOverridden: false });
     skillModel.observeMessage(task);
 
+    // Resolve the self-built/user output style once in the CLI layer, which
+    // owns the `learning` dependency. core must not import `learning`
+    // (dependency cycle), so the resolved style is passed down as plain data.
+    const workspaceRoot = process.cwd();
+    const style = await resolveActiveStyle(workspaceRoot, skillModel);
+
     console.log(`\n\u2699 Chimera [${mode}] \u2014 ${label[mode]}...\n`);
 
     // Auto-generate config from env vars (fetches models from API if needed)
@@ -542,6 +549,8 @@ export class CliRouter {
         mode,
         preset,
         providers: { writer, reviewer, ...(challenger ? { challenger } : {}) },
+        skillModel,
+        style,
       });
 
       skillModel.observeTaskOutcome({ clean: result.status === 'done' });
@@ -813,6 +822,7 @@ export class CliRouter {
     registerSkillCommand(this.program);
     registerWorkflowCommand(this.program);
     registerLearnCommand(this.program);
+    registerProjectsCommand(this.program);
 
     this.program
       .command('eval <taskRef>')
@@ -950,6 +960,7 @@ export class CliRouter {
     // TUI owns its own skill model instance (it feeds its own signals; the
     // per-turn REPL feeding path is a separate launch and need not share this).
     const skillModel = new UserSkillModel();
+    const style = await resolveActiveStyle(process.cwd(), skillModel);
 
     // Auto-generate config from env vars (fetches models from API if needed)
     if (!configExists()) {
@@ -1136,6 +1147,8 @@ export class CliRouter {
             providers: { writer, reviewer, ...(challenger ? { challenger } : {}) },
             preset: currentPreset,
             conversationHistory,
+            skillModel,
+            style,
           });
 
           // If the deliberation produced empty output (degraded provider),
@@ -1509,6 +1522,7 @@ export class CliRouter {
 
     // One skill model per session — fed by signals as they occur.
     const skillModel = new UserSkillModel();
+    const style = await resolveActiveStyle(process.cwd(), skillModel);
     // Capabilities the user has touched this session (drives the value nudge).
     const seenCapabilities = new Set<ObservedCapability>();
     // Surface one underused capability at a natural pause (task completion),
@@ -1611,6 +1625,8 @@ export class CliRouter {
           providers: { writer, reviewer, ...(challenger ? { challenger } : {}) },
           preset: currentPreset,
           conversationHistory,
+          skillModel,
+          style,
         });
 
         this.printResult(result, skillModel);

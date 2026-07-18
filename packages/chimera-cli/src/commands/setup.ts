@@ -2,7 +2,8 @@ import * as readline from 'readline';
 import * as fs from 'fs';
 import * as path from 'path';
 import YAML from 'yaml';
-import { recommendFromProviders } from '@chimera/providers';
+import { recommendFromProviders, ProviderFactory } from '@chimera/providers';
+import type { ModelProvider, Message } from '@chimera/providers';
 import { UserSkillModel, tierMessage, type TieredMessage } from '@chimera/learning';
 
 // Providers the wizard can configure. `cheap` maps to the free NVIDIA
@@ -78,6 +79,26 @@ function recommendedForRoles(selectedProviders: string[]): Record<string, string
   }
   const rec = recommendFromProviders(selectedProviders);
   return { writer: rec.writer, reviewer: rec.reviewer, challenger: rec.challenger };
+}
+
+/**
+ * Cheap live connection test: one tiny completion. Returns null on success,
+ * or the error message on failure. Hard 20s cap so setup never hangs on a
+ * dead endpoint. Pure + testable with a fake ModelProvider.
+ */
+export async function testProviderConnection(provider: ModelProvider): Promise<string | null> {
+  const probe: Message[] = [{ role: 'user', content: 'Reply with the single word: ok' }];
+  try {
+    await Promise.race([
+      provider.complete(probe, { maxTokens: 5, temperature: 0 }),
+      new Promise<never>((_, rej) =>
+        setTimeout(() => rej(new Error('connection timed out after 20s')), 20_000),
+      ),
+    ]);
+    return null;
+  } catch (err) {
+    return err instanceof Error ? err.message : String(err);
+  }
 }
 
 export async function runSetup(cwd?: string, skillModel?: UserSkillModel): Promise<boolean> {
@@ -177,6 +198,49 @@ export async function runSetup(cwd?: string, skillModel?: UserSkillModel): Promi
       }
       fs.writeFileSync(envPath, existingEnv, 'utf-8');
       console.log(`  ✓ API keys written to ${envPath}`);
+    }
+
+    // Verify the configured provider actually answers before declaring done.
+    // Reuses the same ProviderFactory path the runtime resolver uses, so a
+    // wrong key/model surfaces here instead of mid-task. Ollama is local and
+    // may not be running — skip it so it never blocks setup.
+    let attemptedReal = 0;
+    let failures = 0;
+    if (preset.envKey) {
+      const realKey = envVars[preset.envKey] ?? process.env[preset.envKey];
+      for (const p of setupProviders) {
+        if (p.provider === 'ollama') continue;
+        attemptedReal++;
+        try {
+          const provider = ProviderFactory.create({
+            name: p.name, provider: p.provider, model: p.model,
+            baseUrl: p.base_url, apiKey: realKey, role: p.role,
+            constraints: {
+              maxTokensPerTurn: 4096, costCapPerTask: 10,
+              costCapPerSession: 20, costCapPerDay: 50,
+              maxParallelInstances: 1, rateLimitRpm: 60,
+            },
+          });
+          const err = await testProviderConnection(provider);
+          if (err) {
+            failures++;
+            console.error(`  ✗ ${p.provider}/${p.model} failed: ${err}`);
+          } else {
+            console.log(`  ✓ ${p.provider}/${p.model} connected`);
+          }
+        } catch (e) {
+          failures++;
+          console.error(`  ✗ ${p.provider}/${p.model} invalid: ${e instanceof Error ? e.message : String(e)}`);
+        }
+      }
+    }
+    if (attemptedReal > 0 && failures === attemptedReal) {
+      console.error('\n  ✗ All providers failed their connection test. Setup aborted — fix the API key/model and re-run `chimera setup`.\n');
+      rl.close();
+      return false;
+    }
+    if (failures > 0) {
+      console.error('\n  ⚠ Some providers failed their connection test. Run `chimera setup` again or check .env / .chimera/config.yaml.\n');
     }
 
     const doneMsg: TieredMessage = {

@@ -15,6 +15,7 @@
 //      agent ever stops emitting it.
 
 import type { AgentRole, Mode } from './types/agent.js';
+import { buildStylePrompt, type OutputStyle } from './output-styles/index.js';
 
 // ---------------------------------------------------------------------------
 // Core identity block — appended to every agent's system prompt
@@ -1297,6 +1298,8 @@ export interface BuildMessagesParams {
   context?: string;
   previousOutput?: string;
   workspaceRoot?: string;
+  /** Resolved output style (user style or self-built). Appended LAST so it can never override the core pact. */
+  style?: OutputStyle;
   /**
    * Optional prompt-cache directive. When set, the returned system message
    * block carries a `cache_control` field so downstream providers (notably
@@ -1344,7 +1347,8 @@ export function buildMessages(
       '\n\n---\n\n' +
       modeInstructions +
       '\n\n---\n\n' +
-      modeFormatting,
+      modeFormatting +
+      (params.style ? buildStylePrompt(params.style) : ''),
   };
 
   if (params.cacheControl) {

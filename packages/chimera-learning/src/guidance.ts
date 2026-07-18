@@ -244,3 +244,100 @@ export function suggestNextValue(
   }
   return null;
 }
+
+// ── Self-built output style ────────────────────────────────────────────────
+//
+// The repo already has an `OutputStyle` mechanism (loaded from
+// `.chimera/output-styles/*.md` and injected via `buildStylePrompt`). This
+// synthesizes one from the existing `UserSkillModel` audit so the agent's
+// voice evolves from observed behavior — no new module, no ML. Heuristic only.
+//
+// ponytail: single global auto-style, synth from tier + audit flags. Per-workspace
+// or richer (session-outcome-weighted) styles if a user wants different voices.
+
+import { promises as fs } from 'fs';
+import { join } from 'path';
+import type { OutputStyle } from '@chimera/core';
+
+const AUTO_STYLE_NAME = 'auto';
+const AUTO_STYLE_FILE = 'auto.chimera-style.md';
+
+/** Build style instructions from a user-skill model. Pure. */
+export function synthesizeStyle(model?: UserSkillModel): { name: string; description: string; instructions: string } {
+  const tier = model?.tier() ?? 'intermediate';
+  const audit = model?.getAuditLog() ?? [];
+  const repeatedErrors = audit.some((e) => e.signal === 'repeated-errors');
+
+  const lines: string[] = ['# Auto Style (self-built from your usage)'];
+  if (tier === 'beginner') {
+    lines.push('- Friendly, conversational tone', '- Explain the WHY before the HOW', '- Define jargon on first use', '- Lead with a safe default, not a menu of options');
+  } else if (tier === 'advanced') {
+    lines.push('- Terse, direct', '- Code-first, explain only if asked', '- Surface the power-user shortcut/keybinding', '- No preamble or postamble');
+  } else {
+    lines.push('- Clear, direct', '- Show the answer, then a short rationale');
+  }
+  if (repeatedErrors) {
+    lines.push('- When stuck, show the root cause first, then the fix — not a list of guesses');
+  }
+  return {
+    name: AUTO_STYLE_NAME,
+    description: `Self-built from ${tier} skill signals`,
+    instructions: lines.join('\n'),
+  };
+}
+
+/**
+ * Resolve the active output style for a workspace. Prefers an explicit
+ * user-authored style (any .md in .chimera/output-styles); otherwise
+ * synthesizes one from behavior and persists it so it is inspectable and
+ * reversible. Returns undefined if no style applies (caller no-ops).
+ */
+export async function resolveActiveStyle(
+  workspaceRoot?: string,
+  model?: UserSkillModel,
+): Promise<OutputStyle | undefined> {
+  const dir = workspaceRoot ? join(workspaceRoot, '.chimera', 'output-styles') : undefined;
+  if (dir) {
+    try {
+      const entries = await fs.readdir(dir);
+      // Any user file other than the auto one wins.
+      const userFile = entries.find((f) => f.endsWith('.md') && f !== AUTO_STYLE_FILE);
+      if (userFile) {
+        const { loadOutputStyles } = await import('@chimera/core');
+        return (await loadOutputStyles(workspaceRoot)).find((s) => s.name !== AUTO_STYLE_NAME);
+      }
+    } catch {
+      // no dir yet — fall through to synth
+    }
+  }
+  if (!model) return undefined;
+  const synth = synthesizeStyle(model);
+  const style: OutputStyle = {
+    name: synth.name,
+    description: synth.description,
+    keepCodingInstructions: true,
+    instructions: synth.instructions,
+    sourcePath: dir ? join(dir, AUTO_STYLE_FILE) : '(synthesized)',
+  };
+  // Persist so the user can read/edit/delete it (chimera learn --reset-style).
+  if (dir) {
+    try {
+      await fs.mkdir(dir, { recursive: true });
+      await fs.writeFile(join(dir, AUTO_STYLE_FILE), `---\nname: ${synth.name}\ndescription: ${synth.description}\nkeep-coding-instructions: true\n---\n\n${synth.instructions}\n`, 'utf-8');
+    } catch {
+      // best-effort; in-memory style still returned
+    }
+  }
+  return style;
+}
+
+/** Delete the self-built auto style for a workspace. Returns true if removed. */
+export async function resetAutoStyle(workspaceRoot: string): Promise<boolean> {
+  const file = join(workspaceRoot, '.chimera', 'output-styles', AUTO_STYLE_FILE);
+  try {
+    await fs.unlink(file);
+    return true;
+  } catch {
+    return false;
+  }
+}

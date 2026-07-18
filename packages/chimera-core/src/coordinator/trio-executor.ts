@@ -13,6 +13,7 @@ import { runAgentToolLoop } from './tool-execution-helper.js';
 import { executeProseActions } from './file-write-fallback.js';
 import { taskWantsFiles, snapshotTarget, targetChanged } from './path-from-task.js';
 import type { Mode, ToolCall } from '../types/agent.js';
+import type { OutputStyle } from '../output-styles/index.js';
 import type {
   TrioConfig,
   TrioContext,
@@ -54,6 +55,12 @@ interface TrioExecutorDeps {
   toolExecutor?: ToolExecutorInterface;
   /** Optional tool registry — supplies tool definitions to the writer. */
   toolRegistry?: ToolRegistryInterface;
+  /**
+   * Resolved output style, injected by the caller (which owns the
+   * `learning` dependency). core must not import `learning` — that would
+   * create a dependency cycle (learning value-imports core).
+   */
+  style?: OutputStyle;
 }
 
 /**
@@ -87,6 +94,7 @@ export class TrioExecutor {
   private workspaceRoot?: string;
   private toolExecutor?: ToolExecutorInterface;
   private toolRegistry?: ToolRegistryInterface;
+  private style?: OutputStyle;
 
   constructor(deps: TrioExecutorDeps) {
     this.eventStream = deps.eventStream;
@@ -96,6 +104,7 @@ export class TrioExecutor {
     this.workspaceRoot = deps.workspaceRoot;
     this.toolExecutor = deps.toolExecutor;
     this.toolRegistry = deps.toolRegistry;
+    this.style = deps.style;
   }
 
   /**
@@ -179,8 +188,11 @@ export class TrioExecutor {
               parameters: (t.parameters ? zodToJsonSchema(t.parameters as any) : {}) as Record<string, unknown>,
             }))
         : undefined;
+      // Style is injected by the caller (CLI layer), which owns the
+      // `learning` dependency. core never imports `learning` (cycle).
+      const style = this.style;
       const draftResult = await draftProvider.complete(
-        [{ role: 'user', content: this.buildDraftPrompt(task, config.context) }],
+        [{ role: 'user', content: this.buildDraftPrompt(task, config.context, style) }],
         { temperature: config.temperature, maxTokens: config.maxCompletionTokens, ...(config.reasoning !== undefined ? { reasoning: config.reasoning } : {}), ...(toolDefs ? { tools: toolDefs } : {}) }
       );
       const inputTokens = draftResult.usage?.inputTokens ?? 0;
@@ -197,7 +209,7 @@ export class TrioExecutor {
       if (draftToolCalls && draftToolCalls.length > 0 && this.toolExecutor && this.workspaceRoot) {
         const loop = await runAgentToolLoop({
           provider: draftProvider,
-          messages: [{ role: 'user', content: this.buildDraftPrompt(task, config.context) }],
+          messages: [{ role: 'user', content: this.buildDraftPrompt(task, config.context, style) }],
           options: { temperature: config.temperature, maxTokens: config.maxCompletionTokens, ...(config.reasoning !== undefined ? { reasoning: config.reasoning } : {}) },
           toolExecutor: this.toolExecutor,
           toolRegistry: this.toolRegistry,
@@ -685,7 +697,7 @@ export class TrioExecutor {
     return conflictFreeContents.map((i) => i.content.split('\n')[0].slice(0, 200));
   }
 
-  private buildDraftPrompt(task: string, context?: string): string {
+  private buildDraftPrompt(task: string, context?: string, style?: OutputStyle): string {
     if (TaskRouter.isConversationalTask(task)) {
       const contextBlock = context ? `\n\n[!] PROJECT CONTEXT [!]\n${context}` : '';
       return `You are a helpful assistant. Answer the following conversational question directly.\n` +
@@ -702,6 +714,7 @@ export class TrioExecutor {
       task,
       context,
       workspaceRoot: this.workspaceRoot,
+      style,
     })
       .map((m) => `### ${m.role.toUpperCase()}\n${m.content}`)
       .join('\n\n');

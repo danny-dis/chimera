@@ -219,6 +219,7 @@ export class DeliberationEngine {
       ...(this.deps.workspaceRoot ? { workspaceRoot: this.deps.workspaceRoot } : {}),
       ...(this.deps.toolExecutor ? { toolExecutor: this.deps.toolExecutor } : {}),
       ...(this.deps.toolRegistry ? { toolRegistry: this.deps.toolRegistry } : {}),
+      ...(this.deps.style ? { style: this.deps.style } : {}),
     });
 
     const trioConfig: TrioConfig = {
