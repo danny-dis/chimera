@@ -70,9 +70,27 @@ describe('dmrx helpers', () => {
     expect(isDmrxPreset('gpt-4o')).toBe(false);
   });
 
-  it('exposes a role→preset map covering the core roles', () => {
+  it('exposes a role→preset map covering the core + peer roles', () => {
     expect(ROLE_TO_DMRX_PRESET.writer).toBe('auto-coding');
     expect(ROLE_TO_DMRX_PRESET.reviewer).toBe('auto-fast');
     expect(ROLE_TO_DMRX_PRESET.challenger).toBe('auto-agentic');
+    expect(ROLE_TO_DMRX_PRESET.thinker).toBe('auto-smart');
+    expect(ROLE_TO_DMRX_PRESET.synthesizer).toBe('auto-smart');
+    expect(ROLE_TO_DMRX_PRESET.researcher).toBe('auto-smart');
+    expect(ROLE_TO_DMRX_PRESET.summarizer).toBe('auto');
+  });
+
+  it('maps thinker→auto-smart and synthesizer→auto-smart via applyDmrxRouting', () => {
+    const c = cfg('dmrx');
+    c.providers.push(
+      { name: 'thinker', provider: 'openai-compatible', model: 'x', role: 'thinker', base_url: 'http://127.0.0.1:3000/v1' },
+      { name: 'synthesizer', provider: 'openai-compatible', model: 'x', role: 'synthesizer', base_url: 'http://127.0.0.1:3000/v1' },
+      { name: 'researcher', provider: 'openai-compatible', model: 'x', role: 'researcher', base_url: 'http://127.0.0.1:3000/v1' },
+    );
+    const out = applyDmrxRouting(c, 'dmrx');
+    const byRole = Object.fromEntries(out.providers.map((p) => [p.role, p.model]));
+    expect(byRole.thinker).toBe('auto-smart');
+    expect(byRole.synthesizer).toBe('auto-smart');
+    expect(byRole.researcher).toBe('auto-smart');
   });
 });

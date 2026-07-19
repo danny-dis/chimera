@@ -37,11 +37,14 @@ export type ChimeraMode =
 
 /**
  * Map a role to its optimized DMR-X meta-model.
- *   planner/plan  → auto-smart   (strongest reasoning)
- *   writer/code   → auto-coding  (best codegen)
+ *   planner/plan  → auto-smart   (strongest reasoning, task decomposition)
+ *   writer/code   → auto-coding  (best codegen, edits files)
  *   reviewer      → auto-fast    (fast verification pass)
- *   challenger    → auto-agentic (tool-capable, 64K+ ctx for independent view)
- *   everything else (synthesizer/summarizer/researcher) → auto
+ *   challenger    → auto-agentic (tool-capable, 64K+ ctx for independent critique)
+ *   thinker       → auto-smart   (solo peer critic; needs strength to catch flaws)
+ *   synthesizer   → auto-smart   (user-facing final merge; quality matters)
+ *   researcher    → auto-smart   (context-gathering benefits from capability)
+ *   summarizer    → auto         (cheap compaction; capability not critical)
  */
 export const ROLE_TO_DMRX_PRESET: Record<string, DmrxPreset> = {
   planner: 'auto-smart',
@@ -50,11 +53,10 @@ export const ROLE_TO_DMRX_PRESET: Record<string, DmrxPreset> = {
   code: 'auto-coding',
   reviewer: 'auto-fast',
   challenger: 'auto-agentic',
-  duo: 'auto-agentic',
-  trio: 'auto-agentic',
-  synthesizer: 'auto',
+  thinker: 'auto-smart',
+  synthesizer: 'auto-smart',
   summarizer: 'auto',
-  researcher: 'auto',
+  researcher: 'auto-smart',
 };
 
 /** Mode-level override — when a whole run is in one mode, bias every role. */
