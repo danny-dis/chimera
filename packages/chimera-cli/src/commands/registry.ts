@@ -12,6 +12,7 @@ import type { ModelProvider } from '@chimera/providers';
 import { ModelMetadataFetcher } from '@chimera/providers';
 import type { CheckpointStore } from '@chimera/session';
 import type { UserSkillModel } from '@chimera/learning';
+import { trustWorkspace, isWorkspaceTrusted, trustStorePath } from '@chimera/tools';
 import { loadCustomCommands, runCustomCommand } from './custom-loader.js';
 import { initAgentsMd } from './init.js';
 
@@ -27,6 +28,7 @@ const HELP_TEXT = [
   '  Settings:',
   '    /model /status /config /doctor /export',
   '    /refresh-models  — fetch latest model metadata from APIs',
+  '    /trust <path>    — trust a workspace so its hooks can run',
 ];
 
 /**
@@ -195,6 +197,8 @@ export async function runSlashCommand(
       return handleMcp();
     case 'hooks':
       return handleHooks();
+    case 'trust':
+      return handleTrust(args);
     case 'ide':
       return handleIde();
     case 'bug':
@@ -1004,7 +1008,7 @@ function handleMcp(): ReplExitSignal {
   return 'continue';
 }
 
-function handleHooks(): ReplExitSignal {
+async function handleHooks(): Promise<ReplExitSignal> {
   const fs = require('fs');
   const path = require('path');
   const hooksPath = path.join(process.cwd(), '.chimera', 'hooks.yaml');
@@ -1036,11 +1040,70 @@ function handleHooks(): ReplExitSignal {
     }
   } catch { /* ignore */ }
 
-  if (hookCount === 0) {
-    console.log('  No hooks registered.');
-    console.log('  Create .chimera/hooks.yaml or add scripts to .chimera/hooks/.');
-    console.log('  Events: pre-tool-use, post-tool-use, task-start, task-complete, session-start, session-end');
+  const trusted = await isWorkspaceTrusted(process.cwd());
+  if (!trusted && hookCount > 0) {
+    console.log('\n  ⚠ This workspace is NOT trusted — its hook scripts will NOT execute.');
+    console.log('    Run /trust . to enable them (cloned repos are untrusted by default).');
+  } else if (trusted && hookCount > 0) {
+    console.log('\n  ✓ Workspace trusted — hooks will execute on tool calls.');
   }
+  return 'continue';
+}
+
+/**
+ * /trust — manage workspace hook trust (mirrors grok-build's plugin trust gate).
+ * A workspace's .chimera/hooks.yaml only executes after it's explicitly trusted,
+ * so a cloned repo can't auto-run hook scripts.
+ *   /trust <path>            trust a workspace (enables its hooks)
+ *   /trust --untrust <path>  remove a workspace from the trust store
+ *   /trust --list            show trusted workspaces
+ */
+function handleTrust(args: string[]): ReplExitSignal {
+  const untrust = args.includes('--untrust');
+  const list = args.includes('--list');
+  const target = args.find((a) => !a.startsWith('--'));
+
+  if (list) {
+    let content = '';
+    try {
+      content = require('fs').readFileSync(trustStorePath(), 'utf-8');
+    } catch {
+      content = '';
+    }
+    const lines = content.split('\n').map((l: string) => l.trim()).filter(Boolean);
+    if (lines.length === 0) {
+      console.log('  No trusted workspaces.');
+    } else {
+      console.log(`  Trusted workspaces (${lines.length}):`);
+      for (const l of lines) console.log(`    ${l}`);
+    }
+    return 'continue';
+  }
+
+  if (!target) {
+    console.log('  Usage: /trust <path>  |  /trust --untrust <path>  |  /trust --list');
+    return 'continue';
+  }
+
+  const abs = require('path').resolve(target);
+  if (untrust) {
+    // Remove from trust store.
+    let lines: string[] = [];
+    try {
+      lines = require('fs').readFileSync(trustStorePath(), 'utf-8').split('\n').map((l: string) => l.trim()).filter(Boolean);
+    } catch {
+      lines = [];
+    }
+    const next = lines.filter((l) => l !== abs);
+    require('fs').writeFileSync(trustStorePath(), next.join('\n') + (next.length ? '\n' : ''), 'utf-8');
+    console.log(`  Untrusted: ${abs}`);
+    return 'continue';
+  }
+
+  trustWorkspace(abs).then(() => {
+    console.log(`  Trusted workspace: ${abs}`);
+    console.log('  Its .chimera/hooks.yaml will now execute on tool calls.');
+  });
   return 'continue';
 }
 
