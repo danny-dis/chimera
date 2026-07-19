@@ -136,6 +136,91 @@ describe('OpenAICompatibleProvider', () => {
     expect(mockFetch).toHaveBeenCalledTimes(1);
     vi.unstubAllGlobals();
   });
+
+  describe('empty-content handling (meta-model gateway robustness)', () => {
+    const okBody = (content: string) => ({
+      choices: [{ message: { content } }],
+      usage: { prompt_tokens: 1, completion_tokens: 1 },
+    });
+    const emptyBody = {
+      choices: [{ message: { content: '' } }],
+      usage: { prompt_tokens: 1, completion_tokens: 0 },
+    };
+
+    it('retries through the meta-model chain when auto-* returns empty content, succeeding on a later model', async () => {
+      const metaProvider = new OpenAICompatibleProvider({
+        baseUrl: 'https://dmr-x.local',
+        apiKey: 'test-key',
+        model: 'auto-coding',
+      });
+      const emptyBody = {
+        choices: [{ message: { content: '' } }],
+        usage: { prompt_tokens: 1, completion_tokens: 0 },
+      };
+      const okBody = (content: string) => ({
+        choices: [{ message: { content } }],
+        usage: { prompt_tokens: 1, completion_tokens: 1 },
+      });
+      // auto-coding(empty) -> auto-smart(empty) -> auto-fast(empty) -> auto-agentic(ok)
+      const mockFetch = vi
+        .fn()
+        .mockResolvedValueOnce({ ok: true, status: 200, json: () => Promise.resolve(emptyBody) })
+        .mockResolvedValueOnce({ ok: true, status: 200, json: () => Promise.resolve(emptyBody) })
+        .mockResolvedValueOnce({ ok: true, status: 200, json: () => Promise.resolve(emptyBody) })
+        .mockResolvedValueOnce({ ok: true, status: 200, json: () => Promise.resolve(okBody('real answer')) });
+      vi.stubGlobal('fetch', mockFetch);
+
+      const res = await metaProvider.complete(TEST_MESSAGES);
+      expect(res.content).toBe('real answer');
+      expect(mockFetch).toHaveBeenCalledTimes(4);
+      const modelsTried = mockFetch.mock.calls.map((c) => JSON.parse(c[1].body as string).model);
+      expect(modelsTried).toEqual(['auto-coding', 'auto-smart', 'auto-fast', 'auto-agentic']);
+      vi.unstubAllGlobals();
+    });
+
+    it('throws a clear ProviderError (no retry) for a non-meta model returning empty content', async () => {
+      const mockFetch = vi.fn().mockResolvedValue({ ok: true, status: 200, json: () => Promise.resolve(emptyBody) });
+      vi.stubGlobal('fetch', mockFetch);
+
+      await expect(provider.complete(TEST_MESSAGES)).rejects.toThrow(/returned empty content/);
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+      vi.unstubAllGlobals();
+    });
+
+    it('throws after exhausting the full meta-model fallback chain with empty content', async () => {
+      const metaProvider = new OpenAICompatibleProvider({
+        baseUrl: 'https://dmr-x.local',
+        apiKey: 'test-key',
+        model: 'auto-coding',
+      });
+      const emptyBody = {
+        choices: [{ message: { content: '' } }],
+        usage: { prompt_tokens: 1, completion_tokens: 0 },
+      };
+      const mockFetch = vi
+        .fn()
+        .mockResolvedValue({ ok: true, status: 200, json: () => Promise.resolve(emptyBody) });
+      vi.stubGlobal('fetch', mockFetch);
+
+      await expect(metaProvider.complete(TEST_MESSAGES)).rejects.toThrow(/returned empty content/);
+      // auto-coding + auto-smart + auto-fast + auto-agentic = 4 attempts.
+      expect(mockFetch).toHaveBeenCalledTimes(4);
+      vi.unstubAllGlobals();
+    });
+
+    it('extracts reasoning content so a thinking-only response is not discarded', async () => {
+      const thinkingBody = {
+        choices: [{ message: { content: '', reasoning_content: 'let me think...' } }],
+        usage: { prompt_tokens: 1, completion_tokens: 1 },
+      };
+      const mockFetch = vi.fn().mockResolvedValue({ ok: true, status: 200, json: () => Promise.resolve(thinkingBody) });
+      vi.stubGlobal('fetch', mockFetch);
+
+      const res = await provider.complete(TEST_MESSAGES);
+      expect(res.reasoning).toBe('let me think...');
+      vi.unstubAllGlobals();
+    });
+  });
 });
 
 describe('AnthropicProvider', () => {

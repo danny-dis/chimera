@@ -57,6 +57,10 @@ export interface CompletionResult {
   usage: TokenUsage;
   /** Raw content from the API before any post-processing. Useful for debugging empty responses. */
   rawContent?: string;
+  /** Reasoning / thinking text emitted by reasoning-capable models (e.g. Gemini
+   *  `thought_signature`, OpenAI `reasoning_content`). Surfaced so a thinking-only
+   *  response is not discarded as "empty content". */
+  reasoning?: string;
 }
 
 export interface StreamChunk {

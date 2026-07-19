@@ -97,6 +97,26 @@ function mapToolChoice(choice: NonNullable<CompletionOptions['toolChoice']>) {
   return { type: 'function' as const, function: { name: choice.name } };
 }
 
+/**
+ * DMR-X `auto-*` meta-models share one aggregator route (`multi-model`) that
+ * sometimes returns an empty completion on large prompts. Empirically
+ * `auto-agentic` exercises a different (working) upstream branch, so the
+ * fallback chain ends there. Order matters: try the most-capable alternatives
+ * first, then `auto-agentic` as the known-good terminator.
+ */
+const META_MODEL_FALLBACK_CHAIN: string[] = [
+  'auto-coding',
+  'auto-smart',
+  'auto-fast',
+  'auto-agentic',
+];
+
+/** Remaining meta-models to try after `model` duded (excludes `model` itself). */
+function metaModelFallbacks(model: string): string[] {
+  if (!model.startsWith('auto-')) return [];
+  return META_MODEL_FALLBACK_CHAIN.filter((m) => m !== model);
+}
+
 function parseCompletionResult(body: Record<string, unknown>): CompletionResult {
   const choice = (body.choices as Record<string, unknown>[])?.[0];
   if (!choice) {
@@ -105,6 +125,26 @@ function parseCompletionResult(body: Record<string, unknown>): CompletionResult 
 
   const message = choice.message as Record<string, unknown> | undefined;
   const content = (message?.content as string) ?? '';
+
+  // Reasoning / thinking content (OpenAI `reasoning_content`, DeepSeek
+  // `reasoning_content`, Gemini `extra_content.*.thinking`, etc.). When a
+  // reasoning model answers with an empty `content` but non-empty reasoning,
+  // we surface the reasoning so the response isn't discarded as "empty".
+  let reasoning: string | undefined;
+  if (typeof message?.reasoning_content === 'string' && message.reasoning_content.length > 0) {
+    reasoning = message.reasoning_content;
+  } else if (typeof message?.reasoning === 'string' && message.reasoning.length > 0) {
+    reasoning = message.reasoning;
+  } else if (message?.extra_content && typeof message.extra_content === 'object') {
+    const ec = message.extra_content as Record<string, Record<string, unknown>>;
+    for (const ns of Object.values(ec)) {
+      const t = ns?.thinking;
+      if (typeof t === 'string' && t.length > 0) {
+        reasoning = t;
+        break;
+      }
+    }
+  }
 
   let toolCalls: ToolCall[] | undefined;
   const rawToolCalls = message?.tool_calls as Record<string, unknown>[] | undefined;
@@ -147,6 +187,7 @@ function parseCompletionResult(body: Record<string, unknown>): CompletionResult 
     toolCalls,
     finishReason: (choice.finish_reason as string) ?? 'stop',
     usage: tokenUsage,
+    reasoning,
   };
 }
 
@@ -349,9 +390,30 @@ export class OpenAICompatibleProvider implements ModelProvider {
 
     const json = (await response.json()) as Record<string, unknown>;
     const result = parseCompletionResult(json);
-    if (!result.content && (!result.toolCalls || result.toolCalls.length === 0)) {
+    const hasOutput = result.content || (result.toolCalls && result.toolCalls.length > 0) || result.reasoning;
+    if (!hasOutput) {
+      // A successful (200) response with no content and no tool calls. For a
+      // meta-model gateway (DMR-X `auto-*`), the routed upstream sometimes
+      // returns an empty completion (e.g. the `multi-model` route on large
+      // prompts). Transparently retry through the remaining meta-models
+      // before giving up — this keeps a task alive when one routing path duds.
+      const fallbacks = metaModelFallbacks(this.model);
+      for (const fallbackModel of fallbacks) {
+        const retryBody: Record<string, unknown> = { ...body, model: fallbackModel };
+        const retryResponse = await this.fetchJson('/v1/chat/completions', {
+          method: 'POST',
+          headers: this.headers,
+          body: JSON.stringify(retryBody),
+        });
+        if (!retryResponse.ok) continue;
+        const retryJson = (await retryResponse.json()) as Record<string, unknown>;
+        const retryResult = parseCompletionResult(retryJson);
+        if (retryResult.content || retryResult.toolCalls?.length || retryResult.reasoning) {
+          return { ...retryResult, rawContent: retryResult.content };
+        }
+      }
       throw new ProviderError(
-        `Model "${this.model}" returned empty content with no tool calls. This may indicate a content filter, rate limit, or provider issue.`,
+        `Model "${this.model}" returned empty content with no tool calls. This typically means the upstream returned a blank completion (not a content filter or rate limit). Retrying with a different model or smaller prompt may help.`,
         this.modelInfo.provider,
       );
     }
