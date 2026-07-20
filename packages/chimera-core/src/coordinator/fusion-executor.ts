@@ -356,6 +356,7 @@ export class FusionExecutor {
     // ── Judge Step (with failover chain) ──────────────────────────────
     const judgeStart = Date.now();
     let analysis: Partial<FusionAnalysis> | undefined;
+    let judgeParseFailed = false;
     const judgeModels = [config.judgeModel, ...(config.judgeFailover ?? [])];
     const prompt = this.buildJudgePrompt(task, panelResults);
 
@@ -372,9 +373,10 @@ export class FusionExecutor {
           parsed = extractJsonObject(judgeRes.content);
         } catch {
           // Judge returned prose/free text instead of JSON. Tolerate it: use
-          // the raw reply as the synthesized review rather than degrading the
-          // whole fusion run (the judge's prose is still a coherent verdict).
+          // the raw reply as the synthesized review, but flag the run as
+          // degraded so callers know the structured analysis was unavailable.
           this.safeEmit({ type: 'fusion_judge_parse_error', raw: judgeRes.content });
+          judgeParseFailed = true;
           parsed = null;
         }
 
@@ -427,7 +429,7 @@ export class FusionExecutor {
       totalTokens,
       totalCostUsd,
       durationMs: Date.now() - startTime,
-      degraded: false,
+      degraded: judgeParseFailed,
     };
   }
 

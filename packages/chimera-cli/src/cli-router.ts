@@ -11,7 +11,7 @@ import { LearningEngine } from '@chimera/learning';
 import { UserSkillModel, tierMessage, suggestNextValue, resolveActiveStyle } from '@chimera/learning';
 import type { ObservedCapability } from '@chimera/learning';
 import type { TieredMessage, SkillTier } from '@chimera/learning';
-import { ToolRegistry, ToolExecutor, allTools, getDiagnosticsForFile } from '@chimera/tools';
+import { ToolRegistry, ToolExecutor, HookExecutor, allTools, getDiagnosticsForFile, setAutoApprove } from '@chimera/tools';
 import {
   PermissionEngine,
   readOnlyProfile,
@@ -244,9 +244,12 @@ export class CliRouter {
 
     // Wire up tool system (kept intact — tools must still register).
     const toolRegistry = new ToolRegistry();
+    const hookExecutor = new HookExecutor();
     const toolExecutor = new ToolExecutor(
       toolRegistry,
       () => 'allow' as const, // Default: allow all tools
+      undefined,
+      hookExecutor,
     );
     for (const tool of allTools) {
       toolRegistry.register(tool as unknown as Parameters<typeof toolRegistry.register>[0]);
@@ -520,6 +523,13 @@ export class CliRouter {
         : editFilesProfile;
     const permissionEngine = new PermissionEngine(profile);
     ctx.toolExecutor.setPermissionEngine(permissionEngine);
+    // When running headless (--yolo or NONINTERACTIVE=1 / --yes), auto-approve
+    // the per-tool 'ask' gate so background/CI builds can actually write to
+    // disk instead of stalling on a stdin prompt that will never arrive.
+    if (yolo) {
+      setAutoApprove(true);
+      process.env.NONINTERACTIVE = '1';
+    }
 
     // #4 — Tool execution visibility: stream tool activity to the terminal
     // so the user sees what the agent is doing in real time.

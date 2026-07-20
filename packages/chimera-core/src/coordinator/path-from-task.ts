@@ -8,6 +8,13 @@
  * bare fenced code block can be written to the file the user asked for.
  */
 export function expectedPathFromTask(task: string): string | undefined {
+  // Prefer a path that follows a creation/output verb (e.g. "Write to
+  // ./report.md") so the orchestrator's force-write gate targets the REAL
+  // output file, not an unrelated file the task merely mentions reading.
+  const verbPath = task.match(
+    /\b(?:write|create|generate|output|report|save|produce|append|add)\b[^.]*?\b([A-Za-z0-9_\-./]+\.(?:rs|ts|js|jsx|tsx|py|toml|json|md|ya?ml|go|java|cpp|c|rb|php|txt|html|css|sh))\b/i,
+  );
+  if (verbPath) return verbPath[1];
   const m = task.match(/\b([A-Za-z0-9_\-./]+\.(?:rs|ts|js|jsx|tsx|py|toml|json|md|ya?ml|go|java|cpp|c|rb|php|txt|html|css|sh))\b/);
   return m ? m[1] : undefined;
 }

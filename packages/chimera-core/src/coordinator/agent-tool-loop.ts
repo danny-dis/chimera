@@ -386,7 +386,8 @@ export async function runAgentToolLoop(
   // so we must also check targetChanged to avoid a silent false `done`.
   const targetUnchanged = !!workspaceRoot && !!task && !targetChanged(task, workspaceRoot, targetBefore);
   const wantForce =
-    wantsFiles === true && canLoop && (!fileLandedOnDisk(task ?? '', workspaceRoot!) || targetUnchanged);
+    wantsFiles === true && canLoop &&
+    (wroteFileCount === 0 || !fileLandedOnDisk(task ?? '', workspaceRoot!) || targetUnchanged);
 
   if (wantForce) {
     realFiles = countSourceFiles(workspaceRoot!);

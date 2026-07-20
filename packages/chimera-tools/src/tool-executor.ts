@@ -2,6 +2,7 @@ import { createInterface } from 'node:readline';
 import type { ToolRegistry } from './tool-registry.js';
 import type { ToolContext, ToolResult, PermissionDecision } from './tool-schema.js';
 import type { PermissionEngine } from './permission/policy.js';
+import { HookExecutor } from './hooks/executor.js';
 
 export type PermissionChecker = (
   tool: string,
@@ -9,11 +10,61 @@ export type PermissionChecker = (
 ) => PermissionDecision;
 
 /**
- * Blocking prompt for an 'ask' decision. Returns 'allow' or 'deny'.
- * In non-interactive contexts (no TTY) default to 'deny' so automation
- * never silently approves a side-effecting action.
+ * Run pre-tool-use hooks. Returns the (possibly mutated) params and a block
+ * decision. Hooks never throw into the tool path — failures are logged and
+ * ignored so the agent keeps working (mirrors grok-build's suppressErrors).
  */
+async function runPreHooks(
+  hooks: HookExecutor | undefined,
+  toolName: string,
+  params: Record<string, unknown>,
+  context: ToolContext,
+): Promise<{ params: Record<string, unknown>; blocked: boolean; reason?: string }> {
+  if (!hooks) return { params, blocked: false };
+  let effective = params;
+  const results = await hooks.executeHooks('pre-tool-use', {
+    event: 'pre-tool-use',
+    toolName,
+    params: effective,
+    // Surface args to hook command/inline-script env as ARGS (JSON) so
+    // a gate hook can inspect the call (e.g. veto `rm -rf`).
+    data: { args: JSON.stringify(effective), tool: toolName, session: context.sessionId },
+    workspaceRoot: context.workspaceRoot ?? '',
+    sessionId: context.sessionId,
+  });
+  for (const r of results) {
+    if (r.modifiedParams) effective = r.modifiedParams;
+    if (r.block) {
+      return { params: effective, blocked: true, reason: r.reason };
+    }
+  }
+  return { params: effective, blocked: false };
+}
+
+/**
+ * Blocking prompt for an 'ask' decision. Returns 'allow' or 'deny'.
+ *
+ * In non-interactive contexts (no TTY) the historic default was 'deny' so
+ * automation never silently approved a side-effecting action. But that made
+ * headless builds (background runs, CI) unable to ever write to disk: the
+ * agents could read the repo but every destructive tool was auto-denied, so
+ * deliverables never landed. We now honor an explicit opt-in headless signal
+ * (NONINTERACTIVE=1, or setAutoApprove()) and auto-ALLOW when it is set —
+ * the caller must opt in deliberately, so an accidental non-TTY pipe still
+ * defaults to 'deny'.
+ */
+function isAutoApproveEnabled(): boolean {
+  return process.env.NONINTERACTIVE === '1' || autoApprove;
+}
+
+let autoApprove = false;
+/** Force auto-approval for headless/automation contexts (e.g. CLI --yes). */
+export function setAutoApprove(value: boolean): void {
+  autoApprove = value;
+}
+
 function promptAsk(toolName: string): Promise<PermissionDecision> {
+  if (isAutoApproveEnabled()) return Promise.resolve('allow');
   if (!process.stdin.isTTY) return Promise.resolve('deny');
   const rl = createInterface({ input: process.stdin, output: process.stdout });
   return new Promise((resolve) => {
@@ -28,15 +79,23 @@ export class ToolExecutor {
   private registry: ToolRegistry;
   private permissionCheck: PermissionChecker;
   private permissionEngine?: PermissionEngine;
+  private hooks?: HookExecutor;
 
   constructor(
     registry: ToolRegistry,
     permissionCheck: PermissionChecker,
     permissionEngine?: PermissionEngine,
+    hooks?: HookExecutor,
   ) {
     this.registry = registry;
     this.permissionCheck = permissionCheck;
     this.permissionEngine = permissionEngine;
+    this.hooks = hooks;
+  }
+
+  /** Attach a hook executor; hooks are loaded lazily per workspace. */
+  setHookExecutor(hooks: HookExecutor): void {
+    this.hooks = hooks;
   }
 
   /** Swap in a policy engine at startup (e.g. read-only mode toggle). */
@@ -57,6 +116,25 @@ export class ToolExecutor {
         error: `Tool "${toolName}" not found`,
         duration: 0,
       };
+    }
+
+    // Pre-tool-use hooks — gate or mutate before validation/execution.
+    // Lazily load workspace hooks on first call (no-op if none configured).
+    if (this.hooks && context.workspaceRoot) {
+      try {
+        await this.hooks.loadFromWorkspace(context.workspaceRoot);
+      } catch {
+        // ignore load errors — no hooks is a valid state
+      }
+      const pre = await runPreHooks(this.hooks, toolName, params, context);
+      if (pre.blocked) {
+        return {
+          success: false,
+          error: `Blocked by pre-tool-use hook: ${pre.reason ?? 'no reason given'}`,
+          duration: 0,
+        };
+      }
+      params = pre.params;
     }
 
     // Coerce model-emitted string args into the types the schema expects
