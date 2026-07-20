@@ -19,7 +19,7 @@
  *     before the refactor.
  */
 
-import { existsSync, readdirSync, statSync } from 'fs';
+import { existsSync, readdirSync, readFileSync, statSync } from 'fs';
 import { isAbsolute, resolve } from 'path';
 import type { EventStream } from '../event-stream.js';
 import type {
@@ -43,7 +43,34 @@ function statFile(root: string, rel: string): { mtime: number; size: number } | 
   }
 }
 
-/** Loose chat message shape — callers append richer fields per `mode`. */
+/**
+ * Extract file paths cited in a written report and verify each actually
+ * exists on disk. Catches the "hallucinated entry-point" failure mode where a
+ * model invents `src/ipfs.js` from a dependency name without ever reading it.
+ * Returns the list of cited paths that do NOT exist (the hallucinations).
+ */
+export function findMissingCitedPaths(content: string, root: string): string[] {
+  // Match repo-relative paths under known roots, greedily on valid path
+  // chars. Catches BOTH file paths (src/foo/bar.js) AND directory-style
+  // citations (src/client/, src/core/) — the latter is the shifted
+  // hallucination when a model avoids naming fake .js files but still
+  // invents folder structure from dependency names. Trailing slashes and
+  // sentence punctuation are trimmed before the disk check.
+  const PATH_RE = /(?:`|(?:^|[\s(]))((?:\.?\/)?(?:src|lib|app|server|client|packages|tests?|__tests?)\/[A-Za-z0-9_./-]+)/g;
+  const seen = new Set<string>();
+  const missing: string[] = [];
+  let m: RegExpExecArray | null;
+  while ((m = PATH_RE.exec(content)) !== null) {
+    const raw = m[1].replace(/^\.\//, '').replace(/[\/.,;:]+$/, '');
+    if (seen.has(raw)) continue;
+    seen.add(raw);
+    const abs = isAbsolute(raw) ? raw : resolve(root, raw);
+    if (!existsSync(abs)) missing.push(raw);
+  }
+  return missing;
+}
+
+
 export interface LoopChatMessage {
   role: 'system' | 'user' | 'assistant' | 'tool';
   content: string;
@@ -501,6 +528,54 @@ export async function runAgentToolLoop(
     }
   } else if (workspaceRoot) {
     realFiles = countSourceFiles(workspaceRoot);
+  }
+
+  // ── Post-write path validation ────────────────────────────────────
+  // Ground-truth check: if a file was written (via the force gate or the
+  // last-resort fallback) and it cites source paths that do NOT exist on
+  // disk, the model hallucinated entry points (e.g. inventing src/ipfs.js
+  // from a dependency name). Force ONE correction pass that rewrites the
+  // file with only verified paths. This is the deterministic counterpart to
+  // the prompt-side "NO HALLUCINATED FILE PATHS" instruction.
+  if (targetPath && wroteFileCount > 0 && fileLandedOnDisk(targetPath, workspaceRoot ?? '')) {
+    try {
+      const written = readFileSync(resolve(workspaceRoot ?? '.', targetPath), 'utf8');
+      const missing = findMissingCitedPaths(written, workspaceRoot ?? '.');
+      if (missing.length > 0 && toolDefs) {
+        const correction = await completeWithRetry(
+          provider,
+          [
+            ...(systemPrompt ? [{ role: 'system' as const, content: systemPrompt }] : []),
+            {
+              role: 'user' as const,
+              content:
+                `The report you just wrote to \`${targetPath}\` cites file paths that DO NOT exist in this repository: ` +
+                missing.map((p) => `\`${p}\``).join(', ') + '. ' +
+                'You never read these files — they are invented. Rewrite the report so every cited path is real ' +
+                '(use list_directory to confirm the actual structure if needed). Then call write_file to overwrite ' +
+                `\`${targetPath}\` with the corrected content. Do NOT name any path you have not verified on disk.\n\n` +
+                `TASK: ${task ?? ''}`,
+            },
+          ],
+          { ...options, tools: toolDefs, toolChoice: { type: 'function', function: { name: 'write_file' } } },
+          eventStream,
+          'path-fix',
+        );
+        if (correction.toolCalls && correction.toolCalls.length > 0) {
+          await runToolCalls({
+            toolCalls: correction.toolCalls,
+            toolExecutor: toolExecutor ?? null,
+            toolRegistry: toolRegistry ?? null,
+            eventStream,
+            workspaceRoot: workspaceRoot!,
+            sessionId,
+          });
+          eventStream.append({ type: 'hallucinated_paths_corrected', file: targetPath, removed: missing } as any);
+        }
+      }
+    } catch {
+      /* best-effort; do not crash the run */
+    }
   }
 
   return {

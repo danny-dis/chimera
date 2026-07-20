@@ -549,7 +549,7 @@ export class SoloExecutor {
         `TASK: ${task}${contextBlock}\n\nANSWER:`;
     }
     const thoughtPrefix = thought ? `STRATEGIC PLAN:\n${thought}\n\n` : '';
-    return `You are the writer. Provide a complete answer to the following task. ${thought ? 'Follow the strategic plan provided.' : 'Be specific and concrete.'}\n\n${thoughtPrefix}TASK: ${task}${contextBlock}\n\nANSWER:`;
+    return `You are the writer. Provide a complete answer to the following task. ${thought ? 'Follow the strategic plan provided.' : 'Be specific and concrete.'}\n\nCRITICAL — NO HALLUCINATED FILE PATHS: Only cite source files you have actually opened with read_file (or seen via list_directory). Before naming any file path in your answer, confirm it exists on disk. Do NOT invent file paths from dependency names or guesses — if you have not verified a path, say "I did not inspect this file" instead of naming it.\n\n${thoughtPrefix}TASK: ${task}${contextBlock}\n\nANSWER:`;
   }
 
   private buildReviewPrompt(task: string, draft: string, isConversational?: boolean, context?: string): string {
