@@ -393,7 +393,7 @@ export async function runAgentToolLoop(
     realFiles = countSourceFiles(workspaceRoot!);
     const MAX_FORCE = forceMinFiles ?? 3;
     let forceAttempts = 0;
-    while ((!fileLandedOnDisk(task ?? '', workspaceRoot!) || !targetChanged(task ?? '', workspaceRoot!, targetBefore)) && forceAttempts < MAX_FORCE) {
+    while ((!fileLandedOnDisk(task ?? '', workspaceRoot!) || !targetChanged(task ?? '', workspaceRoot!, targetBefore) || wroteFileCount === 0) && forceAttempts < MAX_FORCE) {
       forceAttempts++;
       const forceMessages: LoopChatMessage[] = [];
       if (systemPrompt) forceMessages.push({ role: 'system', content: systemPrompt });
@@ -415,7 +415,18 @@ export async function runAgentToolLoop(
         const forced = await completeWithRetry(
           provider,
           forceMessages,
-          { ...options, ...(toolDefs ? { tools: toolDefs } : {}) },
+          {
+            ...options,
+            ...(toolDefs ? { tools: toolDefs } : {}),
+            // Force the model to actually EMIT a write_file tool call instead
+            // of narrating the change in prose. Without this, auto-coding
+            // returns the deliverable as text with no tool call and the run
+            // ends at needs_user with nothing on disk — the exact bug this
+            // gate exists to prevent.
+            ...(toolDefs
+              ? { toolChoice: { type: 'function', function: { name: 'write_file' } } }
+              : {}),
+          },
           eventStream,
           'force',
         );
@@ -457,6 +468,35 @@ export async function runAgentToolLoop(
         realFiles = countSourceFiles(workspaceRoot!);
       } catch {
         /* best-effort; do not crash the run */
+      }
+    }
+
+    // ── Last-resort persistence ───────────────────────────────────────
+    // If even forced tool_choice write_file didn't land a real file (the
+    // model still emitted prose, or the forced write failed), and the task
+    // names a documentation/report target, persist the model's final prose
+    // output to that path so the artifact is never silently lost. Restricted
+    // to safe-doc extensions (.md/.txt/.json/.yaml/.yml): for code files prose
+    // is not valid source, so we deliberately do NOT fall back there.
+    if (wroteFileCount === 0 && targetPath && lastContent.trim().length > 0) {
+      const ext = targetPath.split('.').pop()?.toLowerCase() ?? '';
+      const SAFE_DOC_EXT = new Set(['md', 'txt', 'json', 'yaml', 'yml']);
+      if (SAFE_DOC_EXT.has(ext) && !fileLandedOnDisk(targetPath, workspaceRoot!)) {
+        try {
+          await runToolCalls({
+            toolCalls: [
+              { id: 'chimera-force-fallback', name: 'write_file', arguments: { path: targetPath, content: lastContent } },
+            ],
+            toolExecutor: toolExecutor ?? null,
+            toolRegistry: toolRegistry ?? null,
+            eventStream,
+            workspaceRoot: workspaceRoot!,
+            sessionId,
+          });
+          if (fileLandedOnDisk(targetPath, workspaceRoot!)) wroteFileCount++;
+        } catch {
+          /* best-effort; do not crash the run */
+        }
       }
     }
   } else if (workspaceRoot) {
