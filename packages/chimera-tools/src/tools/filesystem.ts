@@ -214,6 +214,10 @@ export const readFileTool: ToolDefinition<typeof ReadFileParamsSchema, typeof Re
 const WriteFileParamsSchema = z.object({
   path: PathSchema,
   content: z.string(),
+  // Alias accepted because some models emit `contents` (plural) instead of
+  // `content`. Without this the whole tool call is rejected with
+  // "Parameter validation failed: content: Required" and no file is written.
+  contents: z.string().optional(),
   overwrite: z.boolean().default(false),
 });
 
@@ -252,7 +256,11 @@ export const writeFileTool: ToolDefinition<typeof WriteFileParamsSchema, typeof 
       }
     }
 
-    const content = Buffer.from(params.content, 'utf-8');
+    // Normalize the `contents` alias into `content` (some models emit the
+    // plural key). Prefer the canonical `content` when both are present.
+    const contentText = params.content ?? params.contents ?? '';
+
+    const content = Buffer.from(contentText, 'utf-8');
 
     // Small/free models routinely emit a *truncated* tool-call: the content
     // argument gets cut mid-token, mid-bracket, or with unterminated strings.
@@ -261,10 +269,10 @@ export const writeFileTool: ToolDefinition<typeof WriteFileParamsSchema, typeof 
     // orchestrator's completion gate can flag the task instead of reporting
     // a false `done`. This is deliberately conservative (low false-positive):
     // only obviously-unterminated content is refused.
-    if (params.content.length === 0) {
+    if (contentText.length === 0) {
       throw new Error('Refusing empty write: content must be non-empty.');
     }
-    const truncated = contentLooksTruncated(params.content);
+    const truncated = contentLooksTruncated(contentText);
     if (truncated) {
       throw new Error(
         'Refusing truncated write: content appears incomplete ' +

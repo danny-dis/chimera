@@ -137,6 +137,26 @@ describe('Filesystem Tools', () => {
         writeFileTool.execute({ path: '../../etc/evil.txt', content: 'bad' }, makeContext()),
       ).rejects.toThrow('Path escapes workspace root');
     });
+
+    it('accepts the `contents` alias (plural key) — regression for models that emit contents instead of content', async () => {
+      const result = await writeFileTool.execute(
+        { path: 'alias.txt', contents: 'via-contents' } as any,
+        makeContext(),
+      );
+      expect(result.created).toBe(true);
+      expect(result.bytesWritten).toBe(12);
+      const fileContent = await fs.readFile(path.join(workspaceRoot, 'alias.txt'), 'utf-8');
+      expect(fileContent).toBe('via-contents');
+    });
+
+    it('prefers canonical `content` when both content and contents are present', async () => {
+      const result = await writeFileTool.execute(
+        { path: 'both.txt', content: 'canonical', contents: 'alias' } as any,
+        makeContext(),
+      );
+      const fileContent = await fs.readFile(path.join(workspaceRoot, 'both.txt'), 'utf-8');
+      expect(fileContent).toBe('canonical');
+    });
   });
 
   describe('list_directory', () => {
