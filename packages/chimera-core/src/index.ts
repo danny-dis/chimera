@@ -18,7 +18,15 @@ export type { MemoryItem, MemoryMetadata, MemoryQuery, MemoryResult, EmbeddingPr
 export type { AgentMemoryItem, AgentMemoryType, AgentMemoryQuery, AgentMemorySnapshot } from './memory/index.js';
 
 // Coordinator
-export { CoordinatorEngine, TaskDecomposer, SubAgentSpawner, ResultAggregator } from './coordinator/index.js';
+export { CoordinatorEngine, TaskDecomposer, SubAgentSpawner, ResultAggregator, FusionExecutor } from './coordinator/index.js';
+export type {
+  FusionConfig,
+  FusionContext,
+  FusionPanelResult,
+  FusionResultV2,
+  FusionProviderFactory,
+  FusionAnalysis,
+} from './coordinator/index.js';
 export {
   AttemptTrail,
   findDeterministicSkill,

@@ -11,7 +11,9 @@
     "dev": "turbo dev",
     "test": "turbo test",
     "lint": "turbo lint",
-    "typecheck": "turbo typecheck",
+    "typecheck": "node scripts/check-build-integrity.mjs && turbo typecheck",
+    "check:build": "node scripts/check-build-integrity.mjs",
+    "fix:build": "node scripts/check-build-integrity.mjs --fix",
     "chimera": "node packages/chimera-cli/dist/index.js"
   },
   "devDependencies": {

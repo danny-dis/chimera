@@ -1,6 +1,7 @@
 import { Command } from 'commander';
 import * as readline from 'readline';
 import { resolve } from 'path';
+import { readFileSync } from 'fs';
 import { SessionOrchestrator, EventStream, LongTermMemory, MemoryPersistence, CoordinatorEngine, runWorkflow, SchedulerManager } from '@chimera/core';
 import type { LLMProvider, OrchestratorResult, ToolExecutorInterface, ToolRegistryInterface, WorkflowDefinition } from '@chimera/core';
 import type { Mode, DeliberationMode } from '@chimera/core';
@@ -35,6 +36,23 @@ import type { ToolActivity } from '@chimera/tui';
 import type { AgentRole } from '@chimera/core';
 import { createFallbackProvider } from './fallback-provider.js';
 import { runSetup } from './commands/setup.js';
+
+/**
+ * Read the installed CLI version off our own package.json.
+ *
+ * This module is emitted as CommonJS (see the Ink note above), so `__dirname`
+ * is available and resolves to `dist/` — the package root is one level up.
+ * Never throws: a missing or unreadable manifest degrades to 'unknown' rather
+ * than taking down every `chimera` invocation.
+ */
+function readPackageVersion(): string {
+  try {
+    const manifest = readFileSync(resolve(__dirname, '..', 'package.json'), 'utf-8');
+    return (JSON.parse(manifest) as { version?: string }).version ?? 'unknown';
+  } catch {
+    return 'unknown';
+  }
+}
 
 function adaptProvider(provider: ModelProvider): LLMProvider {
   return {
@@ -648,6 +666,7 @@ export class CliRouter {
     this.program
       .name('chimera')
       .description('Chimera — sovereign AI coding agent')
+      .version(readPackageVersion(), '-V, --version', 'output the installed chimera version')
       .option('-v, --verbose', 'enable verbose event logging')
       .option('--no-learn', 'disable automatic learning after each session')
       .option('--repl', 'launch line-based REPL instead of the TUI dashboard')

@@ -16,7 +16,14 @@ export type {
 export { DeliberationEngine } from './deliberation/index.js';
 export type { DeliberationResult, DeliberationConfig } from './deliberation/index.js';
 export { FusionExecutor } from './fusion-executor.js';
-export type { FusionConfig, FusionResultV2, FusionAnalysis, FusionPanelResult } from './fusion-executor.js';
+export type {
+  FusionConfig,
+  FusionContext,
+  FusionPanelResult,
+  FusionResultV2,
+  FusionProviderFactory,
+  FusionAnalysis,
+} from './fusion-executor.js';
 export { BiomeLinter } from './biome-linter.js';
 export type { BiomeLinterConfig } from './biome-linter.js';
 

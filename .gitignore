@@ -7,6 +7,18 @@ node_modules/
 chimera/
 .mimocode/
 dist/
+*.tsbuildinfo
+
+# Compiler output must never land in a source tree. tsc writes these next to
+# the sources whenever it runs without `outDir` (e.g. a bare `tsc file.ts`),
+# and `include: ["src/**/*"]` then picks the .d.ts back up as an input.
+packages/*/src/**/*.js
+packages/*/src/**/*.js.map
+packages/*/src/**/*.d.ts
+packages/*/src/**/*.d.ts.map
+# ...but hand-written ambient module declarations are legitimate sources.
+!packages/*/src/**/*-ambient.d.ts
+!packages/chimera-workflows/src/js-yaml.d.ts
 .chimera/
 .chimera-worktrees/
 .claude/worktrees/
