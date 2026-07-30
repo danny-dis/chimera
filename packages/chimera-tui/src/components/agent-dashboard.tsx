@@ -2,8 +2,9 @@ import React from 'react';
 import { Box, Text } from 'ink';
 import type { Agent, SkillModelView } from '../types.js';
 import { statusSymbols } from './tui-utils.js';
-import { zen, tiered } from '../theme.js';
+import { zen, hierarchy, tiered, roleColors, PANEL_BORDER } from '../theme.js';
 import { AGENT_CAPABILITIES, PRESET_CAPABILITIES, getAgentCapability } from '../agent-capabilities.js';
+import { EmptyState } from './empty-state.js';
 
 interface AgentDashboardProps {
   agents: Agent[];
@@ -12,7 +13,7 @@ interface AgentDashboardProps {
 }
 
 const AgentRow: React.FC<{ agent: Agent; contentWidth?: number }> = ({ agent, contentWidth }) => {
-  const roleColor = zen.role[agent.role] ?? 'white';
+  const roleColor = roleColors(agent.role);
   const status = statusSymbols[agent.status];
   const showDetails = !contentWidth || contentWidth >= 30;
   const capability = getAgentCapability(agent.role);
@@ -27,15 +28,15 @@ const AgentRow: React.FC<{ agent: Agent; contentWidth?: number }> = ({ agent, co
         <Text bold color={roleColor}>
           {showDetails ? capability.title.padEnd(13) : capability.title}
         </Text>
-        {showDetails && <Text dimColor>{agent.provider}/{agent.model}</Text>}
-        {showDetails && tokenStr && <Text dimColor> {tokenStr}</Text>}
+        {showDetails && <Text {...hierarchy.tertiary}>{agent.provider}/{agent.model}</Text>}
+        {showDetails && tokenStr && <Text {...hierarchy.tertiary}> {tokenStr}</Text>}
         {agent.progress !== undefined && (
           <Text color={zen.accent}> [{Math.round(agent.progress * 100)}%]</Text>
         )}
       </Box>
       {showDetails && (
         <Box marginLeft={2}>
-          <Text dimColor>{capability.capability}</Text>
+          <Text {...hierarchy.tertiary}>{capability.capability}</Text>
         </Box>
       )}
     </Box>
@@ -46,17 +47,17 @@ const CapabilityRow: React.FC<{ capability: (typeof AGENT_CAPABILITIES)[number];
   capability,
   compact,
 }) => {
-  const roleColor = zen.role[capability.role] ?? 'white';
+  const roleColor = roleColors(capability.role);
 
   return (
     <Box flexDirection="column" marginBottom={compact ? 0 : 1}>
       <Box>
         <Text color={roleColor} bold>{capability.title.padEnd(compact ? 0 : 13)}</Text>
-        {!compact && <Text dimColor>{capability.capability}</Text>}
+        {!compact && <Text {...hierarchy.tertiary}>{capability.capability}</Text>}
       </Box>
       {!compact && (
         <Box marginLeft={15}>
-          <Text dimColor>Outputs: {capability.outputs}</Text>
+          <Text {...hierarchy.tertiary}>Outputs: {capability.outputs}</Text>
         </Box>
       )}
     </Box>
@@ -71,12 +72,12 @@ export const AgentDashboard: React.FC<AgentDashboardProps> = ({ agents, contentW
   const compact = Boolean(contentWidth && contentWidth < 48);
 
   return (
-    <Box flexDirection="column" borderStyle="single" borderColor={zen.borderActive} paddingX={1}>
+    <Box flexDirection="column" borderStyle={PANEL_BORDER} borderColor={zen.borderActive} paddingX={1}>
       <Box marginBottom={1}>
         <Text bold color={zen.accent}>
           {contentWidth && contentWidth < 25 ? 'Agents' : 'Agent Control'}
         </Text>
-        <Text dimColor>
+        <Text {...hierarchy.tertiary}>
           {' '}
           ({agents.length}{running > 0 ? `, ${running} run` : ''}{completed > 0 ? `, ${completed} done` : ''}
           {errored > 0 ? `, ${errored} err` : ''})
@@ -85,11 +86,16 @@ export const AgentDashboard: React.FC<AgentDashboardProps> = ({ agents, contentW
 
       <Box flexDirection="column" marginBottom={1}>
         <Text bold>Live agents</Text>
-        {agents.length === 0 && <Text dimColor>{tiered({
-          beginner: 'No active agents yet — when a task starts, the agents assigned by your chosen preset appear here with their status and what they can do.',
-          intermediate: 'No active agents. Capabilities remain available by preset.',
-          advanced: 'No active agents.',
-        }, skillModel)}</Text>}
+        {agents.length === 0 && (
+          <EmptyState
+            icon="○"
+            message={tiered({
+              beginner: 'No active agents yet — when a task starts, the agents assigned by your chosen preset appear here with their status and what they can do.',
+              intermediate: 'No active agents. Capabilities remain available by preset.',
+              advanced: 'No active agents.',
+            }, skillModel)}
+          />
+        )}
         {agents.map((agent) => (
           <AgentRow key={agent.id} agent={agent} contentWidth={contentWidth} />
         ))}
@@ -108,7 +114,7 @@ export const AgentDashboard: React.FC<AgentDashboardProps> = ({ agents, contentW
           {PRESET_CAPABILITIES.map((preset) => (
             <Box key={preset.preset}>
               <Text color={zen.accent}>{preset.label.padEnd(8)}</Text>
-              <Text dimColor>{preset.capability}</Text>
+              <Text {...hierarchy.tertiary}>{preset.capability}</Text>
             </Box>
           ))}
         </Box>

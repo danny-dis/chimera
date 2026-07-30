@@ -1,7 +1,7 @@
 import React, { useState, useCallback } from 'react';
 import { Box, Text, useInput } from 'ink';
 import type { Mode } from '@chimera/core';
-import { zen, MODES, MODE_META, tiered } from '../theme.js';
+import { zen, hierarchy, MODES, MODE_META, tiered, PANEL_BORDER } from '../theme.js';
 import type { SkillModelView } from '../types.js';
 
 interface ModeSelectorProps {
@@ -77,7 +77,7 @@ export const ModeSelector: React.FC<ModeSelectorProps> = ({
   }
 
   return (
-    <Box flexDirection="column" borderStyle="single" borderColor={zen.accent} paddingX={1}>
+    <Box flexDirection="column" borderStyle={PANEL_BORDER} borderColor={zen.accent} paddingX={1}>
       <Text bold color={zen.accent}>Mode</Text>
       {MODES.map((m) => {
         const isSelected = m === mode;
@@ -89,7 +89,7 @@ export const ModeSelector: React.FC<ModeSelectorProps> = ({
             <Text bold={isSelected} color={isSelected ? zen.accent : zen.fg}>
               {MODE_META[m].icon} {m}
             </Text>
-            <Text dimColor>{(!contentWidth || contentWidth >= 35) ? ` — ${tiered(MODE_META[m].desc, skillModel).slice(0, Math.max(0, contentWidth ? contentWidth - 12 : 30))}` : ''}</Text>
+            <Text {...hierarchy.tertiary}>{(!contentWidth || contentWidth >= 35) ? ` — ${tiered(MODE_META[m].desc, skillModel).slice(0, Math.max(0, contentWidth ? contentWidth - 12 : 30))}` : ''}</Text>
           </Box>
         );
       })}

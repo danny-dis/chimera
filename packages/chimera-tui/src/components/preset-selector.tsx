@@ -1,7 +1,7 @@
 import React, { useState, useCallback } from 'react';
 import { Box, Text, useInput } from 'ink';
 import type { DeliberationMode } from '@chimera/core';
-import { zen, PRESETS, PRESET_META, tiered } from '../theme.js';
+import { zen, hierarchy, PRESETS, PRESET_META, tiered, PANEL_BORDER } from '../theme.js';
 import type { SkillModelView } from '../types.js';
 
 interface PresetSelectorProps {
@@ -77,7 +77,7 @@ export const PresetSelector: React.FC<PresetSelectorProps> = ({
   }
 
   return (
-    <Box flexDirection="column" borderStyle="single" borderColor={zen.agent} paddingX={1}>
+    <Box flexDirection="column" borderStyle={PANEL_BORDER} borderColor={zen.agent} paddingX={1}>
       <Text bold color={zen.agent}>Preset</Text>
       {PRESETS.map((p) => {
         const isSelected = p === preset;
@@ -89,7 +89,7 @@ export const PresetSelector: React.FC<PresetSelectorProps> = ({
             <Text bold={isSelected} color={isSelected ? zen.agent : zen.fg}>
               {PRESET_META[p].icon} {p}
             </Text>
-            <Text dimColor>{(!contentWidth || contentWidth >= 35) ? ` — ${tiered(PRESET_META[p].desc, skillModel).slice(0, Math.max(0, contentWidth ? contentWidth - 12 : 30))}` : ''}</Text>
+            <Text {...hierarchy.tertiary}>{(!contentWidth || contentWidth >= 35) ? ` — ${tiered(PRESET_META[p].desc, skillModel).slice(0, Math.max(0, contentWidth ? contentWidth - 12 : 30))}` : ''}</Text>
           </Box>
         );
       })}

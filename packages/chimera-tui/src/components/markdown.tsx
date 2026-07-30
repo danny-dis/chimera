@@ -1,7 +1,7 @@
 import React from 'react';
 import { Box, Text } from 'ink';
 import { tokenizeCode } from '../syntax.js';
-import { zen } from '../theme.js';
+import { zen, PANEL_BORDER } from '../theme.js';
 
 // ── Token types ──────────────────────────────────────────────────────────
 
@@ -262,7 +262,7 @@ const BlockTokenRenderer: React.FC<{ token: Token }> = ({ token }) => {
         ? token.lines.map((line) => tokenizeCode(line, token.lang!))
         : token.lines.map((line) => [{ value: line, color: 'white' as const }]);
       return (
-        <Box flexDirection="column" marginTop={1} borderStyle="single" borderColor={zen.muted} width="100%">
+        <Box flexDirection="column" marginTop={1} borderStyle={PANEL_BORDER} borderColor={zen.muted} width="100%">
           {token.lang && (
             <Box paddingLeft={1}>
               <Text dimColor>{token.lang}</Text>

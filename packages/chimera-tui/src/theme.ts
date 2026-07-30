@@ -4,11 +4,77 @@ import type { SkillTier } from './types.js';
 /**
  * Zen theme — the single design system for the Chimera TUI.
  * Every component reads colors from here; no raw color strings allowed.
+ *
+ * ── Color strategy ──────────────────────────────────────────────────────
+ * Two families of tokens live in this palette, deliberately treated
+ * differently:
+ *
+ *  1. Body text / structure (`bg`, `fg`, `muted`, `panel`, `border`) stay as
+ *     plain ANSI-16 names ('white', 'gray', ...). These map onto whatever
+ *     16-color palette the user's terminal is configured with, so they
+ *     automatically stay readable on both light- and dark-background
+ *     terminals. Hard-coding these as truecolor hex would risk rendering
+ *     near-invisible text on a light-theme terminal (e.g. a near-white
+ *     foreground hex on a white background) — ANSI names don't have that
+ *     failure mode because the terminal itself resolves them.
+ *
+ *  2. Semantic / brand accents (`accent`, `success`, `warning`, `error`,
+ *     `info`, `agent`, `borderActive`, `highlight`, `role.*`, `syntax.*`)
+ *     are promoted to truecolor hex when the terminal supports it, so the
+ *     palette reads as an intentional, designed hue set rather than the
+ *     8 basic ANSI colors every other CLI uses. Each hex value is chosen
+ *     at a mid lightness so it holds contrast against both black and
+ *     white backgrounds.
+ *
+ * Ink passes color strings straight to chalk, which already downgrades
+ * truecolor hex to the nearest ANSI-256/16 color when it detects a
+ * lower-capability terminal — this module's `detectColorSupport()` is a
+ * belt-and-suspenders layer on top of that, for the cases the brief calls
+ * out explicitly (`FORCE_COLOR`, `COLORTERM`) plus a couple of well-known
+ * terminal fingerprints, so the *fallback string itself* (not just the
+ * rendered bytes) is a plain ANSI name — useful in contexts that don't go
+ * through chalk's downsampling at all (e.g. logging, snapshot tests).
  */
-export const zen = {
-  bg: 'black',
-  fg: 'white',
-  muted: 'gray',
+
+export type ColorSupport = 'truecolor' | 'fallback';
+
+/** Terminal programs known to render 24-bit color reliably even when
+ * `COLORTERM` doesn't survive a intermediate hop (tmux/ssh/etc). */
+const TRUECOLOR_TERM_PROGRAMS = new Set(['vscode', 'iTerm.app', 'WezTerm', 'Hyper']);
+
+/**
+ * Explicit truecolor capability check. Conservative by default — falls
+ * back to plain ANSI unless there's positive evidence of 24-bit support.
+ */
+export function detectColorSupport(env: NodeJS.ProcessEnv = process.env): ColorSupport {
+  // Explicit opt-out wins over everything.
+  if (env.FORCE_COLOR === '0' || env.FORCE_COLOR === 'false') return 'fallback';
+  // Explicit opt-in.
+  if (env.FORCE_COLOR === '3' || env.FORCE_COLOR === 'truecolor') return 'truecolor';
+  // De-facto standard signal, set by most modern terminals.
+  if (env.COLORTERM === 'truecolor' || env.COLORTERM === '24bit') return 'truecolor';
+  // Windows Terminal supports truecolor but doesn't always set COLORTERM.
+  if (env.WT_SESSION) return 'truecolor';
+  if (env.TERM_PROGRAM && TRUECOLOR_TERM_PROGRAMS.has(env.TERM_PROGRAM)) return 'truecolor';
+  return 'fallback';
+}
+
+export const colorSupport: ColorSupport = detectColorSupport();
+
+// ── Accent palette (truecolor + fallback pair) ──────────────────────────
+const ACCENTS_TRUECOLOR = {
+  accent: '#22b8cf',
+  accentDim: '#0b7285',
+  success: '#2f9e44',
+  warning: '#c9820a',
+  error: '#e03131',
+  info: '#3573e0',
+  agent: '#8b5cf6',
+  borderActive: '#22b8cf',
+  highlight: '#22b8cf',
+} as const;
+
+const ACCENTS_FALLBACK = {
   accent: 'cyan',
   accentDim: 'gray',
   success: 'green',
@@ -16,31 +82,100 @@ export const zen = {
   error: 'red',
   info: 'blue',
   agent: 'magenta',
-  panel: 'gray',
-  border: 'gray',
   borderActive: 'cyan',
   highlight: 'cyan',
-  // Role hues — keep in sync with `roleColors` below.
-  role: {
-    writer: 'green',
-    reviewer: 'blue',
-    challenger: 'yellow',
-    synthesizer: 'magenta',
-    planner: 'cyan',
-    researcher: 'white',
-    summarizer: 'gray',
-  } as Record<AgentRole, string>,
-  // Syntax highlighting palette — consumed by syntax.ts / markdown.tsx.
-  syntax: {
-    keyword: 'magenta',
-    string: 'green',
-    comment: 'gray',
-    number: 'yellow',
-    function: 'cyan',
-    type: 'blue',
-    plain: 'white',
-  },
 } as const;
+
+const ROLE_TRUECOLOR: Record<AgentRole, string> = {
+  writer: '#2f9e44',
+  reviewer: '#3573e0',
+  challenger: '#c9820a',
+  synthesizer: '#8b5cf6',
+  planner: '#22b8cf',
+  researcher: '#94a3b8',
+  summarizer: '#6b7280',
+};
+
+const ROLE_FALLBACK: Record<AgentRole, string> = {
+  writer: 'green',
+  reviewer: 'blue',
+  challenger: 'yellow',
+  synthesizer: 'magenta',
+  planner: 'cyan',
+  researcher: 'white',
+  summarizer: 'gray',
+};
+
+const SYNTAX_TRUECOLOR = {
+  keyword: '#8b5cf6',
+  string: '#2f9e44',
+  comment: 'gray',
+  number: '#c9820a',
+  function: '#22b8cf',
+  type: '#3573e0',
+  plain: 'white',
+} as const;
+
+const SYNTAX_FALLBACK = {
+  keyword: 'magenta',
+  string: 'green',
+  comment: 'gray',
+  number: 'yellow',
+  function: 'cyan',
+  type: 'blue',
+  plain: 'white',
+} as const;
+
+const accents = colorSupport === 'truecolor' ? ACCENTS_TRUECOLOR : ACCENTS_FALLBACK;
+const roleColorMap = colorSupport === 'truecolor' ? ROLE_TRUECOLOR : ROLE_FALLBACK;
+const syntaxColorMap = colorSupport === 'truecolor' ? SYNTAX_TRUECOLOR : SYNTAX_FALLBACK;
+
+export const zen = {
+  bg: 'black',
+  fg: 'white',
+  muted: 'gray',
+  panel: 'gray',
+  border: 'gray',
+  ...accents,
+  // Role hues — keep in sync with `roleColors` below.
+  role: roleColorMap,
+  // Syntax highlighting palette — consumed by syntax.ts / markdown.tsx.
+  syntax: syntaxColorMap,
+};
+
+// ── Text hierarchy ───────────────────────────────────────────────────────
+// Three consistent weights, spread across every component instead of ad
+// hoc `dimColor`/`bold` combinations. Spread onto `<Text {...hierarchy.x}>`.
+export const hierarchy = {
+  /** Headlines, selected rows, anything that should anchor the eye first. */
+  primary: { bold: true, color: zen.fg } as const,
+  /** Normal body copy — the default reading weight. */
+  secondary: { color: zen.fg } as const,
+  /** De-emphasized metadata: timestamps, hints, placeholders. */
+  tertiary: { dimColor: true, color: zen.muted } as const,
+};
+
+// ── Spacing scale ────────────────────────────────────────────────────────
+// Terminal rows/cols are integers, so this is intentionally small. Applied
+// uniformly instead of scattering bare `marginTop={1}` throughout.
+export const SPACING = {
+  none: 0,
+  sm: 1,
+  md: 2,
+  lg: 3,
+} as const;
+
+// ── Border treatment ─────────────────────────────────────────────────────
+// One border style for every panel in the app (previously an arbitrary mix
+// of 'round' / 'single' / 'double'). Focus/emphasis is communicated purely
+// through color: `zen.borderActive` for focused/live panels, `zen.border`
+// for everything else.
+export const PANEL_BORDER = 'round' as const;
+
+/** Resolve the border color for a panel given its focus state. */
+export function panelBorderColor(focused: boolean): string {
+  return focused ? zen.borderActive : zen.border;
+}
 
 // ── Layout constants ──────────────────────────────────────────────────
 export const MIN_COLUMNS = 80;

@@ -1,4 +1,10 @@
+import { promises as fsp } from 'node:fs';
+import path from 'node:path';
 import type { Mode, DeliberationMode } from '@chimera/core';
+// Deep subpath, not the '@chimera/tools' barrel: the barrel drags in LSP, MCP
+// and the sandbox, which cost ~35s to load in tests and would delay TUI
+// startup. trust.js only needs fs/os/path.
+import { trustWorkspace, trustStorePath } from '@chimera/tools/hooks/trust';
 import type { CostData, SkillModelView } from '../types.js';
 import { AGENT_CAPABILITIES, PRESET_CAPABILITIES } from '../agent-capabilities.js';
 import { tiered } from '../theme.js';
@@ -120,6 +126,7 @@ export const HELP_TEXT = [
   '    /permissions                      — show current permission mode',
   '    /config                           — show resolved config',
   '    /sandbox                          — show sandbox state',
+  '    /trust <path>                     — trust workspace (enable hooks)',
   '',
   '  Account + memory:',
   '    /login                            — sign in for cloud features',
@@ -192,6 +199,16 @@ export function getHelpText(model?: SkillModelView): string[] {
     intermediate: HELP_TEXT,
     advanced: HELP_TEXT_ADVANCED,
   }, model);
+}
+
+/** Read the trust store as a list of canonical paths ([] if it doesn't exist). */
+async function readTrustStore(): Promise<string[]> {
+  try {
+    const content = await fsp.readFile(trustStorePath(), 'utf-8');
+    return content.split('\n').map((l) => l.trim()).filter(Boolean);
+  } catch {
+    return [];
+  }
 }
 
 // ── Dispatch ─────────────────────────────────────────────────────────────
@@ -467,6 +484,50 @@ export async function runCommand(
         ],
       };
 
+    case 'trust': {
+      // Runs in-place rather than deferring to the CLI: the TUI is launched
+      // *from* the CLI, so "exit and run it there" would mean abandoning the
+      // session just to enable hooks. Same trust store as the CLI's /trust.
+      const untrust = args.includes('--untrust');
+      const list = args.includes('--list');
+      const target = args.find((a) => !a.startsWith('--'));
+
+      if (list) {
+        const entries = await readTrustStore();
+        if (entries.length === 0) return { output: ['  No trusted workspaces.'] };
+        return {
+          output: [`  Trusted workspaces (${entries.length}):`, ...entries.map((e) => `    ${e}`)],
+        };
+      }
+
+      if (!target) {
+        return {
+          output: [
+            '  Usage:',
+            '    /trust <path>            — trust a workspace (enables its hooks)',
+            '    /trust --untrust <path>  — remove a workspace from the trust store',
+            '    /trust --list            — show trusted workspaces',
+          ],
+        };
+      }
+
+      const abs = path.resolve(target);
+      if (untrust) {
+        const entries = await readTrustStore();
+        const next = entries.filter((l) => l !== abs);
+        await fsp.writeFile(trustStorePath(), next.join('\n') + (next.length ? '\n' : ''), 'utf-8');
+        return { output: [`  Untrusted: ${abs}`, '  Its hooks will no longer execute.'] };
+      }
+
+      await trustWorkspace(abs);
+      return {
+        output: [
+          `  Trusted workspace: ${abs}`,
+          '  Its .chimera/hooks.yaml will now execute on tool calls.',
+        ],
+      };
+    }
+
     case 'config': {
       if (!ctx.readConfig) {
         return { output: ['  /config not available in this context.'] };
@@ -679,7 +740,7 @@ const ALL_COMMANDS = [
   'sessions', 'diff', 'agents', 'events',
   'tasks', 'todos', 'compact', 'init', 'rewind',
   'loop', 'goal',
-  'model', 'theme', 'vim', 'output-style', 'permissions', 'sandbox', 'config',
+  'model', 'theme', 'vim', 'output-style', 'permissions', 'sandbox', 'config', 'trust',
   'login', 'logout', 'memory', 'mcp', 'hooks', 'ide',
   'doctor', 'bug', 'feedback', 'usage', 'export',
   'release-notes', 'pr-comments', 'privacy-settings', 'migrate-installer',

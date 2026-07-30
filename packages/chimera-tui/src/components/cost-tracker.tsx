@@ -2,7 +2,7 @@ import React from 'react';
 import { Box, Text } from 'ink';
 import type { CostData, SkillModelView } from '../types.js';
 import { formatCost, budgetColor } from './tui-utils.js';
-import { zen, tiered } from '../theme.js';
+import { zen, hierarchy, tiered, PANEL_BORDER } from '../theme.js';
 
 interface CostTrackerProps {
   data: CostData;
@@ -25,7 +25,7 @@ const BudgetBar: React.FC<{ used: number; total: number; width?: number }> = ({
   return (
     <Box>
       <Text color={color}>{'█'.repeat(filled)}</Text>
-      <Text dimColor>{'░'.repeat(empty)}</Text>
+      <Text {...hierarchy.tertiary}>{'░'.repeat(empty)}</Text>
       <Text> </Text>
       <Text color={color}>{Math.round(ratio * 100)}%</Text>
     </Box>
@@ -39,21 +39,21 @@ export const CostTracker: React.FC<CostTrackerProps> = ({ data, showBreakdown = 
 
   if (isNarrow) {
     return (
-      <Box borderStyle="round" borderColor={zen.success} paddingX={1}>
+      <Box borderStyle={PANEL_BORDER} borderColor={zen.success} paddingX={1}>
         <Text bold color={zen.success}>Cost </Text>
         <Text bold>{formatCost(data.currentCost)}</Text>
-        <Text dimColor> / {formatCost(data.budget)}</Text>
+        <Text {...hierarchy.tertiary}> / {formatCost(data.budget)}</Text>
       </Box>
     );
   }
 
   if (data.currentCost === 0 && data.breakdown.length === 0) {
     return (
-      <Box flexDirection="column" borderStyle="round" borderColor={zen.success} paddingX={1}>
+      <Box flexDirection="column" borderStyle={PANEL_BORDER} borderColor={zen.success} paddingX={1}>
         <Box marginBottom={1}>
           <Text bold color={zen.success}>Cost Tracker</Text>
         </Box>
-        <Text dimColor>{tiered({
+        <Text {...hierarchy.tertiary}>{tiered({
           beginner: 'No costs yet — once you start a task, Chimera tracks token usage and spend here so you can watch your budget.',
           intermediate: 'No costs yet. Start a task to see usage.',
           advanced: 'No costs yet.',
@@ -63,7 +63,7 @@ export const CostTracker: React.FC<CostTrackerProps> = ({ data, showBreakdown = 
   }
 
   return (
-    <Box flexDirection="column" borderStyle="round" borderColor={zen.success} paddingX={1}>
+    <Box flexDirection="column" borderStyle={PANEL_BORDER} borderColor={zen.success} paddingX={1}>
       <Box marginBottom={1}>
         <Text bold color={zen.success}>
           Cost Tracker
@@ -71,16 +71,16 @@ export const CostTracker: React.FC<CostTrackerProps> = ({ data, showBreakdown = 
       </Box>
 
       <Box>
-        <Text>Spent: </Text>
+        <Text {...hierarchy.secondary}>Spent: </Text>
         <Text bold color={budgetColor(data.budget > 0 ? data.currentCost / data.budget : 0)}>
           {formatCost(data.currentCost)}
         </Text>
-        <Text> / </Text>
-        <Text>{formatCost(data.budget)}</Text>
+        <Text {...hierarchy.tertiary}> / </Text>
+        <Text {...hierarchy.secondary}>{formatCost(data.budget)}</Text>
       </Box>
 
       <Box>
-        <Text>Remaining: </Text>
+        <Text {...hierarchy.secondary}>Remaining: </Text>
         <Text color={remaining > 0 ? zen.success : zen.error}>{formatCost(remaining)}</Text>
       </Box>
 
@@ -90,7 +90,7 @@ export const CostTracker: React.FC<CostTrackerProps> = ({ data, showBreakdown = 
 
       {showBreakdown && data.breakdown.length > 0 && (
         <Box flexDirection="column" marginTop={1}>
-          <Text bold dimColor>
+          <Text bold {...hierarchy.tertiary}>
             Breakdown:
           </Text>
           {data.breakdown.map((item, i) => {
@@ -101,9 +101,9 @@ export const CostTracker: React.FC<CostTrackerProps> = ({ data, showBreakdown = 
             const truncatedLabel = label.length > maxLabelLen ? label.slice(0, maxLabelLen - 1) + '…' : label;
             return (
               <Box key={i} marginLeft={2}>
-                <Text>{truncatedLabel}: </Text>
+                <Text {...hierarchy.secondary}>{truncatedLabel}: </Text>
                 <Text color={zen.success}>{cost}</Text>
-                <Text dimColor> ({tokens} tok)</Text>
+                <Text {...hierarchy.tertiary}> ({tokens} tok)</Text>
               </Box>
             );
           })}

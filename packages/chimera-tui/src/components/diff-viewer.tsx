@@ -1,7 +1,8 @@
 import React, { useState } from 'react';
 import { Box, Text, useInput } from 'ink';
 import type { DiffFile, SkillModelView } from '../types.js';
-import { zen, tiered } from '../theme.js';
+import { zen, hierarchy, tiered, PANEL_BORDER } from '../theme.js';
+import { EmptyState } from './empty-state.js';
 
 interface DiffViewerProps {
   files: DiffFile[];
@@ -21,7 +22,7 @@ const DiffLineComponent: React.FC<{
 
   return (
     <Box>
-      <Text dimColor>{lineNum !== undefined ? String(lineNum).padStart(4) : '    '} </Text>
+      <Text {...hierarchy.tertiary}>{lineNum !== undefined ? String(lineNum).padStart(4) : '    '} </Text>
       <Text color={color} inverse={type !== 'context'}>
         {prefix}
       </Text>
@@ -79,19 +80,24 @@ export const DiffViewer: React.FC<DiffViewerProps> = ({ files, skillModel }) => 
   });
 
   return (
-    <Box flexDirection="column" borderStyle="double" borderColor={zen.error} paddingX={1}>
+    <Box flexDirection="column" borderStyle={PANEL_BORDER} borderColor={zen.borderActive} paddingX={1}>
       <Box marginBottom={1}>
-        <Text bold color={zen.error}>
+        <Text bold color={zen.accent}>
           Diff Viewer
         </Text>
-        <Text dimColor> ({files.length} files)</Text>
+        <Text {...hierarchy.tertiary}> ({files.length} files)</Text>
       </Box>
 
-      {files.length === 0 && <Text dimColor>{tiered({
-        beginner: 'No file changes yet — when Chimera edits files, the before/after differences show up here.',
-        intermediate: 'No changes to display',
-        advanced: 'No diffs.',
-      }, skillModel)}</Text>}
+      {files.length === 0 && (
+        <EmptyState
+          icon="○"
+          message={tiered({
+            beginner: 'No file changes yet — when Chimera edits files, the before/after differences show up here.',
+            intermediate: 'No changes to display',
+            advanced: 'No diffs.',
+          }, skillModel)}
+        />
+      )}
 
       {files.map((file, i) => (
         <Box key={file.path} flexDirection="column">
@@ -103,7 +109,7 @@ export const DiffViewer: React.FC<DiffViewerProps> = ({ files, skillModel }) => 
           {expandedFiles.has(i) &&
             file.hunks.map((hunk, j) => (
               <Box key={j} flexDirection="column" marginLeft={2}>
-                <Text dimColor>
+                <Text {...hierarchy.tertiary}>
                   @@ -{hunk.oldStart},{hunk.oldLines} +{hunk.newStart},{hunk.newLines} @@
                 </Text>
                 {hunk.lines.map((line, k) => (
@@ -120,7 +126,7 @@ export const DiffViewer: React.FC<DiffViewerProps> = ({ files, skillModel }) => 
       ))}
 
       <Box marginTop={1}>
-        <Text dimColor>[↑↓] navigate  [Enter/Space] toggle file</Text>
+        <Text {...hierarchy.tertiary}>[↑↓] navigate  [Enter/Space] toggle file</Text>
       </Box>
     </Box>
   );

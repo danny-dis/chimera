@@ -5,7 +5,7 @@ import type { Mode } from '@chimera/core';
 import type { Agent, ToolActivity } from '../types.js';
 import Spinner from 'ink-spinner';
 import { statusSymbols, formatTime } from './tui-utils.js';
-import { zen, MODE_META } from '../theme.js';
+import { zen, hierarchy, MODE_META } from '../theme.js';
 
 // ── Version (read at module load so the bar always matches package.json) ──
 
@@ -51,11 +51,12 @@ export const StatusBar: React.FC<StatusBarProps> = ({
   sidebarVisible = false,
 }) => {
   return (
-    <Box borderStyle="single" borderColor={zen.border} paddingX={1} justifyContent="space-between">
-      {/* Brand + mode */}
+    <Box justifyContent="space-between">
+      {/* Brand + mode — a single unbordered row (a bordered box needs 3 rows
+          to render top/content/bottom; the status bar only ever gets 1). */}
       <Box marginRight={1}>
         <Text bold color={zen.info}>CHIMERA</Text>
-        <Text dimColor> v{CHIMERA_VERSION}</Text>
+        <Text {...hierarchy.tertiary}> v{CHIMERA_VERSION}</Text>
         <Text> </Text>
         <Text color={zen.accent} bold>{MODE_META[mode]?.icon ?? '?'} {mode}</Text>
       </Box>

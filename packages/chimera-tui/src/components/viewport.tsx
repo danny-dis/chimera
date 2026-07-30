@@ -107,9 +107,12 @@ export function Viewport<T>({
     });
   }, [prefixSum, totalHeight, height]);
 
+  // `isActive` must gate the hook itself, not just the handler body. Ink
+  // ref()s stdin and enables raw mode on mount for every registered useInput,
+  // so returning early inside the callback still claims stdin while unfocused
+  // — which double-consumes keystrokes alongside the m/l detail toggle, and
+  // crashes outright under a test stdin that has no ref().
   useInput((_input, key) => {
-    if (!focused) return;
-
     if (key.upArrow) scrollUp();
     if (key.downArrow) scrollDown();
     if (key.pageUp) pageUp();
@@ -126,7 +129,7 @@ export function Viewport<T>({
       const lastItemTop = prefixSum[lastIndex];
       setScrollOffset(Math.max(0, lastItemTop - height + getHeight(items[lastIndex])));
     }
-  });
+  }, { isActive: focused });
 
   // Find which items are visible within [scrollOffset, scrollOffset + height).
   const visibleStart = findItemAtRow(prefixSum, scrollOffset);

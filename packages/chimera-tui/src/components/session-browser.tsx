@@ -1,8 +1,9 @@
 import React, { useState } from 'react';
 import { Box, Text, useInput } from 'ink';
 import type { Session, SkillModelView } from '../types.js';
-import { zen, tiered } from '../theme.js';
+import { zen, hierarchy, tiered, PANEL_BORDER } from '../theme.js';
 import { formatCost, formatDateTime } from './tui-utils.js';
+import { EmptyState } from './empty-state.js';
 
 interface SessionBrowserProps {
   sessions: Session[];
@@ -57,19 +58,24 @@ export const SessionBrowser: React.FC<SessionBrowserProps> = ({
   });
 
   return (
-    <Box flexDirection="column" borderStyle="double" borderColor={zen.agent} paddingX={1}>
+    <Box flexDirection="column" borderStyle={PANEL_BORDER} borderColor={zen.borderActive} paddingX={1}>
       <Box marginBottom={1}>
         <Text bold color={zen.agent}>
           Sessions
         </Text>
-        <Text dimColor> ({sessions.length})</Text>
+        <Text {...hierarchy.tertiary}> ({sessions.length})</Text>
       </Box>
 
-      {sessions.length === 0 && <Text dimColor>{tiered({
-        beginner: 'No saved sessions yet — each conversation is saved automatically, so your past sessions will appear here to reopen or resume.',
-        intermediate: 'No saved sessions',
-        advanced: 'No saved sessions.',
-      }, skillModel)}</Text>}
+      {sessions.length === 0 && (
+        <EmptyState
+          icon="○"
+          message={tiered({
+            beginner: 'No saved sessions yet — each conversation is saved automatically, so your past sessions will appear here to reopen or resume.',
+            intermediate: 'No saved sessions',
+            advanced: 'No saved sessions.',
+          }, skillModel)}
+        />
+      )}
 
       {sessions.map((session, i) => {
         const isSelected = i === selectedIndex;
@@ -80,11 +86,11 @@ export const SessionBrowser: React.FC<SessionBrowserProps> = ({
             <Box>
               <Text inverse={isSelected}>{isSelected ? '▸ ' : '  '}</Text>
               <Text bold={isSelected}>{formatDateTime(session.date)}</Text>
-              <Text dimColor> </Text>
-              <Text>{session.taskSummary.slice(0, 40)}</Text>
-              <Text dimColor> </Text>
+              <Text {...hierarchy.tertiary}> </Text>
+              <Text {...hierarchy.secondary}>{session.taskSummary.slice(0, 40)}</Text>
+              <Text {...hierarchy.tertiary}> </Text>
               <Text color={zen.success}>{formatCost(session.cost)}</Text>
-              <Text dimColor>
+              <Text {...hierarchy.tertiary}>
                 {' '}
                 {session.messageCount}msg {session.agentCount}agents
               </Text>
@@ -99,7 +105,7 @@ export const SessionBrowser: React.FC<SessionBrowserProps> = ({
       })}
 
       <Box marginTop={1}>
-        <Text dimColor>[↑↓] navigate  [Enter] select  [d] delete</Text>
+        <Text {...hierarchy.tertiary}>[↑↓] navigate  [Enter] select  [d] delete</Text>
       </Box>
     </Box>
   );

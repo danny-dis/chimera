@@ -7,6 +7,7 @@ import {
   formatTime,
   formatDateTime,
 } from '../components/tui-utils.js';
+import { zen } from '../theme.js';
 
 describe('statusSymbols', () => {
   it('has all four statuses', () => {
@@ -49,22 +50,30 @@ describe('formatBudget', () => {
 });
 
 describe('budgetColor', () => {
-  it('returns green at or below 0.7', () => {
-    expect(budgetColor(0)).toBe('green');
-    expect(budgetColor(0.5)).toBe('green');
-    expect(budgetColor(0.7)).toBe('green');
+  // Assert against the theme tokens, not literal color values. The palette
+  // moved from ANSI names to hex during the visual redesign and these tests
+  // broke despite budgetColor's threshold logic being unchanged — the
+  // behavior worth pinning is which *tier* a ratio maps to.
+  it('maps at or below 0.7 to the success tier', () => {
+    expect(budgetColor(0)).toBe(zen.success);
+    expect(budgetColor(0.5)).toBe(zen.success);
+    expect(budgetColor(0.7)).toBe(zen.success);
   });
 
-  it('returns yellow above 0.7 up to 0.9', () => {
-    expect(budgetColor(0.71)).toBe('yellow');
-    expect(budgetColor(0.8)).toBe('yellow');
-    expect(budgetColor(0.89)).toBe('yellow');
+  it('maps above 0.7 up to 0.9 to the warning tier', () => {
+    expect(budgetColor(0.71)).toBe(zen.warning);
+    expect(budgetColor(0.8)).toBe(zen.warning);
+    expect(budgetColor(0.89)).toBe(zen.warning);
   });
 
-  it('returns red above 0.9', () => {
-    expect(budgetColor(0.91)).toBe('red');
-    expect(budgetColor(1.0)).toBe('red');
-    expect(budgetColor(1.5)).toBe('red');
+  it('maps above 0.9 to the error tier', () => {
+    expect(budgetColor(0.91)).toBe(zen.error);
+    expect(budgetColor(1.0)).toBe(zen.error);
+    expect(budgetColor(1.5)).toBe(zen.error);
+  });
+
+  it('uses three distinct colors so the tiers are visually separable', () => {
+    expect(new Set([zen.success, zen.warning, zen.error]).size).toBe(3);
   });
 });
 

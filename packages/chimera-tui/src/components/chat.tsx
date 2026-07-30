@@ -4,7 +4,7 @@ import type { Message, ToolCallIndicator, SkillModelView } from '../types.js';
 import { Viewport } from './viewport.js';
 import { Markdown } from './markdown.js';
 import { statusSymbols } from './tui-utils.js';
-import { zen, tiered } from '../theme.js';
+import { zen, tiered, hierarchy, SPACING } from '../theme.js';
 
 interface ChatProps {
   messages: Message[];
@@ -19,6 +19,19 @@ const WELCOME_LINES: { beginner: string; intermediate: string; advanced: string 
     'Terminal-native parallel multi-agent coding platform. Try: "Add a /healthz endpoint to the API."',
   intermediate: 'Terminal-native parallel multi-agent coding platform. Type a task or /help for commands.',
   advanced: 'Type a task or /help.',
+};
+
+const TIP_LINES: { beginner: string; intermediate: string; advanced: string } = {
+  beginner: 'Tip: describe a task in plain language (try "fix the login bug"), or run /help for the full command list.',
+  intermediate: 'Tip: run /help for commands, Ctrl+B toggles the sidebar, /agents /events /diff for details.',
+  advanced: 'Tip: /help for commands.',
+};
+
+/** Role → glyph/color/label so a message's role reads at a glance, not just from its text prefix. */
+const ROLE_STYLE: Record<Message['role'], { icon: string; color: string; label: string }> = {
+  user: { icon: '▸', color: zen.accent, label: 'You' },
+  assistant: { icon: '◆', color: zen.success, label: 'Assistant' },
+  system: { icon: '·', color: zen.muted, label: 'System' },
 };
 
 const ToolCallBadge: React.FC<{ indicator: ToolCallIndicator }> = ({ indicator }) => {
@@ -84,7 +97,7 @@ const AnalysisSection: React.FC<{ analysis: Message['analysis'] }> = ({ analysis
  * Estimate how many terminal rows a message will occupy.
  *
  * Layout per message:
- *   Line 1: "▸ You: HH:MM:SS" header
+ *   Line 1: "▸ You HH:MM:SS" header
  *   Line 2+: content (word-wrapped to fitWidth)
  *   Optional: streaming cursor, tool call badges, analysis section
  *   Margin: 1 row between messages (non-system only)
@@ -121,30 +134,21 @@ function estimateMessageHeight(message: Message, fitWidth: number): number {
 }
 
 const MessageBubble: React.FC<{ message: Message; isSelected: boolean }> = ({ message, isSelected }) => {
-  const prefix =
-    message.role === 'user' ? 'You' :
-    message.role === 'system' ? 'System' :
-    'Assistant';
-
-  const color =
-    message.role === 'user' ? zen.accent :
-    message.role === 'system' ? zen.muted :
-    zen.success;
-
+  const style = ROLE_STYLE[message.role];
   const isSystem = message.role === 'system';
 
   return (
-    <Box flexDirection="column" marginBottom={isSystem ? 0 : 1}>
+    <Box flexDirection="column" marginBottom={isSystem ? SPACING.none : SPACING.sm}>
       <Box>
         <Text inverse={isSelected}>{isSelected ? '▸' : ' '}</Text>
-        <Text bold color={color}>
-          {' '}{prefix}:
+        <Text bold color={style.color}>
+          {' '}{style.icon} {style.label}
         </Text>
-        <Text dimColor> {new Date(message.timestamp).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false })}</Text>
+        <Text {...hierarchy.tertiary}> {new Date(message.timestamp).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false })}</Text>
       </Box>
       <Box marginLeft={2} flexDirection="column" width="100%" flexShrink={1}>
         {isSystem ? (
-          <Text dimColor>{message.content}</Text>
+          <Text {...hierarchy.tertiary}>{message.content}</Text>
         ) : (
           <Markdown content={message.content} />
         )}
@@ -167,9 +171,14 @@ export const Chat: React.FC<ChatProps> = ({ messages, focused = false, height = 
   return (
     <Box flexDirection="column" height={height} overflow="hidden">
       {messages.length === 0 && (
-        <Box flexDirection="column" paddingX={2} paddingY={1}>
-          <Text bold color={zen.accent}>Chimera</Text>
-          <Text dimColor>{tiered(WELCOME_LINES, skillModel)}</Text>
+        <Box flexDirection="column" paddingX={2} paddingY={SPACING.sm}>
+          <Text bold color={zen.accent}>◆ Chimera</Text>
+          <Box marginTop={SPACING.sm}>
+            <Text {...hierarchy.secondary}>{tiered(WELCOME_LINES, skillModel)}</Text>
+          </Box>
+          <Box marginTop={SPACING.sm}>
+            <Text {...hierarchy.tertiary}>{tiered(TIP_LINES, skillModel)}</Text>
+          </Box>
         </Box>
       )}
       <Viewport

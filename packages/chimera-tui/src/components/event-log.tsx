@@ -3,7 +3,8 @@ import { Box, Text, useInput } from 'ink';
 import type { EventLogEntry, SkillModelView } from '../types.js';
 import { Viewport } from './viewport.js';
 import { formatTime } from './tui-utils.js';
-import { zen, tiered } from '../theme.js';
+import { zen, hierarchy, tiered, PANEL_BORDER } from '../theme.js';
+import { EmptyState } from './empty-state.js';
 
 interface EventLogProps {
   events: EventLogEntry[];
@@ -19,7 +20,7 @@ const eventTypeColors: Record<string, string> = {
   user_request: zen.accent,
   task_classified: zen.info,
   task_decomposed: zen.info,
-  agent_spawned: 'magenta',
+  agent_spawned: zen.agent,
   context_pack_created: zen.fg,
   draft_proposed: zen.success,
   verified: zen.success,
@@ -29,7 +30,7 @@ const eventTypeColors: Record<string, string> = {
   handoff_validated: zen.success,
   tool_call_requested: zen.warning,
   tool_call_result: zen.success,
-  patch_proposed: 'magenta',
+  patch_proposed: zen.agent,
   check_result: zen.success,
   review_finding: zen.warning,
   cost_alert: zen.error,
@@ -125,8 +126,8 @@ export const EventLog: React.FC<EventLogProps> = ({
   return (
     <Box
       flexDirection="column"
-      borderStyle="round"
-      borderColor={focused ? zen.accent : zen.border}
+      borderStyle={PANEL_BORDER}
+      borderColor={focused ? zen.borderActive : zen.border}
       paddingX={1}
       height={height + 4}
     >
@@ -134,7 +135,7 @@ export const EventLog: React.FC<EventLogProps> = ({
         <Text bold color={focused ? zen.accent : zen.fg}>
           {contentWidth && contentWidth < 25 ? 'Events' : 'Event Log'}
         </Text>
-        <Text dimColor>
+        <Text {...hierarchy.tertiary}>
           {' '}
           ({filteredEvents.length}
           {filter && contentWidth && contentWidth >= 25 ? ` filtered by ${filter}` : ''})
@@ -143,8 +144,8 @@ export const EventLog: React.FC<EventLogProps> = ({
 
       {eventTypes.length > 1 && !filter && (
         <Box marginBottom={0}>
-          <Text dimColor>Types: </Text>
-          <Text dimColor>
+          <Text {...hierarchy.tertiary}>Types: </Text>
+          <Text {...hierarchy.tertiary}>
             {contentWidth && contentWidth < 35
               ? eventTypes.slice(0, 2).join(', ') + (eventTypes.length > 2 ? '…' : '')
               : eventTypes.slice(0, 5).join(', ') + (eventTypes.length > 5 ? '...' : '')
@@ -153,50 +154,50 @@ export const EventLog: React.FC<EventLogProps> = ({
         </Box>
       )}
 
-      <Viewport
-        items={filteredEvents}
-        height={height}
-        focused={focused}
-        renderItem={(event, _index, isSelected) => {
-          if (filteredEvents.length === 0) {
+      {filteredEvents.length === 0 ? (
+        <EmptyState
+          icon="○"
+          message={tiered({
+            beginner: 'No events yet — once you start a task, Chimera logs what it does here (tool calls, decisions, results).',
+            intermediate: 'No events yet. Start a task to see events.',
+            advanced: 'No events.',
+          }, skillModel)}
+        />
+      ) : (
+        <Viewport
+          items={filteredEvents}
+          height={height}
+          focused={focused}
+          renderItem={(event, _index, isSelected) => {
+            const color = eventTypeColors[event.type] ?? zen.fg;
+            const isCollapsed = collapsed.has(event.type);
+            const summary = renderEventSummary(event);
+            const isNarrow = contentWidth !== undefined && contentWidth < 30;
+
             return (
-              <Box>
-                <Text dimColor>{tiered({
-                  beginner: 'No events yet — once you start a task, Chimera logs what it does here (tool calls, decisions, results).',
-                  intermediate: 'No events yet. Start a task to see events.',
-                  advanced: 'No events.',
-                }, skillModel)}</Text>
+              <Box flexDirection="column">
+                <Box>
+                  <Text inverse={isSelected}>{isSelected ? '▸' : ' '}</Text>
+                  {!isNarrow && <Text {...hierarchy.tertiary}> {formatTime(event.timestamp)} </Text>}
+                  <Text color={color} bold={isSelected}>
+                    [{isNarrow ? event.type.slice(0, 8) : event.type}]
+                  </Text>
+                  {!isNarrow && <Text> {summary}</Text>}
+                </Box>
+                {isSelected && !isCollapsed && event.data && (
+                  <Box marginLeft={6} flexDirection="column">
+                    <Text {...hierarchy.tertiary}>{JSON.stringify(event.data, null, 2).slice(0, 200)}</Text>
+                  </Box>
+                )}
               </Box>
             );
-          }
-          const color = eventTypeColors[event.type] ?? zen.fg;
-          const isCollapsed = collapsed.has(event.type);
-          const summary = renderEventSummary(event);
-          const isNarrow = contentWidth !== undefined && contentWidth < 30;
-
-          return (
-            <Box flexDirection="column">
-              <Box>
-                <Text inverse={isSelected}>{isSelected ? '▸' : ' '}</Text>
-                {!isNarrow && <Text dimColor> {formatTime(event.timestamp)} </Text>}
-                <Text color={color} bold={isSelected}>
-                  [{isNarrow ? event.type.slice(0, 8) : event.type}]
-                </Text>
-                {!isNarrow && <Text> {summary}</Text>}
-              </Box>
-              {isSelected && !isCollapsed && event.data && (
-                <Box marginLeft={6} flexDirection="column">
-                  <Text dimColor>{JSON.stringify(event.data, null, 2).slice(0, 200)}</Text>
-                </Box>
-              )}
-            </Box>
-          );
-        }}
-      />
+          }}
+        />
+      )}
 
       {focused && (
         <Box marginTop={0}>
-          <Text dimColor>[↑↓] nav | [Enter] expand | [f] filter</Text>
+          <Text {...hierarchy.tertiary}>[↑↓] nav | [Enter] expand | [f] filter</Text>
         </Box>
       )}
     </Box>

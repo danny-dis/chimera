@@ -1,7 +1,7 @@
 import React from 'react';
 import { Box, Text } from 'ink';
 import type { Agent, CostData, SkillModelView } from '../types.js';
-import { zen, roleColors } from '../theme.js';
+import { zen, hierarchy, roleColors, SPACING } from '../theme.js';
 import { formatCost, statusSymbols } from './tui-utils.js';
 import { ModeSelector } from './mode-selector.js';
 import { PresetSelector } from './preset-selector.js';
@@ -23,8 +23,8 @@ interface SidebarProps {
 const Section: React.FC<{ label: string; color?: string; children: React.ReactNode }> = ({
   label, color = zen.fg, children,
 }) => (
-  <Box flexDirection="column" marginTop={1}>
-    <Text bold color={color}>{label}</Text>
+  <Box flexDirection="column" marginTop={SPACING.sm}>
+    <Text bold color={color}>{label.toUpperCase()}</Text>
     {children}
   </Box>
 );
@@ -60,8 +60,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
     <Box flexDirection="column" paddingX={1}>
       {/* Header */}
       <Box flexDirection="column">
-        <Text bold color={zen.accent}>CHIMERA</Text>
-        <Text dimColor>{sessionId}</Text>
+        <Text bold color={zen.accent}>◆ CHIMERA</Text>
+        <Text {...hierarchy.tertiary}>{sessionId}</Text>
       </Box>
 
       {/* Mode — interactive */}
@@ -88,15 +88,15 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
       {/* Token usage meter */}
       <Section label="Token Usage" color={zen.info}>
-        <Text>{totalTokens.toLocaleString()} tokens</Text>
-        <Text dimColor>
+        <Text {...hierarchy.primary}>{totalTokens.toLocaleString()} tokens</Text>
+        <Text {...hierarchy.tertiary}>
           {inputTokens.toLocaleString()} in · {outputTokens.toLocaleString()} out
         </Text>
         <Text color={usageColor}>
           {'█'.repeat(Math.min(10, Math.round(usagePercent / 10)))}
           {'░'.repeat(Math.max(0, 10 - Math.round(usagePercent / 10)))} {usagePercent}% budget
         </Text>
-        <Text dimColor>{formatCost(costData.currentCost)} spent</Text>
+        <Text {...hierarchy.tertiary}>{formatCost(costData.currentCost)} spent</Text>
       </Section>
 
       {/* Working Directory */}
@@ -114,7 +114,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
       {/* Tasks / Agents */}
       <Section label="Agents">
-        {agents.length === 0 && <Text dimColor>No active agents</Text>}
+        {agents.length === 0 && <Text {...hierarchy.tertiary}>○ No active agents</Text>}
         {agents.map((agent) => {
           const st = statusSymbols[agent.status];
           const roleColor = roleColors(agent.role);
@@ -122,7 +122,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
             <Box key={agent.id}>
               <Text color={st.color}>[{st.symbol}] </Text>
               <Text bold color={roleColor}>{agent.role}</Text>
-              <Text dimColor> — {agent.status}</Text>
+              <Text {...hierarchy.tertiary}> — {agent.status}</Text>
             </Box>
           );
         })}
@@ -134,7 +134,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
           <Box key={r}>
             <Text color={roleColors(r)}>● </Text>
             <Text bold color={roleColors(r)}>{r}</Text>
-            <Text dimColor> · {r === 'writer' ? 'implements' : r === 'reviewer' ? 'verifies' : r === 'challenger' ? 'attacks' : 'merges'}</Text>
+            <Text {...hierarchy.tertiary}> · {r === 'writer' ? 'implements' : r === 'reviewer' ? 'verifies' : r === 'challenger' ? 'attacks' : 'merges'}</Text>
           </Box>
         ))}
       </Section>
