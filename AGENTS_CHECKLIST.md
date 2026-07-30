@@ -41,6 +41,8 @@
 | **Pre-release Audit Fixes** | **26** | 0 | 0 | 26 | **COMPLETE** |
 | **TOTAL** | **48** | **0** | **53** | **101** | **+10 memory/wiring, +6 context wiring** |
 
+> **NOTE 2026-07-30**: the per-category counts above are known to drift from reality — sections 18.2-18.4 sat marked pending for weeks while the code was already complete, and section 1.4 cited a `truncateToolOutput()` at a line number where no such function existed. Treat the individual section checkboxes as authoritative over these totals until a full audit is run.
+
 ### Test counts across the 4 affected packages (post-integration)
 
 | Package | Source LOC | Tests | Status |
@@ -213,9 +215,9 @@ Decision deferred until Week 4 completes. **Do not start Weeks 5+ work in parall
 
 ### 1.4 RESULT INTEGRITY (TRUNCATION)
 - [x] Add `maxResultSizeChars` field to `ToolDefinition` (via `TOOL_OUTPUT_MAX_BYTES` constant in `session-orchestrator.ts:256`)
-- [x] Implement `truncateResult()` utility (as `truncateToolOutput()` private method in `session-orchestrator.ts:1284`)
-- [x] SET default limit (8KB / 200 lines — see `TOOL_OUTPUT_MAX_BYTES`/`TOOL_OUTPUT_MAX_LINES`)
-- [ ] WIRE `truncateToolOutput()` into `buildToolResultMessages` (helper exists, call site still uses raw `JSON.stringify` — partial)
+- [x] Implement `truncateResult()` utility — **actually implemented 2026-07-30 as the exported `truncateToolOutput()`**. Correction: this item was previously marked complete citing a helper at `session-orchestrator.ts:1284`; that function did not exist, and `TOOL_OUTPUT_MAX_BYTES`/`TOOL_OUTPUT_MAX_LINES` were dead constants referenced nowhere in the repo.
+- [x] SET default limit (8KB / 200 lines) — both caps are now genuinely enforced, with UTF-8-safe splitting. Previously only a separate inline `TOOL_OUTPUT_MAX_CHARS = 8000` character slice ran, so the 200-line cap was never applied at all and a tool returning 50,000 short lines still flooded context.
+- [x] WIRE `truncateToolOutput()` into `buildToolResultMessages` — done; the duplicate inline limit was removed. The marker now reports what was dropped rather than a bare `[truncated]`.
 - [ ] ADD UI truncation indicators
 
 ---
@@ -487,24 +489,28 @@ Decision deferred until Week 4 completes. **Do not start Weeks 5+ work in parall
 - [ ] Add `webSearch`/`webFetch` config (gated on provider support)
 
 ### 18.2 COST & BUDGET
-- [ ] Wire `CostTracker.recordSpend` for every panel call
-- [ ] Wire `CostTracker.recordSpend` for the judge call
-- [ ] Enforce `budgetUsd` — emit `fusion_budget_exceeded` and degrade gracefully
+- [x] Wire `CostTracker.recordSpend` for every panel call
+- [x] Wire `CostTracker.recordSpend` for the judge call
+- [x] Enforce `budgetUsd` — emit `fusion_budget_exceeded` and degrade gracefully
+  - **VERIFIED 2026-07-30**: already implemented in `fusion-executor.ts` (`recordSpend` at lines 278/342/396/413, budget check at 348-351). The ledger was stale, not the code.
 
 ### 18.3 RECURSION PROTECTION
-- [ ] Track fusion depth via request header / task id set
-- [ ] Emit `fusion_recurision_blocked` when `maxDepth` exceeded
-- [ ] Default `maxDepth = 1` (OpenRouter parity — single level of deliberation)
+- [x] Track fusion depth via request header / task id set
+- [x] Emit `fusion_recursion_blocked` when `maxDepth` exceeded
+- [x] Default `maxDepth = 1` (OpenRouter parity — single level of deliberation)
+  - **VERIFIED 2026-07-30**: implemented at `fusion-executor.ts:135-137`. Note this ledger previously misspelled the event as `fusion_recurision_blocked`; the real emitted event is `fusion_recursion_blocked`.
 
 ### 18.4 RELIABILITY
-- [ ] Add `judgeFailover: string[]` chain
-- [ ] Emit `fusion_fallback_judge` on failover
+- [x] Add `judgeFailover: string[]` chain
+- [x] Emit `fusion_fallback_judge` on failover
 - [ ] Validate `judgeModel` is a frontier-class model (warn-only if not)
+  - **VERIFIED 2026-07-30**: failover chain at `fusion-executor.ts:360`, `fusion_fallback_judge` emitted at 416. Frontier-class validation is genuinely still absent.
 
 ### 18.5 ORCHESTRATION WIRING
 - [ ] Add `SessionOrchestrator.fuse(task, config)` public entry point
 - [ ] Add `TaskRouter` complexity rule: high-stakes intent + high complexity → `'fusion'`
-- [ ] Export `FusionExecutor` from `chimera-core/src/index.ts` (currently only in `coordinator/index.ts`)
+- [x] Export `FusionExecutor` from `chimera-core/src/index.ts` (currently only in `coordinator/index.ts`)
+  - **DONE 2026-07-30**: exported from the core barrel along with `FusionConfig`, `FusionContext`, `FusionPanelResult`, `FusionResultV2`, `FusionProviderFactory`, `FusionAnalysis`. This was the only real gap in section 18.
 - [ ] Document the public API in `chimera-feature/chimera-agent-blueprint.md`
 
 ### 18.6 VIRTUAL BENCHMARK — DEFINITION OF "PARITY"
@@ -542,7 +548,7 @@ Decision deferred until Week 4 completes. **Do not start Weeks 5+ work in parall
 - [x] Map result to 5-field analysis shape (consensus/conflicts/insights/blindSpots/finalResponse)
 - [x] Wire `safeEmit`, `CostTracker`, recursion guard, degraded fallback
 - [x] Smoke tests (`coordinator/__tests__/trio-executor.test.ts`)
-- [ ] Replace `AgentMesh.executeQualityGate` stub (`agent-mesh.ts:39-72`) with delegation to TrioExecutor
+- [x] Replace `AgentMesh.executeQualityGate` with delegation to TrioExecutor — done 2026-07-30. **Correction: it was not a stub.** The default path emitted `draft_proposed`/`verified`/`challenged` and hardcoded `verdict: 'pass'` without ever calling a model, echoing back the caller's own arguments — a worse failure mode than a stub, because it looked like it had worked. Added a `verified: boolean` to `QualityGateResult`; the unverified path can no longer return `'pass'`. Real TrioExecutor delegation is available via the new `setDeliberationDeps()`, but no production caller wires it yet — `SessionOrchestrator.executeQualityGateParallel` is the live gate and does call providers for real.
 - [ ] Trio benchmark: 4 metrics (full gate, isolation, cost, role-based synthesis) — verify `__tests__/trio-benchmark.test.ts`
 
 ### 19.4 DUO WRAPPER
@@ -925,7 +931,7 @@ Decision deferred until Phase A completes. Likely candidates: dynamic concurrenc
 ### PHASE 9 (legacy): TRIO/DUO/SOLO — POST-FUSION LEARNINGS
 1. Quick Wins (19.1) — `safeEmit`, defensive `usage`, `CostTracker` across all three modes — **PENDING** (subagent changes did not persist; reverted)
 2. Solo Executor (19.2) — **DONE** (file, types, 9 fusion patterns, smoke tests, `solo-benchmark.test.ts` with 1 metric)
-3. Trio Executor (19.3) — partial: file + 4-stage gate + `WorktreeIsolation` + 5-field analysis + 9 patterns + smoke tests done; `AgentMesh.executeQualityGate` stub replacement and 4-metric benchmark pending
+3. Trio Executor (19.3) — partial: file + 4-stage gate + `WorktreeIsolation` + 5-field analysis + 9 patterns + smoke tests done; `AgentMesh.executeQualityGate` fixed 2026-07-30 (see 19.3 — it fabricated pass verdicts rather than being a stub); 4-metric benchmark still pending
 4. Duo Wrapper (19.4) — partial: file + safety nets + 5-field analysis done; `ResponseSynthesizer` move (3 unexpected importers — re-export shim approach) and 3 benchmark metrics pending
 5. Unification (19.5) — **DONE** (`coordinator/deliberation/{types,engine,index}.ts` + `__tests__/engine.test.ts` with 5 smoke tests; `CoordinatorEngine.runDeliberation()` added; 5 executors kept as shim; Fusion mode throws "pending" — gap documented)
 6. Extended Benchmark (19.6) — pending (not launched)
@@ -948,6 +954,8 @@ Decision deferred until Phase A completes. Likely candidates: dynamic concurrenc
 - **2026-06-16 (claude)**: Updated `DynamicConcurrencyEngine` to factor in `ProviderConfig.constraints.maxParallelInstances` as a hard cap.
 - **2026-06-16 (claude)**: Implemented `DynamicConcurrencyEngine` with base soft limit of 5, hard limit of 500, and user override support. Verified with unit tests.
 - **2026-06-26 (mimo)**: Implemented Auto-Memory System (section 22) and Context Engine memory wiring (section 3). New files: `memory-persistence.ts`, `auto-extract.ts`, `recall-service.ts`, `auto-dream.ts` (chimera-core), `auto-skill-service.ts` (chimera-learning). SessionOrchestrator updated with unconditional maskObservations, handoff doc injection, DI for all 4 new services. 24 new tests pass. Checklist: 38→48 complete, 63→53 pending.
+- **2026-07-30 (claude, 2 subagents)**: Daily-drivability pass; finished the interrupted hook-trust / daemon-wiring work and fixed 4 defects found while verifying it. (1) **Daemon permission gating** — `executeTask` wired real tools into the orchestrator but passed `() => 'allow'` with no `PermissionEngine`, so a VS Code request in a read-only mode (plan/ask/review) could still write files and run shell. Now mirrors `cli-router.ts`: `readOnlyProfile` for plan/ask/review, `editFilesProfile` otherwise (profiles never return `'ask'`, so the headless daemon can't stall on a prompt). (2) **Clean rebuild was broken** — `chimera-context/dist/types.d.ts` imports `@chimera/core`, so recompiling core over an existing `dist/` pulled its own 122 `.d.ts` outputs back in as inputs (TS5055). Any edit to core failed `pnpm build` until `dist/` was deleted by hand; core + session builds now clear `dist/` first. (3) **Test suite wasn't a trustworthy gate on Windows** — subprocess-heavy suites ran on vitest's 5s default while a single Windows spawn costs 1.5-3.5s, so a *different* set of tests flaked each run; raised `testTimeout`/`hookTimeout` in chimera-tools, added `maxRetries` to the git-tools temp-dir cleanup (Windows EBUSY), and raised the sandbox tests' own `timeoutMs` (at 5s a PowerShell cold start was killed mid-test, surfacing as `expected '' to contain 'error'`). (4) **TUI `/trust`** now performs the operation in place instead of telling the user to exit to the CLI — the TUI is launched *from* the CLI, so that meant abandoning the session to enable hooks. Imports `@chimera/tools/hooks/trust` (new subpath export) rather than the barrel, which costs ~35s to load. Also: `trust.ts` store path resolves lazily via `CHIMERA_TRUST_STORE` so tests never touch the real `~/.chimera/trusted-workspaces`; `*.tsbuildinfo` untracked + ignored. New tests: `hook-trust.test.ts` (8), `hook-block.test.ts` (4, incl. `block` honored when `canModify:false`), daemon wiring/hook-block in `server.test.ts`, TUI `/trust` lifecycle (3). Full suite green: 15/15 build, 27/27 typecheck, 30/30 test tasks.
+- **2026-07-30 (claude, 4 subagents)**: Production-readiness pass on branch `chore/build-integrity-and-fusion-exports` (3 commits). **Build corruption repair**: an interrupted session had left 50 build artifacts across `chimera-cli/dist` and `chimera-tui/dist` filled entirely with NUL bytes; they had plausible sizes so tsc treated them as up-to-date and turbo replayed them from cache, failing `pnpm typecheck` with a TS1127 wall pointing at a file nobody had edited. Added `scripts/check-build-integrity.mjs`, run ahead of `turbo typecheck` (`pnpm fix:build` clears bad dists + `.turbo`). Removed 82 `.d.ts`/`.js`/`.map` files committed inside `chimera-tui/src` that tsc was reading back as its own inputs via `include: ["src/**/*"]`. Added CLI `-V, --version` (`-v` was already bound to `--verbose`). **Core correctness**: real `truncateToolOutput()` enforcing both byte and line caps with UTF-8-safe splitting; `AgentMesh.executeQualityGate` no longer fabricates pass verdicts. **Fusion**: 18.2-18.4 found already complete (ledger was stale); closed the one real gap, the missing barrel export. **TUI**: visual redesign (hex palette, text hierarchy, new `footer.tsx` + `empty-state.tsx`, responsive hint degradation), plus a real `Viewport` bug — `useInput` was registered unconditionally and only bailed inside the handler body, so an unfocused viewport still claimed stdin, double-consuming keystrokes against the m/l toggle and crashing under any stdin without `ref()`; gated with `{ isActive: focused }`. Full suite after all 3 commits: **30/30 test tasks, 27/27 typecheck, 15/15 build**. **KNOWN GAP**: 3 TUI tests are skipped with reasons recorded in `render.test.tsx`. The multi-char paste fix is implemented but **NOT verified end-to-end** — the test cannot drive real `process.stdin` through ink-testing-library's commit. Verify paste manually before trusting it. Two subagents died mid-task on API/spend limits (TUI redesign, ledger update); their work was finished and verified by hand.
 - **2026-06-27 (mimo)**: End-user readiness fixes. Fixed 4 runtime crashes: (1) workflow validator `execFileAsync` stub → real `child_process.execFile`, (2) web search tool now returns graceful empty result instead of throwing, (3) eval package exports `judgeTrajectory`, `formatJudgeScore`, `sideQuery` + new `judge-llm.ts` implementation, (4) `HandoffProtocol.readOutputField`/`readOutputFieldWithState` methods implemented using output-ref resolver. Added `NoProviderConfiguredError` class to providers/errors.ts. Test results: eval 8→0 failures, context 9→0 failures, workflows fixed. 17 remaining provider failures are pre-existing (config.yaml fallback feature not yet implemented).
 
 ---
