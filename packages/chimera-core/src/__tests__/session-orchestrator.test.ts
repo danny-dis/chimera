@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { SessionOrchestrator, type LLMProvider } from '../session-orchestrator.js';
+import { SessionOrchestrator, truncateToolOutput, type LLMProvider } from '../session-orchestrator.js';
 import { EventStream } from '../event-stream.js';
 import type { Mode } from '../types/agent.js';
 
@@ -863,5 +863,88 @@ describe('SessionOrchestrator', () => {
       expect(captured).toBe('duo');
       expect(warning).toHaveLength(1);
     });
+  });
+});
+
+describe('truncateToolOutput', () => {
+  it('passes through short output unchanged (no-truncation passthrough)', () => {
+    const text = 'line one\nline two\nline three';
+    const result = truncateToolOutput(text);
+
+    expect(result.truncated).toBe(false);
+    expect(result.text).toBe(text);
+    expect(result.originalBytes).toBe(Buffer.byteLength(text, 'utf8'));
+    expect(result.originalLines).toBe(3);
+  });
+
+  it('trips the line cap when byte size is small but line count exceeds 200', () => {
+    // 500 tiny lines — well under the 8KB byte cap, but over the 200-line cap.
+    const lines = Array.from({ length: 500 }, (_, i) => `l${i}`);
+    const text = lines.join('\n');
+    expect(Buffer.byteLength(text, 'utf8')).toBeLessThan(8 * 1024);
+
+    const result = truncateToolOutput(text);
+
+    expect(result.truncated).toBe(true);
+    expect(result.originalLines).toBe(500);
+    // Kept content must contain at most 200 original lines' worth of data.
+    const keptBody = result.text.split('\n\n[... truncated')[0];
+    expect(keptBody.split('\n').length).toBe(200);
+    expect(keptBody.split('\n')[0]).toBe('l0');
+    expect(keptBody.split('\n')[199]).toBe('l199');
+    expect(result.text).toContain('500');
+    expect(result.text).toMatch(/truncated: 200 of 500 lines shown/);
+  });
+
+  it('trips the byte cap when line count is small but total size exceeds 8KB', () => {
+    // A single very long line — 1 line (under the 200-line cap), but over
+    // the 8KB byte cap.
+    const text = 'x'.repeat(20 * 1024);
+
+    const result = truncateToolOutput(text);
+
+    expect(result.truncated).toBe(true);
+    expect(result.originalLines).toBe(1);
+    expect(result.originalBytes).toBe(20 * 1024);
+    expect(Buffer.byteLength(result.text, 'utf8')).toBeLessThanOrEqual(8 * 1024 + 200); // + marker overhead
+    expect(result.text).toMatch(/8 KB limit/);
+    // The kept body itself (excluding the marker) must respect the byte cap.
+    const keptBody = result.text.split('\n\n[... truncated')[0];
+    expect(Buffer.byteLength(keptBody, 'utf8')).toBeLessThanOrEqual(8 * 1024);
+  });
+
+  it('does not split a multi-byte UTF-8 character at the byte-cap boundary', () => {
+    // 4-byte emoji repeated after a single leading ASCII byte, so the exact
+    // 8192-byte cap boundary (which would otherwise land on a clean
+    // multiple-of-4 offset) is forced to fall in the middle of a
+    // character. A naive `.slice()` on JS string length (UTF-16 code
+    // units) or a naive byte slice would produce corrupt/split output.
+    const emoji = '\u{1F600}'; // 😀 — 4 bytes in UTF-8, 2 UTF-16 code units
+    const text = 'a' + emoji.repeat(4000); // 1 + 16,000 bytes — over the 8KB cap, boundary misaligned
+    expect((8 * 1024 - 1) % 4).not.toBe(0); // sanity: confirms the boundary is actually misaligned
+
+    const result = truncateToolOutput(text);
+
+    expect(result.truncated).toBe(true);
+    const keptBody = result.text.split('\n\n[... truncated')[0];
+    // Every character in the kept body must be complete and valid — no
+    // replacement characters from a split multi-byte sequence.
+    expect(keptBody).not.toContain('�');
+    expect(keptBody[0]).toBe('a');
+    for (const ch of keptBody.slice(1)) {
+      expect(ch).toBe(emoji);
+    }
+    expect(Buffer.byteLength(keptBody, 'utf8')).toBeLessThanOrEqual(8 * 1024);
+    // Sanity: the kept body should be close to the cap, not drastically
+    // under it (i.e. we didn't over-trim beyond the boundary character).
+    expect(Buffer.byteLength(keptBody, 'utf8')).toBeGreaterThan(8 * 1024 - 4);
+  });
+
+  it('applies the marker only once and reports informative counts, never a bare "[truncated]"', () => {
+    const text = Array.from({ length: 300 }, (_, i) => `row-${i}`).join('\n');
+    const result = truncateToolOutput(text);
+
+    expect(result.text).not.toMatch(/\[truncated\]$/);
+    expect(result.text).toMatch(/truncated: \d+ of \d+ lines shown, 8 KB limit/);
   });
 });

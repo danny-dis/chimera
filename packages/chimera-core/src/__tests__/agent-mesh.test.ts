@@ -73,7 +73,7 @@ describe('AgentMesh', () => {
     expect(mesh.getAgentsByRole('challenger')).toEqual([]);
   });
 
-  it('executeQualityGate with draft, reviewer, and challenger', async () => {
+  it('executeQualityGate with no executor/providers configured never fabricates a pass verdict', async () => {
     const eventStream = new EventStream();
     const mesh = new AgentMesh(eventStream);
 
@@ -84,8 +84,13 @@ describe('AgentMesh', () => {
       task: 'implement feature',
     });
 
-    expect(result.verdict).toBe('pass');
+    // No model was ever called, so this must be reported as unverified —
+    // never a silent `pass`.
+    expect(result.verified).toBe(false);
+    expect(result.verdict).not.toBe('pass');
+    expect(result.verdict).toBe('needs_revision');
     expect(result.output).toBe('');
+    expect(result.stages.find((s) => s.stage === 'draft')?.findings[0]?.description).toMatch(/not.*independently verified/i);
 
     const events = eventStream.getAll();
     expect(events.find((e) => e.type === 'draft_proposed')).toBeDefined();
@@ -93,7 +98,7 @@ describe('AgentMesh', () => {
     expect(events.find((e) => e.type === 'challenged')).toBeDefined();
   });
 
-  it('executeQualityGate without challenger skips challenge stage', async () => {
+  it('executeQualityGate without challenger skips challenge stage and stays unverified', async () => {
     const eventStream = new EventStream();
     const mesh = new AgentMesh(eventStream);
 
@@ -103,11 +108,104 @@ describe('AgentMesh', () => {
       task: 'implement feature',
     });
 
-    expect(result.verdict).toBe('pass');
+    expect(result.verified).toBe(false);
+    expect(result.verdict).not.toBe('pass');
     const events = eventStream.getAll();
     expect(events.find((e) => e.type === 'draft_proposed')).toBeDefined();
     expect(events.find((e) => e.type === 'verified')).toBeDefined();
     expect(events.find((e) => e.type === 'challenged')).toBeUndefined();
+  });
+
+  it('executeQualityGate unverified path reports fail when caller-supplied findings are high severity', async () => {
+    const eventStream = new EventStream();
+    const mesh = new AgentMesh(eventStream);
+
+    const result = await mesh.executeQualityGate({
+      draftAgentId: 'writer-1',
+      reviewerAgentId: 'reviewer-1',
+      task: 'implement feature',
+      reviewerFindings: [{ description: 'broken build', severity: 'high', evidence: 'stack trace' }],
+    });
+
+    expect(result.verified).toBe(false);
+    expect(result.verdict).toBe('fail');
+  });
+
+  it('executeQualityGate delegates to qualityGateExecutor when injected and trusts it as verified', async () => {
+    const eventStream = new EventStream();
+    const mesh = new AgentMesh(eventStream);
+
+    mesh.setQualityGateExecutor(async (params) => ({
+      stages: [],
+      finalVerdict: 'pass',
+      verdict: 'pass',
+      unifiedOutput: params.draftOutput ?? '',
+      output: params.draftOutput ?? '',
+      totalDurationMs: 5,
+      verified: true,
+    }));
+
+    const result = await mesh.executeQualityGate({
+      draftAgentId: 'writer-1',
+      reviewerAgentId: 'reviewer-1',
+      task: 'implement feature',
+      draftOutput: 'real draft',
+    });
+
+    expect(result.verified).toBe(true);
+    expect(result.verdict).toBe('pass');
+    expect(result.output).toBe('real draft');
+  });
+
+  it('executeQualityGate falls back to the unverified path when trioDeps are set but agents are not registered', async () => {
+    const eventStream = new EventStream();
+    const mesh = new AgentMesh(eventStream);
+
+    mesh.setDeliberationDeps({
+      registry: { getAll: () => [], get: () => undefined } as any,
+      providerFactory: () => {
+        throw new Error('should not be called — no agents registered');
+      },
+    });
+
+    const result = await mesh.executeQualityGate({
+      draftAgentId: 'writer-unregistered',
+      reviewerAgentId: 'reviewer-unregistered',
+      task: 'implement feature',
+    });
+
+    expect(result.verified).toBe(false);
+    expect(result.verdict).not.toBe('pass');
+  });
+
+  it('executeQualityGate delegates to a real TrioExecutor deliberation when trioDeps + registered agents are available', async () => {
+    const eventStream = new EventStream();
+    const mesh = new AgentMesh(eventStream);
+
+    mesh.registerAgent(makeAgentConfig({ id: 'writer-1', role: 'writer', model: 'writer-model' }));
+    mesh.registerAgent(makeAgentConfig({ id: 'reviewer-1', role: 'reviewer', model: 'reviewer-model' }));
+
+    const provider = {
+      complete: vi.fn().mockResolvedValue({
+        content: 'the draft content',
+        usage: { inputTokens: 10, outputTokens: 10 },
+      }),
+    };
+
+    mesh.setDeliberationDeps({
+      registry: { getAll: () => [], get: () => undefined } as any,
+      providerFactory: () => provider as any,
+    });
+
+    const result = await mesh.executeQualityGate({
+      draftAgentId: 'writer-1',
+      reviewerAgentId: 'reviewer-1',
+      task: 'implement feature',
+    });
+
+    expect(result.verified).toBe(true);
+    expect(provider.complete).toHaveBeenCalled();
+    expect(result.output.length).toBeGreaterThan(0);
   });
 
   it('registers multiple agents with different roles', () => {

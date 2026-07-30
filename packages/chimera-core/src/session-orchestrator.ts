@@ -241,10 +241,101 @@ const MAX_TOOL_ITERATIONS = 10;
  */
 const DEFAULT_CACHE_CONTROL = { type: 'ephemeral' as const, ttl: '5m' as const };
 
-// P0.6 — Tool output truncation caps. Whichever limit is hit first wins.
+// P0.6 — Tool output truncation caps. Whichever limit trips first wins;
+// the result is always under BOTH caps.
 const TOOL_OUTPUT_MAX_BYTES = 8 * 1024;
 const TOOL_OUTPUT_MAX_LINES = 200;
-const TOOL_OUTPUT_TRUNCATION_MARKER = '\n\n[... truncated, see event log for full output ...]';
+
+/** Result of {@link truncateToolOutput}. */
+export interface TruncateToolOutputResult {
+  text: string;
+  truncated: boolean;
+  originalBytes: number;
+  originalLines: number;
+}
+
+/** Locale-independent thousands separator (avoids relying on ICU/toLocaleString). */
+function withThousandsSeparator(n: number): string {
+  return n.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+}
+
+/**
+ * Truncate a UTF-8 string to at most `maxBytes` bytes without splitting a
+ * multi-byte character. Walks back from the cut point to the start of any
+ * multi-byte sequence straddling the boundary; if that sequence doesn't
+ * fully fit within `maxBytes`, the whole sequence is dropped rather than
+ * emitting a partial/garbled character.
+ */
+function truncateUtf8Bytes(text: string, maxBytes: number): string {
+  const buf = Buffer.from(text, 'utf8');
+  if (buf.length <= maxBytes) return text;
+
+  let cut = maxBytes;
+  // Walk back from the byte just before the cut to find the lead byte of
+  // the (possibly straddling) UTF-8 sequence it belongs to. Continuation
+  // bytes are 10xxxxxx; sequences are at most 4 bytes, so at most 3
+  // continuation bytes precede the lead byte.
+  let leadIdx = cut - 1;
+  let steps = 0;
+  while (leadIdx >= 0 && steps < 3 && (buf[leadIdx] & 0xc0) === 0x80) {
+    leadIdx--;
+    steps++;
+  }
+  if (leadIdx >= 0) {
+    const lead = buf[leadIdx];
+    let seqLen = 1;
+    if ((lead & 0x80) === 0x00) seqLen = 1;
+    else if ((lead & 0xe0) === 0xc0) seqLen = 2;
+    else if ((lead & 0xf0) === 0xe0) seqLen = 3;
+    else if ((lead & 0xf8) === 0xf0) seqLen = 4;
+    if (leadIdx + seqLen > cut) {
+      // The sequence starting at `leadIdx` doesn't fully fit before the
+      // cut — drop it entirely rather than emit a partial character.
+      cut = leadIdx;
+    }
+    // Otherwise the sequence fits entirely within maxBytes; nothing to trim.
+  }
+  return buf.subarray(0, cut).toString('utf8');
+}
+
+/**
+ * Enforce BOTH the byte cap (`TOOL_OUTPUT_MAX_BYTES`) and the line cap
+ * (`TOOL_OUTPUT_MAX_LINES`) on raw tool output before it's fed back to the
+ * model — whichever limit trips first, the result always satisfies both.
+ * The truncation marker states exactly what was dropped so the model isn't
+ * misled by a bare "[truncated]".
+ */
+export function truncateToolOutput(text: string): TruncateToolOutputResult {
+  const originalBytes = Buffer.byteLength(text, 'utf8');
+  const originalLines = text === '' ? 0 : text.split('\n').length;
+
+  if (originalBytes <= TOOL_OUTPUT_MAX_BYTES && originalLines <= TOOL_OUTPUT_MAX_LINES) {
+    return { text, truncated: false, originalBytes, originalLines };
+  }
+
+  // Line cap first — cheap and inherently character-safe (split/join on '\n').
+  let candidate = text;
+  if (originalLines > TOOL_OUTPUT_MAX_LINES) {
+    candidate = text.split('\n').slice(0, TOOL_OUTPUT_MAX_LINES).join('\n');
+  }
+
+  // Byte cap on whatever survived the line cap, UTF-8-boundary-safe.
+  if (Buffer.byteLength(candidate, 'utf8') > TOOL_OUTPUT_MAX_BYTES) {
+    candidate = truncateUtf8Bytes(candidate, TOOL_OUTPUT_MAX_BYTES);
+  }
+
+  const keptLines = candidate === '' ? 0 : candidate.split('\n').length;
+  const marker =
+    `\n\n[... truncated: ${withThousandsSeparator(keptLines)} of ${withThousandsSeparator(originalLines)} lines shown, ` +
+    `${TOOL_OUTPUT_MAX_BYTES / 1024} KB limit ...]`;
+
+  return {
+    text: candidate + marker,
+    truncated: true,
+    originalBytes,
+    originalLines,
+  };
+}
 
 /**
  * Hard cap on a single execute() invocation. Defaults to 5 minutes. The
@@ -2466,13 +2557,9 @@ export class SessionOrchestrator {
     }
     messages.push(assistantMsg);
 
-    const TOOL_OUTPUT_MAX_CHARS = 8000;
-
     for (const tr of toolResults) {
-      let dataStr = tr.result.result.data ? JSON.stringify(tr.result.result.data) : '';
-      if (dataStr.length > TOOL_OUTPUT_MAX_CHARS) {
-        dataStr = dataStr.slice(0, TOOL_OUTPUT_MAX_CHARS) + '\n... [truncated]';
-      }
+      const rawDataStr = tr.result.result.data ? JSON.stringify(tr.result.result.data) : '';
+      const { text: dataStr } = truncateToolOutput(rawDataStr);
 
       const envelope = JSON.stringify({
         toolCallId: tr.result.toolCallId,
