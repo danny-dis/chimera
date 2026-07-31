@@ -4,6 +4,7 @@ import * as path from 'node:path';
 import * as os from 'node:os';
 import { ProviderFactory } from '../provider-factory.js';
 import { MockProvider } from '../providers/mock.js';
+import { clearProviderEnv } from './test-env.js';
 
 /**
  * When no provider is configured, the factory falls back to MockProvider
@@ -16,23 +17,10 @@ describe('ProviderFactory.createFromEnv — mock fallback on no config', () => {
 
   beforeEach(() => {
     process.env = { ...originalEnv };
-    // Wipe all known provider env vars
-    for (const k of [
-      'ANTHROPIC_API_KEY',
-      'OPENAI_API_KEY',
-      'GOOGLE_API_KEY',
-      'OLLAMA_MODEL',
-      'OLLAMA_HOST',
-      'ANTHROPIC_MODEL',
-      'OPENAI_MODEL',
-      'GOOGLE_MODEL',
-      'CHIMERA_USE_MOCK',
-      'CHIMERA_CHEAP_API_KEY',
-      'CHIMERA_CHEAP_BASE_URL',
-      'CHIMERA_CHEAP_MODEL',
-    ]) {
-      delete process.env[k];
-    }
+    // Wipe every known provider env var — not just the "big four" — so
+    // real credentials exported in the developer's shell (e.g. a personal
+    // MISTRAL_API_KEY / MISTRAL_MODEL) can't leak into these assertions.
+    clearProviderEnv();
     // Make sure no .chimera/config.yaml lurks in the project root
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'chimera-no-config-'));
     vi.spyOn(process, 'cwd').mockReturnValue(tmpDir);
@@ -41,6 +29,10 @@ describe('ProviderFactory.createFromEnv — mock fallback on no config', () => {
   afterEach(() => {
     process.env = originalEnv;
     vi.restoreAllMocks();
+    // `discoverEnvConfigs` never touches the filesystem or cwd today, but
+    // this guards against a future regression where config discovery grows
+    // a cwd-relative file read without updating this sandbox.
+    expect(process.cwd()).toBe(originalCwd);
     try {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     } catch {

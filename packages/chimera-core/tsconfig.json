@@ -19,7 +19,16 @@
     "esModuleInterop": true,
     "forceConsistentCasingInFileNames": true,
     "skipLibCheck": true,
-    "resolveJsonModule": true
+    "resolveJsonModule": true,
+    // chimera-context's built types import '@chimera/core', so compiling core
+    // pulled its own dist/*.d.ts back in as inputs and tsc refused to overwrite
+    // them (TS5055) on any rebuild over an existing dist. Resolve self-imports
+    // to src so the cycle never reaches dist.
+    "baseUrl": ".",
+    "paths": {
+      "@chimera/core": ["./src/index.ts"],
+      "@chimera/core/*": ["./src/*"]
+    }
   },
   "include": ["src/**/*"],
   "exclude": ["node_modules", "dist", "**/*.test.ts"]

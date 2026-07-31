@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { OpenAICompatibleProvider } from '../providers/openai-compatible.js';
 import { AnthropicProvider } from '../providers/anthropic.js';
 import { GoogleProvider } from '../providers/google.js';
@@ -138,10 +138,6 @@ describe('OpenAICompatibleProvider', () => {
   });
 
   describe('empty-content handling (meta-model gateway robustness)', () => {
-    const okBody = (content: string) => ({
-      choices: [{ message: { content } }],
-      usage: { prompt_tokens: 1, completion_tokens: 1 },
-    });
     const emptyBody = {
       choices: [{ message: { content: '' } }],
       usage: { prompt_tokens: 1, completion_tokens: 0 },

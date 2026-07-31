@@ -44,7 +44,15 @@ describe('Git Tools', () => {
   });
 
   afterEach(async () => {
-    await fs.rm(workspaceRoot, { recursive: true, force: true });
+    // On Windows the git subprocess can still hold a handle on the repo when
+    // we unlink it, surfacing as "EBUSY: resource busy or locked, rmdir".
+    // maxRetries/retryDelay is Node's built-in backoff for exactly that.
+    await fs.rm(workspaceRoot, {
+      recursive: true,
+      force: true,
+      maxRetries: 5,
+      retryDelay: 100,
+    });
   });
 
   describe('git_status', () => {

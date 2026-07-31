@@ -22,3 +22,6 @@ packages/*/src/**/*.d.ts.map
 .chimera/
 .chimera-worktrees/
 .claude/worktrees/
+
+# Disposable scratch dir for scripts/smoke-test.js
+smoke-tmp/

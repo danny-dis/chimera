@@ -85,6 +85,12 @@ export interface HookResult {
   modifiedParams?: Record<string, unknown>;
   /** Modified result (if applicable) */
   modifiedResult?: unknown;
+  /**
+   * Blocking decision for pre-tool-use hooks. A hook outputs JSON
+   * `{ "block": true, "reason": "..." }` to veto a tool call before it runs.
+   */
+  block?: boolean;
+  reason?: string;
   /** Output from the hook script */
   output?: string;
   /** Error message if hook failed */

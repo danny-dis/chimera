@@ -8,7 +8,15 @@
     "noImplicitReturns": false,
     "strict": false,
     "noImplicitAny": false,
-    "strictNullChecks": false
+    "strictNullChecks": false,
+    // See chimera-core/tsconfig.json: resolve self-imports to src so a
+    // dependency's built .d.ts can't pull this package's own dist/*.d.ts in as
+    // compiler inputs (TS5055 on rebuild over an existing dist).
+    "baseUrl": ".",
+    "paths": {
+      "@chimera/session": ["./src/index.ts"],
+      "@chimera/session/*": ["./src/*"]
+    }
   },
   "include": ["src/**/*.ts"]
 }

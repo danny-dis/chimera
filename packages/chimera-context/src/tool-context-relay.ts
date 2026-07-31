@@ -52,7 +52,14 @@ export class ToolContextRelay {
       maxStoreSize: params?.maxStoreSize ?? DEFAULT_CONFIG.maxStoreSize,
       boxThreshold: params?.boxThreshold ?? DEFAULT_CONFIG.boxThreshold,
     };
-    this.cleanupInterval = setInterval(() => this.cleanup(), CLEANUP_INTERVAL_MS);
+    const timer = setInterval(() => this.cleanup(), CLEANUP_INTERVAL_MS);
+    // Housekeeping must never be the reason the host process stays alive.
+    // Without unref() this interval re-arms forever and a one-shot CLI run
+    // hangs after printing its result instead of exiting. The timer still
+    // fires normally for as long as the process is otherwise alive, so
+    // long-running hosts (daemon, TUI) keep their periodic cleanup.
+    (timer as { unref?: () => void }).unref?.();
+    this.cleanupInterval = timer;
   }
 
   box(

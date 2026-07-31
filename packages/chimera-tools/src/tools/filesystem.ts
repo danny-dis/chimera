@@ -11,6 +11,7 @@ import {
   IGNORED_DIRS,
 } from '../tool-schema.js';
 import { type MediaBlock, MediaBlockSchema } from './media-types.js';
+import { computeFileDiff, FileDiffSchema } from '../diff-util.js';
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -225,6 +226,11 @@ const WriteFileReturnsSchema = z.object({
   path: z.string(),
   bytesWritten: z.number(),
   created: z.boolean(),
+  // Unified diff of exactly what was written, computed from the same buffer
+  // that hit disk. Additive metadata for callers (CLI/TUI) that want to show
+  // a preview/approval UI; existing consumers that ignore this field are
+  // unaffected.
+  diff: FileDiffSchema,
 });
 
 export const writeFileTool: ToolDefinition<typeof WriteFileParamsSchema, typeof WriteFileReturnsSchema> = {
@@ -238,14 +244,16 @@ export const writeFileTool: ToolDefinition<typeof WriteFileParamsSchema, typeof 
     const resolved = resolveAndValidate(params.path, context.workspaceRoot);
 
     let created = false;
-    let existing = '';
+    // Raw bytes of the file as it exists on disk right now — used both to
+    // defend against truncated re-writes and as the "old" side of the diff.
+    // `null` means the file does not exist yet (new-file creation).
+    let existingBuf: Buffer | null = null;
     try {
       await fs.access(resolved);
       if (!params.overwrite) {
         throw new Error(`File already exists and overwrite is false: ${params.path}`);
       }
-      // Read the current content so we can defend against truncated re-writes.
-      existing = await fs.readFile(resolved, 'utf-8');
+      existingBuf = await fs.readFile(resolved);
     } catch (err: unknown) {
       const code = (err as NodeJS.ErrnoException).code;
       if (code === 'ENOENT') {
@@ -280,9 +288,13 @@ export const writeFileTool: ToolDefinition<typeof WriteFileParamsSchema, typeof 
       );
     }
 
+    // Compute the diff from the exact buffer that is about to be written, so
+    // it can never drift from what actually lands on disk.
+    const diff = computeFileDiff(existingBuf, content, params.path);
+
     await fs.writeFile(resolved, content);
 
-    return { path: params.path, bytesWritten: content.length, created };
+    return { path: params.path, bytesWritten: content.length, created, diff };
   },
 }
 

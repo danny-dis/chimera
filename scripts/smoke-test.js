@@ -12,6 +12,14 @@
  */
 
 const { execSync } = require('child_process');
+const fs = require('fs');
+
+// Disposable workspace-relative scratch dir for the modes that must actually
+// write a file to report success. Recreated on every run so a stale file from
+// a previous run can't make a broken build look like it passed.
+const SCRATCH_DIR = 'smoke-tmp';
+fs.rmSync(SCRATCH_DIR, { recursive: true, force: true });
+fs.mkdirSync(SCRATCH_DIR, { recursive: true });
 
 const ALL_MODES = ['ask', 'plan', 'code', 'debug', 'review', 'oal'];
 const ALL_PRESETS = ['solo', 'duo', 'trio', 'fusion'];
@@ -99,28 +107,64 @@ for (const mode of modes) {
     }
 
     const label = `  ${mode}/${preset}`;
-    const testTask = 'Say "hello" and nothing else.';
+    // `code`, `debug` and `oal` gate completion on an actual file change, so
+    // asking them to answer a question can only ever produce `needs_user`.
+    // Give those modes a real (tiny, disposable) write task instead.
+    const scratchFile = `${SCRATCH_DIR}/${mode}-${preset}.txt`;
+    const testTask =
+      mode === 'code' || mode === 'debug' || mode === 'oal'
+        ? `Create a file at ${scratchFile} whose entire contents are the single word: hello`
+        : 'Say \\"hello\\" and nothing else.';
 
     try {
-      // Build the command — use the CLI directly
-      const cmd = `node packages/chimera-cli/dist/index.js ${mode} "${testTask}"`;
+      // Build the command — use the CLI directly.
+      // NOTE: `--preset` must actually be passed, otherwise every "preset"
+      // below runs the identical command and the 4x matrix is meaningless.
+      // `--yolo` auto-approves tool calls: this is a non-interactive harness,
+      // so a permission prompt would otherwise deadlock until the timeout.
+      const cmd = `node packages/chimera-cli/dist/index.js ${mode} "${testTask}" --preset ${preset} --yolo`;
       const env = { ...process.env, NODE_NO_WARNINGS: '1' };
+
+      // Multi-model presets (trio/fusion) legitimately take longer than a
+      // single call, and a flaky upstream can add a fallback hop on top, so
+      // the budget scales with the preset instead of a flat 30s that reports
+      // "failure" for what is really "still working".
+      const timeoutMs = preset === 'solo' ? 90_000 : 240_000;
 
       const output = execSync(cmd, {
         encoding: 'utf-8',
-        timeout: 30000,
+        timeout: timeoutMs,
         env,
         stdio: ['pipe', 'pipe', 'pipe'],
       });
 
-      // Check output has content
-      if (output && output.length > 10) {
+      // A run only counts as a pass if it actually reported a terminal status.
+      // Length alone is not evidence of success — the spinner banner is more
+      // than 10 characters on its own, which used to mask real failures.
+      const statusMatch = /Status:\s*(\w+)/.exec(output || '');
+      const status = statusMatch ? statusMatch[1] : null;
+
+      // For write modes, "done" is only credible if the file actually landed.
+      const mustWrite = mode === 'code' || mode === 'debug' || mode === 'oal';
+      const wrote = mustWrite ? fs.existsSync(scratchFile) : true;
+
+      if (status === 'done' && wrote) {
         results.passed++;
         console.log(`  ✓ ${mode}/${preset} — OK (${output.length} chars)`);
+      } else if (status === 'done' && !wrote) {
+        results.failed++;
+        results.failures.push(`${mode}/${preset}: reported done but ${scratchFile} was never written`);
+        console.log(`  ✗ ${mode}/${preset} — claimed done, no file written`);
+      } else if (status) {
+        // needs_user / blocked / error: the process behaved, the task did not
+        // complete. Report the real status rather than a generic failure.
+        results.failed++;
+        results.failures.push(`${mode}/${preset}: status=${status}`);
+        console.log(`  ✗ ${mode}/${preset} — status=${status}`);
       } else {
         results.failed++;
-        results.failures.push(`${mode}/${preset}: empty output`);
-        console.log(`  ✗ ${mode}/${preset} — empty output`);
+        results.failures.push(`${mode}/${preset}: no status line in output`);
+        console.log(`  ✗ ${mode}/${preset} — no status line`);
       }
     } catch (err) {
       const stderr = err.stderr || '';
@@ -133,6 +177,12 @@ for (const mode of modes) {
       } else if (stderr.includes('ENOTFOUND') || stderr.includes('ECONNREFUSED')) {
         results.skipped++;
         console.log(`  ⊘ ${mode}/${preset} — skipped (network unavailable)`);
+      } else if (err.code === 'ETIMEDOUT' || err.signal === 'SIGTERM') {
+        // Distinguish "took too long" from "crashed" — conflating the two is
+        // what made the previous 0/24 result impossible to act on.
+        results.failed++;
+        results.failures.push(`${mode}/${preset}: TIMEOUT after ${timeoutMs}ms`);
+        console.log(`  ✗ ${mode}/${preset} — TIMEOUT (${timeoutMs}ms)`);
       } else {
         results.failed++;
         const errMsg = (stderr || stdout || err.message).slice(0, 120);

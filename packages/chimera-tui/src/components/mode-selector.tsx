@@ -28,9 +28,13 @@ export const ModeSelector: React.FC<ModeSelectorProps> = ({
     if (m && onSelect) onSelect(m);
   }, [onSelect]);
 
+  // `isActive` must gate the hook itself, not just the handler body — see
+  // viewport.tsx. Ink ref()s stdin and enables raw mode on mount for every
+  // registered useInput, so an unfocused/unmounted-stdin selector still
+  // claims stdin, which crashes outright under a stdin without ref() (e.g.
+  // non-TTY invocations like the CLI's headless `oal`/`ask`/`code` commands
+  // rendering the dashboard as a fallback).
   useInput((_input, key) => {
-    if (!focused) return;
-
     if (key.leftArrow) {
       setNavIndex((prev) => {
         const next = Math.max(0, prev - 1);
@@ -53,7 +57,7 @@ export const ModeSelector: React.FC<ModeSelectorProps> = ({
       selectMode(navIndex);
       return;
     }
-  });
+  }, { isActive: focused });
 
   if (compact) {
     return (

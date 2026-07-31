@@ -11,3 +11,8 @@ export {
   type HookContext,
   type HookResult,
 } from './schema.js';
+export {
+  isWorkspaceTrusted,
+  trustWorkspace,
+  trustStorePath,
+} from './trust.js';

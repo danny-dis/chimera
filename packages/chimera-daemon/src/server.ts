@@ -3,7 +3,16 @@
 // ---------------------------------------------------------------------------
 
 import path from 'path';
-import { EventStream, SessionOrchestrator, SchedulerManager, type ChimeraEvent } from '@chimera/core';
+import { EventStream, SessionOrchestrator, SchedulerManager, type ChimeraEvent, type ToolRegistryInterface, type ToolExecutorInterface } from '@chimera/core';
+import {
+  ToolRegistry,
+  ToolExecutor,
+  HookExecutor,
+  PermissionEngine,
+  readOnlyProfile,
+  editFilesProfile,
+  allTools,
+} from '@chimera/tools';
 import { bootstrap, type WorkflowRegistry } from './bootstrap.js';
 import { writeMessage, success, error, ErrorCodes } from './json-rpc.js';
 import type {
@@ -162,10 +171,39 @@ export class ChimeraDaemon {
     // Bootstrap chimera
     const { workflowRegistry } = bootstrap();
 
+    // Wire the tool system so daemon workers run real tools through the same
+    // hook-gated gateway as the interactive CLI (previously tools: undefined,
+    // which left workers unable to call tools or hit pre-tool-use hooks).
+    const toolRegistry = new ToolRegistry();
+    const hookExecutor = new HookExecutor();
+    const toolExecutor = new ToolExecutor(
+      toolRegistry,
+      () => 'allow' as const,
+      undefined,
+      hookExecutor,
+    );
+    for (const tool of allTools) {
+      toolRegistry.register(tool as unknown as Parameters<typeof toolRegistry.register>[0]);
+    }
+
+    // Mode-based permission gating, mirroring the interactive CLI
+    // (cli-router.ts). Without this the daemon ran every wired tool under a
+    // blanket 'allow' with no policy engine, so a VS Code request in a
+    // read-only mode (plan/ask/review) could still write and run shell.
+    // The profiles never return 'ask', so a headless daemon never stalls
+    // waiting on a stdin prompt that will never arrive.
+    toolExecutor.setPermissionEngine(
+      new PermissionEngine(
+        mode === 'plan' || mode === 'ask' || mode === 'review'
+          ? readOnlyProfile
+          : editFilesProfile,
+      ),
+    );
+
     // Create orchestrator
     const orchestrator = new SessionOrchestrator(
       this.eventStream,
-      undefined,
+      { registry: toolRegistry as unknown as ToolRegistryInterface, executor: toolExecutor as unknown as ToolExecutorInterface },
       workspaceRoot,
     );
 

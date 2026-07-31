@@ -1,13 +1,21 @@
 import { describe, it, expect } from 'vitest';
 import { Sandbox } from '../sandbox/sandbox.js';
 
+// These tests exercise execution behavior (stdout/stderr/exit code/env), not
+// timeout behavior — only 'enforces timeout' below does that, with its own
+// short budget. The sandbox's internal timeout must therefore be generous:
+// at 5s, a PowerShell cold start on a loaded Windows box would blow the budget,
+// the child got killed, and the assertion saw empty output — surfacing as a
+// confusing "expected '' to contain 'error'" rather than a timeout.
+const SPAWN_TIMEOUT_MS = 30000;
+
 describe('Sandbox', () => {
   describe('process tier', () => {
     it('executes simple commands', async () => {
       const sandbox = new Sandbox({
         tier: 'process',
         workspaceRoot: '/tmp',
-        timeoutMs: 5000,
+        timeoutMs: SPAWN_TIMEOUT_MS,
       });
 
       const result = await sandbox.execute('echo hello');
@@ -24,7 +32,7 @@ describe('Sandbox', () => {
       const sandbox = new Sandbox({
         tier: 'process',
         workspaceRoot: '/tmp',
-        timeoutMs: 5000,
+        timeoutMs: SPAWN_TIMEOUT_MS,
       });
 
       const cmd = process.platform === 'win32'
@@ -40,7 +48,7 @@ describe('Sandbox', () => {
       const sandbox = new Sandbox({
         tier: 'process',
         workspaceRoot: '/tmp',
-        timeoutMs: 5000,
+        timeoutMs: SPAWN_TIMEOUT_MS,
       });
 
       const result = await sandbox.execute('false');
@@ -80,7 +88,7 @@ describe('Sandbox', () => {
       const sandbox = new Sandbox({
         tier: 'process',
         workspaceRoot: '/tmp',
-        timeoutMs: 5000,
+        timeoutMs: SPAWN_TIMEOUT_MS,
       });
 
       const cmd = process.platform === 'win32'
@@ -144,7 +152,7 @@ describe('Sandbox', () => {
         tier: 'process',
         workspaceRoot: '/tmp',
         maxMemoryMB: 64,
-        timeoutMs: 5000,
+        timeoutMs: SPAWN_TIMEOUT_MS,
       });
 
       const result = await sandbox.execute('echo test');
@@ -159,7 +167,7 @@ describe('Sandbox', () => {
       const sandbox = new Sandbox({
         tier: 'process',
         workspaceRoot: process.platform === 'win32' ? 'C:\\Windows\\Temp' : '/tmp',
-        timeoutMs: 5000,
+        timeoutMs: SPAWN_TIMEOUT_MS,
       });
 
       // This should work on both Windows and Unix
@@ -181,7 +189,7 @@ describe('Sandbox', () => {
       const sandbox = new Sandbox({
         tier: 'process',
         workspaceRoot: 'C:\\Windows\\Temp',
-        timeoutMs: 5000,
+        timeoutMs: SPAWN_TIMEOUT_MS,
       });
 
       const result = await sandbox.execute('Write-Output windows-test');

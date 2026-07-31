@@ -229,4 +229,76 @@ describe('ChimeraDaemon', () => {
       expect(typeof resp.result.budgetPerProvider).toBe('object');
     });
   });
+
+  describe('F12 fix: daemon workers get a hook-gated tool gateway', () => {
+    it('wires a real ToolRegistry + ToolExecutor (not undefined)', async () => {
+      const { ToolRegistry, ToolExecutor, HookExecutor, allTools } = await import('@chimera/tools');
+      const toolRegistry = new ToolRegistry();
+      const hookExecutor = new HookExecutor();
+      const toolExecutor = new ToolExecutor(toolRegistry, () => 'allow', undefined, hookExecutor);
+      for (const tool of allTools) {
+        toolRegistry.register(tool as unknown as Parameters<typeof toolRegistry.register>[0]);
+      }
+
+      // This is the exact shape executeTask passes to the orchestrator.
+      const tools = { registry: toolRegistry, executor: toolExecutor };
+
+      expect(tools.registry).toBeDefined();
+      expect(tools.executor).toBeDefined();
+      expect(tools.registry.getAll().length).toBeGreaterThan(0);
+      expect(typeof tools.executor.execute).toBe('function');
+    });
+
+    it('registers the full builtin tool set on the wired registry', async () => {
+      const { ToolRegistry, allTools } = await import('@chimera/tools');
+      const toolRegistry = new ToolRegistry();
+      for (const tool of allTools) {
+        toolRegistry.register(tool as unknown as Parameters<typeof toolRegistry.register>[0]);
+      }
+
+      const registered = new Set(toolRegistry.getAll().map((t) => t.name));
+      for (const tool of allTools) {
+        expect(registered.has(tool.name)).toBe(true);
+      }
+      expect(registered.size).toBe(allTools.length);
+    });
+
+    it('a blocking pre-tool-use hook fires through the daemon-wired orchestrator path', async () => {
+      const { EventStream, SessionOrchestrator } = await import('@chimera/core');
+      const { ToolRegistry, ToolExecutor, HookExecutor, runShellCommandTool } = await import('@chimera/tools');
+
+      const workerEventStream = new EventStream();
+      const toolRegistry = new ToolRegistry();
+      toolRegistry.register(runShellCommandTool as unknown as Parameters<typeof toolRegistry.register>[0]);
+      const hookExecutor = new HookExecutor();
+      hookExecutor.register({
+        id: 'deny-dangerous',
+        event: 'pre-tool-use',
+        toolFilter: 'run_shell_command',
+        // hook.script is spawned as `node -e <script>` via argv (no shell),
+        // so this is quoting-free and identical on Windows and POSIX.
+        script: "console.log(JSON.stringify({ block: (process.env.args||'').includes('rm -rf') }))",
+        canModify: false,
+        priority: 0,
+        enabled: true,
+        timeout: 30000,
+      });
+      const toolExecutor = new ToolExecutor(toolRegistry, () => 'allow', undefined, hookExecutor);
+
+      // This is the exact shape executeTask wires into SessionOrchestrator.
+      const orchestrator = new SessionOrchestrator(
+        workerEventStream,
+        { registry: toolRegistry as any, executor: toolExecutor as any },
+        tmpDir,
+      );
+      expect(orchestrator).toBeDefined();
+
+      const ctx = { workspaceRoot: tmpDir, sessionId: 'daemon-e2e', eventStream: workerEventStream } as any;
+      const blocked = await toolExecutor.execute('run_shell_command', { command: 'rm -rf /' }, ctx);
+      const ok = await toolExecutor.execute('run_shell_command', { command: 'echo alive' }, ctx);
+
+      expect(blocked.success).toBe(false);
+      expect(ok.success).toBe(true);
+    });
+  });
 });

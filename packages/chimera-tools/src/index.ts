@@ -33,11 +33,35 @@ export { TOOL_DEFAULTS, buildTool, type ToolDefinitionInput } from './tool-build
 export { ToolRegistry } from './tool-registry.js';
 
 // Executor
-export { ToolExecutor, type PermissionChecker } from './tool-executor.js';
+export { ToolExecutor, setAutoApprove, type PermissionChecker } from './tool-executor.js';
+
+// Hooks
+export { HookExecutor, type HookExecutorOptions } from './hooks/executor.js';
+export {
+  isWorkspaceTrusted,
+  trustWorkspace,
+  trustStorePath,
+} from './hooks/trust.js';
+export type {
+  HookDefinition,
+  HookEvent,
+  HookContext,
+  HookResult,
+} from './hooks/schema.js';
 
 // Filesystem tools
 export { readFileTool, writeFileTool, listDirectoryTool } from './tools/filesystem.js';
 export { type MediaBlock, MediaBlockSchema } from './tools/media-types.js';
+
+// Diff utility — unified-diff generation for mutating file tools
+export {
+  computeFileDiff,
+  diffAgainstDisk,
+  isBinaryBuffer,
+  FileDiffSchema,
+  type FileDiff,
+  type DiffOptions,
+} from './diff-util.js';
 
 // Search tools
 export { searchFilesTool, globFilesTool } from './tools/search.js';

@@ -80,7 +80,27 @@ export const ChimeraEventSchema = z.discriminatedUnion('type', [
   }),
   z.object({
     type: z.literal('tool_call_result'),
-    result: z.object({ tool: z.string(), output: z.string(), exitCode: z.number().optional() }),
+    result: z.object({
+      tool: z.string(),
+      output: z.string(),
+      exitCode: z.number().optional(),
+      // Unified diffs for tools that changed files on disk, so the UI can
+      // show what actually changed rather than a JSON blob. Optional and
+      // additive: non-mutating tools omit it entirely.
+      diffs: z
+        .array(
+          z.object({
+            path: z.string(),
+            patch: z.string(),
+            unchanged: z.boolean(),
+            binary: z.boolean(),
+            truncated: z.boolean(),
+            additions: z.number(),
+            deletions: z.number(),
+          }).passthrough(),
+        )
+        .optional(),
+    }),
   }),
   z.object({
     type: z.literal('patch_proposed'),

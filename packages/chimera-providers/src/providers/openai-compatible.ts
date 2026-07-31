@@ -117,6 +117,64 @@ function metaModelFallbacks(model: string): string[] {
   return META_MODEL_FALLBACK_CHAIN.filter((m) => m !== model);
 }
 
+interface ContentBlock {
+  type?: string;
+  text?: unknown;
+  thinking?: unknown;
+  content?: unknown;
+}
+
+function isThinkingBlock(type: string | undefined): boolean {
+  return type === 'thinking' || type === 'reasoning' || type === 'redacted_thinking';
+}
+
+/**
+ * Flatten an OpenAI-compatible `message.content` into a plain string.
+ *
+ * The OpenAI spec types `content` as a string, but meta-model gateways
+ * (DMR-X's `auto-*` routes) and Anthropic-style upstreams routed behind them
+ * return an array of typed blocks instead, e.g.
+ * `[{type:'thinking',thinking:[...]},{type:'text',text:'4'}]`.
+ * Downstream consumers (output sanitizers, side-query parsers) assume a
+ * string and fail with `raw.trim is not a function` when handed an array, so
+ * we normalize here at the provider boundary rather than at each call site.
+ *
+ * Thinking blocks are excluded from the visible text — `collectThinking()`
+ * surfaces them separately as `reasoning`.
+ */
+function collectText(node: unknown, includeThinking: boolean): string {
+  if (node === null || node === undefined) return '';
+  if (typeof node === 'string') return node;
+  if (Array.isArray(node)) {
+    return node.map((n) => collectText(n, includeThinking)).join('');
+  }
+  if (typeof node === 'object') {
+    const block = node as ContentBlock;
+    if (isThinkingBlock(block.type)) {
+      return includeThinking
+        ? collectText(block.thinking ?? block.text ?? block.content, includeThinking)
+        : '';
+    }
+    if (block.text !== undefined) return collectText(block.text, includeThinking);
+    if (block.content !== undefined) return collectText(block.content, includeThinking);
+  }
+  return '';
+}
+
+/** Pull only the thinking/reasoning text out of a structured content array. */
+function collectThinking(node: unknown): string {
+  if (node === null || node === undefined || typeof node === 'string') return '';
+  if (Array.isArray(node)) return node.map(collectThinking).join('');
+  if (typeof node === 'object') {
+    const block = node as ContentBlock;
+    if (isThinkingBlock(block.type)) {
+      return collectText(block.thinking ?? block.text ?? block.content, true);
+    }
+    if (block.content !== undefined) return collectThinking(block.content);
+  }
+  return '';
+}
+
 function parseCompletionResult(body: Record<string, unknown>): CompletionResult {
   const choice = (body.choices as Record<string, unknown>[])?.[0];
   if (!choice) {
@@ -124,7 +182,9 @@ function parseCompletionResult(body: Record<string, unknown>): CompletionResult 
   }
 
   const message = choice.message as Record<string, unknown> | undefined;
-  const content = (message?.content as string) ?? '';
+  // NOTE: not a plain cast — `content` may be a structured block array.
+  const rawContentField = message?.content;
+  const content = collectText(rawContentField, false);
 
   // Reasoning / thinking content (OpenAI `reasoning_content`, DeepSeek
   // `reasoning_content`, Gemini `extra_content.*.thinking`, etc.). When a
@@ -144,6 +204,13 @@ function parseCompletionResult(body: Record<string, unknown>): CompletionResult 
         break;
       }
     }
+  }
+  // Gateways that return structured content carry their reasoning as
+  // `{type:'thinking'}` blocks inside `content` rather than in a dedicated
+  // field, so fall back to those before treating the response as empty.
+  if (reasoning === undefined) {
+    const blockThinking = collectThinking(rawContentField);
+    if (blockThinking.length > 0) reasoning = blockThinking;
   }
 
   let toolCalls: ToolCall[] | undefined;

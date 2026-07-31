@@ -200,6 +200,21 @@ function validateStartupProviders(
 }
 
 /**
+ * Shape of a unified diff carried on a `tool_call_result` event.
+ * Structurally compatible with `FileDiff` from `@chimera/tools`, declared
+ * locally so the CLI doesn't take a type-only dependency on the tools package.
+ */
+interface FileDiffLike {
+  path: string;
+  patch: string;
+  unchanged: boolean;
+  binary: boolean;
+  truncated: boolean;
+  additions: number;
+  deletions: number;
+}
+
+/**
  * Fully-wired run context, produced by `buildRunContext()` and consumed by
  * every entry point (one-shot run, REPL, TUI, resume, slash commands).
  * The orchestrator is created with a live `ModelRegistry` plus active
@@ -560,11 +575,14 @@ export class CliRouter {
           : '';
         console.log(`  \u25b6 [tool] ${toolName}${argsPreview}`);
       } else if (event.type === 'tool_call_result') {
-        const result = (event as any).result as { tool?: string; exitCode?: number } | undefined;
+        const result = (event as any).result as
+          | { tool?: string; exitCode?: number; diffs?: FileDiffLike[] }
+          | undefined;
         const status = result?.exitCode !== undefined && result.exitCode !== 0
           ? `\u2717 exit ${result.exitCode}`
           : '\u2713 ok';
         console.log(`  \u25c0 [tool] ${result?.tool ?? 'unknown'} ${status}`);
+        this.printDiffs(result?.diffs);
       } else if ((event as any).type === 'compaction_triggered') {
         const e = event as any;
         console.log(`  \u2a5d [compaction] freed ~${e.tokensSaved ?? '?'} tokens`);
@@ -592,6 +610,45 @@ export class CliRouter {
       const msg = formatProviderError(err);
       console.error(`\n\u2717 Error:\n${msg}\n`);
       process.exit(1);
+    } finally {
+      // One-shot CLI run: release the orchestrator's periodic timers so the
+      // process can exit as soon as the result has been printed.
+      orchestrator.dispose();
+    }
+  }
+
+  /**
+   * Show what a file-mutating tool actually changed.
+   *
+   * Always prints the per-file +/- summary so a write is never silent; the
+   * full patch body is reserved for --verbose to keep normal runs readable.
+   */
+  private printDiffs(diffs?: FileDiffLike[]): void {
+    if (!diffs?.length) return;
+
+    for (const d of diffs) {
+      if (d.unchanged) {
+        console.log(`     ~ ${d.path} (no change)`);
+        continue;
+      }
+      if (d.binary) {
+        console.log(`     ~ ${d.path} (binary, diff not shown)`);
+        continue;
+      }
+      const truncNote = d.truncated ? ' [diff truncated]' : '';
+      console.log(`     ~ ${d.path}  +${d.additions}/-${d.deletions}${truncNote}`);
+
+      if (this.verbose && d.patch) {
+        for (const line of d.patch.split('\n')) {
+          if (line.length === 0) continue;
+          // Colorize +/- so the change reads at a glance; leave headers plain.
+          const color =
+            line.startsWith('+') && !line.startsWith('+++') ? '[32m'
+            : line.startsWith('-') && !line.startsWith('---') ? '[31m'
+            : '';
+          console.log(color ? `       ${color}${line}[0m` : `       ${line}`);
+        }
+      }
     }
   }
 
@@ -687,6 +744,7 @@ export class CliRouter {
       .command('ask <task>')
       .description('Ask a question')
       .option('--tui', 'use TUI for this task')
+      .option('--preset <mode>', 'deliberation preset (solo|duo|trio|fusion|hive|swarm|auto)', 'solo')
       .option('--json', 'emit a JSON result instead of human-readable output')
       .option('--yolo', 'auto-approve all tool calls (off by default; for CI/trusted automation)')
       .action(async (task: string, options) => {
@@ -694,18 +752,19 @@ export class CliRouter {
         if (options.tui) {
           await this.startTui(task, 'ask');
         } else {
-          await this.run('ask', task);
+          await this.run('ask', task, options.preset);
         }
       });
 
     this.program
       .command('plan <task>')
       .description('Create a plan')
+      .option('--preset <mode>', 'deliberation preset (solo|duo|trio|fusion|hive|swarm|auto)', 'solo')
       .option('--json', 'emit a JSON result instead of human-readable output')
       .option('--yolo', 'auto-approve all tool calls (off by default; for CI/trusted automation)')
-      .action(async (task: string) => {
+      .action(async (task: string, options) => {
         this.verbose = this.program.opts().verbose ?? false;
-        await this.run('plan', task);
+        await this.run('plan', task, options.preset);
       });
 
     this.program
@@ -739,6 +798,17 @@ export class CliRouter {
       .action(async (task: string, options) => {
         this.verbose = this.program.opts().verbose ?? false;
         await this.run('review', task, options.preset);
+      });
+
+    this.program
+      .command('oal <task>')
+      .description('Run an autonomous optimization loop (bounded budget, serial quality gate)')
+      .option('--preset <mode>', 'deliberation preset (solo)', 'solo')
+      .option('--json', 'emit a JSON result instead of human-readable output')
+      .option('--yolo', 'auto-approve all tool calls (off by default; for CI/trusted automation)')
+      .action(async (task: string, options) => {
+        this.verbose = this.program.opts().verbose ?? false;
+        await this.run('oal', task, options.preset);
       });
 
     this.program
@@ -982,6 +1052,23 @@ export class CliRouter {
   }
 
   private async startTui(initialTask?: string, initialMode: Mode = 'code'): Promise<void> {
+    // The Ink dashboard needs a real TTY: its selectors (Mode/Preset/Input)
+    // call Ink's `useInput`, which unconditionally requests raw mode on
+    // stdin. Under a non-interactive stdin (piped/redirected, e.g. spawned
+    // by CI or a script without a pty) Ink throws synchronously — "Raw mode
+    // is not supported on the current process.stdin" — which surfaces as an
+    // uncaught crash inside whichever selector mounts first. Detect that
+    // upfront and fall back to the line-based REPL (readline, which doesn't
+    // need raw mode) instead of letting Ink crash.
+    if (!process.stdin.isTTY) {
+      console.error(
+        '\n✗ The full-screen TUI needs an interactive terminal (stdin is not a TTY).\n' +
+        '  Falling back to the line-based REPL. Pass --repl to select this explicitly,\n' +
+        '  or run a task directly for non-interactive use, e.g. `chimera ask "..."`.\n',
+      );
+      await this.startRepl();
+      return;
+    }
     // Lazy-load Ink/TUI: it's an ESM module with top-level await and cannot be
     // required() synchronously from this CJS CLI. Dynamic import keeps boot clean.
     const { runTUI } = await import('@chimera/tui');

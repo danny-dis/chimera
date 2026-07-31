@@ -11,13 +11,14 @@
   "scripts": {
     "build": "tsc",
     "dev": "tsc --watch",
-    "test": "vitest",
+    "test": "vitest run",
     "lint": "eslint src/",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@chimera/core": "workspace:*",
     "@chimera/providers": "workspace:*",
+    "@chimera/tools": "workspace:*",
     "yaml": "^2.5.0",
     "zod": "^3.23.0",
     "pino": "^9.0.0"

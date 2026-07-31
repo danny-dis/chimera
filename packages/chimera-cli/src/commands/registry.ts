@@ -28,7 +28,7 @@ const HELP_TEXT = [
   '  Settings:',
   '    /model /status /config /doctor /export',
   '    /refresh-models  — fetch latest model metadata from APIs',
-  '    /trust <path>    — trust a workspace so its hooks can run',
+  '    /trust <path>    — trust workspace; /trust --untrust <path>; /trust --list',
 ];
 
 /**

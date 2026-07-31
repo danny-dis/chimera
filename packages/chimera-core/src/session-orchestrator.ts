@@ -471,6 +471,19 @@ export class SessionOrchestrator {
     }
   }
 
+  /**
+   * Release resources owned by this orchestrator.
+   *
+   * Currently the only resource holding an OS/event-loop handle is the tool
+   * relay's periodic cleanup timer. Callers that build an orchestrator for a
+   * single run (the CLI) should call this when the run finishes; long-lived
+   * hosts (daemon, TUI) should call it on shutdown. Safe to call more than
+   * once.
+   */
+  dispose(): void {
+    this.toolRelay.destroy();
+  }
+
   setWorkflowExecutor(executor: { execute(script: string): Promise<any> }) {
     this.workflowExecutor = executor;
   }

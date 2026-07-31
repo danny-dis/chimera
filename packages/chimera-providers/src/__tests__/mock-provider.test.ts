@@ -79,7 +79,6 @@ describe('MockProvider', () => {
 
     it('emits a final usage chunk', async () => {
       const provider = new MockProvider({ response: 'ok' });
-      const finalChunk = await provider.stream([userMsg('a')]).next();
       // Iterate to last yield
       let last: unknown = null;
       for await (const c of provider.stream([userMsg('a')])) last = c;

@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { ProviderFactory } from '../provider-factory.js';
 import { OpenAICompatibleProvider } from '../providers/openai-compatible.js';
 import { AnthropicProvider } from '../providers/anthropic.js';
@@ -6,6 +6,7 @@ import { GoogleProvider } from '../providers/google.js';
 import { OllamaProvider } from '../providers/ollama.js';
 import { InvalidConfigError } from '../errors.js';
 import { MockProvider } from '../providers/mock.js';
+import { clearProviderEnv } from './test-env.js';
 
 describe('ProviderFactory', () => {
   const originalEnv = process.env;
@@ -157,13 +158,10 @@ describe('ProviderFactory', () => {
     });
 
     it('falls back to a single mock provider when no API keys are set', () => {
-      delete process.env.ANTHROPIC_API_KEY;
-      delete process.env.OPENAI_API_KEY;
-      delete process.env.GOOGLE_API_KEY;
-      delete process.env.OLLAMA_MODEL;
-      delete process.env.ANTHROPIC_MODEL;
-      delete process.env.OPENAI_MODEL;
-      delete process.env.GOOGLE_MODEL;
+      // Wipe every known provider env var — not just the "big four" — so
+      // real credentials exported in the developer's shell (e.g. a personal
+      // MISTRAL_API_KEY / MISTRAL_MODEL) can't leak into this assertion.
+      clearProviderEnv();
 
       const providers = ProviderFactory.createFromEnv();
       expect(providers).toHaveLength(1);
@@ -171,10 +169,7 @@ describe('ProviderFactory', () => {
     });
 
     it('uses override when provided', () => {
-      delete process.env.OLLAMA_MODEL;
-      delete process.env.ANTHROPIC_MODEL;
-      delete process.env.OPENAI_MODEL;
-      delete process.env.GOOGLE_MODEL;
+      clearProviderEnv();
 
       const providers = ProviderFactory.createFromEnv({
         provider: 'openai',
@@ -200,13 +195,7 @@ describe('ProviderFactory', () => {
     });
 
     it('falls back to a mock provider instead of throwing when no config is available', () => {
-      delete process.env.ANTHROPIC_API_KEY;
-      delete process.env.OPENAI_API_KEY;
-      delete process.env.GOOGLE_API_KEY;
-      delete process.env.OLLAMA_MODEL;
-      delete process.env.ANTHROPIC_MODEL;
-      delete process.env.OPENAI_MODEL;
-      delete process.env.GOOGLE_MODEL;
+      clearProviderEnv();
 
       const provider = ProviderFactory.createSingle();
       expect(provider).toBeInstanceOf(MockProvider);

@@ -66,7 +66,24 @@ export type ChimeraEvent =
   | { type: 'handoff_triggered'; fromAgent: string; toAgent: string; reason: 'context_threshold' | 'task_boundary'; format: 'compact' | 'delta'; tokenCount: number; claimIds: string[] }
   | { type: 'handoff_validated'; accepted: boolean; checklist: HandoffChecklist; clarifications: string[] }
   | { type: 'tool_call_requested'; call: { tool: string; args: Record<string, unknown> }; policy: 'allow' | 'ask' | 'deny' | 'escalate' }
-  | { type: 'tool_call_result'; result: { tool: string; output: string; exitCode?: number } }
+  | {
+      type: 'tool_call_result';
+      result: {
+        tool: string;
+        output: string;
+        exitCode?: number;
+        /** Unified diffs for tools that wrote to disk (additive, optional). */
+        diffs?: Array<{
+          path: string;
+          patch: string;
+          unchanged: boolean;
+          binary: boolean;
+          truncated: boolean;
+          additions: number;
+          deletions: number;
+        }>;
+      };
+    }
   | { type: 'patch_proposed'; patchId: string; files: string[] }
   | { type: 'check_result'; command: string; exitCode: number; outputRef: string }
   | { type: 'review_finding'; severity: 'blocker' | 'warning' | 'note'; evidence: Array<{ file: string; line?: number; description: string }> }

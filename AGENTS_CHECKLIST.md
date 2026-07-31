@@ -43,6 +43,80 @@
 
 > **NOTE 2026-07-30**: the per-category counts above are known to drift from reality — sections 18.2-18.4 sat marked pending for weeks while the code was already complete, and section 1.4 cited a `truncateToolOutput()` at a line number where no such function existed. Treat the individual section checkboxes as authoritative over these totals until a full audit is run.
 
+---
+
+## #DAILY-DRIVER READINESS PASS — 2026-07-31#
+
+> Every claim below was verified by running the thing, not by reading code. Where something is
+> still broken it is listed as still broken.
+
+### Fixed
+
+- [x] **BLOCKER: the CLI never exited.** `ToolContextRelay`'s constructor started a 5-minute
+  `setInterval` that was never `unref()`d or cleared, so the event loop could never drain. Every
+  task-running invocation printed its answer and then hung forever (measured: 5m00s, killed by
+  timeout; 22 orphaned `node` processes accumulated from one test session). `beforeExit` never
+  fired. It hid from `process._getActiveHandles()` because modern Node does not list timers there;
+  found by monkey-patching `setInterval` and capturing creation stacks.
+  Fix: `unref()` the housekeeping timer (`chimera-context/src/tool-context-relay.ts`), add
+  `SessionOrchestrator.dispose()`, and call it from a `finally` in `CliRouter.run`.
+  **Result: `chimera ask` now exits 0 in ~5–15s.** Regression test asserts `hasRef() === false`.
+- [x] **Provider returned non-string content.** `openai-compatible.ts` did
+  `message?.content as string` — a cast that lies when a meta-model gateway returns an array of
+  typed blocks (`[{type:'thinking'…},{type:'text',text:'4'}]`), producing
+  `TypeError: raw.trim is not a function` and a bogus `needs_user`. Now flattened at the provider
+  boundary, with thinking blocks routed to `reasoning`. 6 tests cover the observed shapes.
+- [x] **`oal` mode was never registered as a CLI command**, so it fell through to the Ink TUI,
+  which crashed calling `useInput` on non-TTY stdin. Registered properly; added a TTY guard and
+  `isActive` gating in `mode-selector.tsx` / `preset-selector.tsx`.
+- [x] **`ask` and `plan` were missing `--preset`** while `code`/`debug`/`review` had it.
+- [x] **Diff preview for file writes** (was ABSENT — the single biggest safety gap).
+  `chimera-tools/src/diff-util.ts` computes a unified diff from the exact buffer written, before
+  writing; wired through `write_file`, `edit_file`, `search_replace`, `apply_patch`, carried on the
+  `tool_call_result` event, and rendered by the CLI as `~ path +N/-M` (full patch under `--verbose`).
+  Caveat: the `apply_patch` preview is advisory — that tool delegates the write to `git apply`, so
+  it is not guaranteed byte-identical in fuzzy-match cases.
+- [x] **Provider test isolation.** 12 failing tests were NOT a source bug: the suite cleared only
+  the "big four" env vars while this machine also has `MISTRAL_*`/`OPENROUTER_*` exported, so the
+  factory correctly built a real provider. Fixed with a shared `clearProviderEnv()` helper.
+  Note: the earlier claim that `NoProviderConfiguredError` "doesn't exist yet" is stale — it is at
+  `chimera-providers/src/errors.ts:51`.
+- [x] **`scripts/smoke-test.js` was not a valid signal.** It never passed `--preset` (so all four
+  "presets" ran byte-identical commands), used a flat 30s timeout, counted any output >10 chars as
+  a pass (the spinner alone clears that), and gave file-writing modes a question to answer. Now
+  passes `--preset` and `--yolo`, scales the timeout by preset, requires a real `Status: done`,
+  distinguishes TIMEOUT from crash, and for `code`/`debug`/`oal` asserts the file actually landed.
+
+### Smoke result: 21/24 passed (was 0/24)
+
+Remaining 3 (`code/duo`, `code/trio`, `debug/trio`) all report `needs_user` — and that is
+**correct behavior, not a bug**: none of the three wrote its file, verified by checking
+`smoke-tmp/` afterwards. The model narrated instead of calling a write tool, and the completion
+gate honestly refused to report `done`. This is the gate working as intended (contrast with the
+pre-2026-07-30 behavior, which hardcoded `verdict: 'pass'`). The open issue is *model/prompt
+reliability* on write tasks, not gate correctness. Which combos fail varies between runs.
+
+> Retracted: an earlier draft of this section claimed `code/trio`+`code/fusion` escalate on a
+> successful write. That was wrong — it came from a run where a `.dot-directory` scratch path
+> defeated `expectedPathFromTask`, so the gate could not see the file that had landed.
+
+### Still broken (do not mark these complete)
+
+- [ ] Write-task reliability: on some runs the model answers in prose instead of calling
+  `write_file`/`edit_file`. The force-write gate catches it and escalates, so nothing is
+  fabricated, but 3/12 write-mode combos needed user intervention in the last full run.
+- [ ] `expectedPathFromTask` (`coordinator/path-from-task.ts`) drops a leading dot: a task naming
+  `.foo/bar.txt` yields `foo/bar.txt` because the regex starts at a word boundary, so the
+  file-landed check looks for a path that does not exist.
+- [ ] Streaming LLM output, todo/task tracking, context compaction (`microCompact` is implemented
+  but never called), and multimodal input all remain implemented-but-unwired.
+- [ ] There is still no *approval* gate — the diff is shown after the write, not before it.
+- [x] `.chimera/config.yaml` — **verified clean 2026-07-31**: the only tracked config
+  (`packages/chimera-cli/.chimera/config.yaml`) uses `${CHIMERA_CHEAP_API_KEY}` env-var references
+  in all three provider entries, and the root `.chimera/` is gitignored. A `git grep` for literal
+  `sk-…` key material across the tracked tree returns only a synthetic fixture in
+  `secret-detector.test.ts`. No live key is committed.
+
 ### Test counts across the 4 affected packages (post-integration)
 
 | Package | Source LOC | Tests | Status |

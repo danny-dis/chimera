@@ -4,6 +4,8 @@ import { promises as fs } from 'fs';
 import path from 'path';
 import type { ToolDefinition, ToolContext } from '../tool-schema.js';
 import { PathSchema, MAX_OUTPUT_SIZE } from '../tool-schema.js';
+import { computeFileDiff, FileDiffSchema, isBinaryBuffer, type FileDiff } from '../diff-util.js';
+import { parsePatch, applyPatch as jsdiffApplyPatch } from 'diff';
 
 function resolveAndValidate(basePath: string, workspaceRoot: string): string {
   const resolved = path.resolve(workspaceRoot, basePath);
@@ -22,13 +24,94 @@ const ApplyPatchParamsSchema = z.object({
   dryRun: z.boolean().default(false),
 });
 
+const ApplyPatchFileDiffSchema = FileDiffSchema.extend({
+  // Whether the in-memory preview (jsdiff) could simulate applying this
+  // file's hunks against current on-disk content. `false` means the preview
+  // is empty/unavailable even though the real `git apply` below may still
+  // succeed via its own fuzzy-matching — git is the actual writer here, this
+  // preview is a best-effort approximation computed before it runs.
+  previewApplied: z.boolean(),
+});
+
 const ApplyPatchReturnsSchema = z.object({
   applied: z.boolean(),
   filesChanged: z.array(z.string()),
   hunksApplied: z.number(),
   hunksFailed: z.number(),
   rejectFiles: z.array(z.string()),
+  // Per-file unified-diff preview, computed BEFORE `git apply` runs by
+  // simulating the patch in-memory against current on-disk content. For a
+  // well-formed patch this matches what gets written, but — unlike the other
+  // mutating tools — the actual write here is performed by a separate `git
+  // apply` process, so this preview is advisory rather than guaranteed
+  // byte-identical (see `previewApplied`).
+  diffs: z.array(ApplyPatchFileDiffSchema),
 });
+
+/**
+ * Best-effort per-file diff preview for apply_patch, computed before the
+ * real `git apply` invocation. Simulates applying each file's hunks (via
+ * jsdiff) against the file's current on-disk bytes. Never throws.
+ */
+async function buildPatchPreview(
+  patch: string,
+  workingDir: string,
+): Promise<Array<FileDiff & { previewApplied: boolean }>> {
+  let parsedFiles: ReturnType<typeof parsePatch>;
+  try {
+    parsedFiles = parsePatch(patch);
+  } catch {
+    return [];
+  }
+
+  const results: Array<FileDiff & { previewApplied: boolean }> = [];
+
+  for (const pf of parsedFiles) {
+    const rawName = pf.newFileName && pf.newFileName !== '/dev/null' ? pf.newFileName : pf.oldFileName;
+    const filePath = (rawName ?? '').replace(/^[ab]\//, '');
+    if (!filePath) continue;
+
+    const targetPath = path.resolve(workingDir, filePath);
+    let oldBuf: Buffer | null = null;
+    try {
+      oldBuf = await fs.readFile(targetPath);
+    } catch {
+      oldBuf = null;
+    }
+
+    if (oldBuf && isBinaryBuffer(oldBuf)) {
+      results.push({
+        path: filePath, patch: '', unchanged: false, binary: true,
+        truncated: false, additions: 0, deletions: 0, eolChanged: false,
+        previewApplied: false,
+      });
+      continue;
+    }
+
+    const oldStr = (oldBuf ?? Buffer.alloc(0)).toString('utf-8');
+    let applied: string | false;
+    try {
+      applied = jsdiffApplyPatch(oldStr, pf);
+    } catch {
+      applied = false;
+    }
+
+    if (applied === false) {
+      results.push({
+        path: filePath, patch: '', unchanged: false, binary: false,
+        truncated: false, additions: 0, deletions: 0, eolChanged: false,
+        previewApplied: false,
+      });
+      continue;
+    }
+
+    const newBuf = Buffer.from(applied, 'utf-8');
+    const diff = computeFileDiff(oldBuf, newBuf, filePath);
+    results.push({ ...diff, previewApplied: true });
+  }
+
+  return results;
+}
 
 export const applyPatchTool: ToolDefinition<typeof ApplyPatchParamsSchema, typeof ApplyPatchReturnsSchema> = {
   name: 'apply_patch',
@@ -49,6 +132,10 @@ export const applyPatchTool: ToolDefinition<typeof ApplyPatchParamsSchema, typeo
     // Create backups of affected files before applying
     const filesToBackup = extractFilesFromPatch(params.patch);
     const backupDir = path.join(context.workspaceRoot, '.chimera-backup');
+
+    // Diff preview — computed before any write (backup or real apply) so it
+    // reflects the state of the files exactly as they are right now.
+    const diffs = await buildPatchPreview(params.patch, workingDir);
 
     if (!params.dryRun) {
       await fs.mkdir(backupDir, { recursive: true });
@@ -79,6 +166,7 @@ export const applyPatchTool: ToolDefinition<typeof ApplyPatchParamsSchema, typeo
             hunksApplied: 0,
             hunksFailed: 0,
             rejectFiles: [],
+            diffs,
           };
         }
 
@@ -88,6 +176,7 @@ export const applyPatchTool: ToolDefinition<typeof ApplyPatchParamsSchema, typeo
           hunksApplied: countHunks(params.patch),
           hunksFailed: 0,
           rejectFiles: [],
+          diffs,
         };
       }
 
@@ -106,6 +195,7 @@ export const applyPatchTool: ToolDefinition<typeof ApplyPatchParamsSchema, typeo
           hunksApplied: countHunks(params.patch),
           hunksFailed: 0,
           rejectFiles: [],
+          diffs,
         };
       }
 
@@ -138,6 +228,7 @@ export const applyPatchTool: ToolDefinition<typeof ApplyPatchParamsSchema, typeo
         hunksApplied: countHunks(params.patch) - rejectFiles.length,
         hunksFailed: rejectFiles.length,
         rejectFiles,
+        diffs,
       };
     } finally {
       // Clean up temp patch file
@@ -183,6 +274,9 @@ const EditBlockReturnsSchema = z.object({
   applied: z.boolean(),
   path: z.string(),
   replacements: z.number(),
+  // Unified diff of exactly what was written, computed from the same buffer
+  // that hit disk (additive metadata; see diff-util.ts).
+  diff: FileDiffSchema,
 });
 
 export const editBlockTool: ToolDefinition<typeof EditBlockParamsSchema, typeof EditBlockReturnsSchema> = {
@@ -200,7 +294,8 @@ export const editBlockTool: ToolDefinition<typeof EditBlockParamsSchema, typeof 
       throw new Error(`Path escapes workspace root: ${params.path}`);
     }
 
-    const content = await fs.readFile(resolved, 'utf-8');
+    const oldBuf = await fs.readFile(resolved);
+    const content = oldBuf.toString('utf-8');
 
     // Exact match first.
     const firstIndex = content.indexOf(params.oldText);
@@ -216,8 +311,10 @@ export const editBlockTool: ToolDefinition<typeof EditBlockParamsSchema, typeof 
         if (lineIdx !== -1) {
           lines[lineIdx] = params.newText;
           const newContent = lines.join('\n');
-          await fs.writeFile(resolved, newContent, 'utf-8');
-          return { applied: true, path: params.path, replacements: 1 };
+          const newBuf = Buffer.from(newContent, 'utf-8');
+          const diff = computeFileDiff(oldBuf, newBuf, params.path);
+          await fs.writeFile(resolved, newBuf);
+          return { applied: true, path: params.path, replacements: 1, diff };
         }
       }
       // Provide helpful suggestions
@@ -243,9 +340,11 @@ export const editBlockTool: ToolDefinition<typeof EditBlockParamsSchema, typeof 
       replacements = 1;
     }
 
-    await fs.writeFile(resolved, newContent, 'utf-8');
+    const newBuf = Buffer.from(newContent, 'utf-8');
+    const diff = computeFileDiff(oldBuf, newBuf, params.path);
+    await fs.writeFile(resolved, newBuf);
 
-    return { applied: true, path: params.path, replacements };
+    return { applied: true, path: params.path, replacements, diff };
   },
 };
 
@@ -274,6 +373,7 @@ const EditFileReturnsSchema = z.object({
   applied: z.boolean(),
   path: z.string(),
   replacements: z.number(),
+  diff: FileDiffSchema,
 });
 
 export const editFileTool: ToolDefinition<typeof EditFileParamsSchema, typeof EditFileReturnsSchema> = {
@@ -318,6 +418,7 @@ const SearchReplaceReturnsSchema = z.object({
     reason: z.string(),
     similarLines: z.array(z.string()),
   })),
+  diff: FileDiffSchema,
 });
 
 function parseSearchReplaceBlocks(text: string): SearchReplaceBlock[] {
@@ -363,7 +464,8 @@ export const searchReplaceTool: ToolDefinition<typeof SearchReplaceParamsSchema,
   permissionLevel: 'write',
   execute: async (params, context: ToolContext) => {
     const resolved = resolveAndValidate(params.path, context.workspaceRoot);
-    let content = await fs.readFile(resolved, 'utf-8');
+    const oldBuf = await fs.readFile(resolved);
+    let content = oldBuf.toString('utf-8');
     let totalReplacements = 0;
     const failures: Array<{ search: string; reason: string; similarLines: string[] }> = [];
 
@@ -387,8 +489,11 @@ export const searchReplaceTool: ToolDefinition<typeof SearchReplaceParamsSchema,
       totalReplacements += count;
     }
 
+    const newBuf = Buffer.from(content, 'utf-8');
+    const diff = computeFileDiff(oldBuf, newBuf, params.path);
+
     if (totalReplacements > 0) {
-      await fs.writeFile(resolved, content, 'utf-8');
+      await fs.writeFile(resolved, newBuf);
     }
 
     return {
@@ -396,6 +501,7 @@ export const searchReplaceTool: ToolDefinition<typeof SearchReplaceParamsSchema,
       path: params.path,
       replacements: totalReplacements,
       failures,
+      diff,
     };
   },
 };

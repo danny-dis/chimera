@@ -3,6 +3,64 @@ import type { ToolRegistry } from './tool-registry.js';
 import type { ToolContext, ToolResult, PermissionDecision } from './tool-schema.js';
 import type { PermissionEngine } from './permission/policy.js';
 import { HookExecutor } from './hooks/executor.js';
+import type { FileDiff } from './diff-util.js';
+
+/**
+ * Pull any unified diffs off a tool result so they can ride along on the
+ * `tool_call_result` event.
+ *
+ * The mutating file tools expose a single `diff`; `apply_patch` exposes a
+ * per-file `diffs` array. Both are optional and purely additive, so anything
+ * unrecognized yields no `diffs` key at all.
+ */
+interface EventFileDiff {
+  path: string;
+  patch: string;
+  unchanged: boolean;
+  binary: boolean;
+  truncated: boolean;
+  additions: number;
+  deletions: number;
+}
+
+function toEventDiff(d: FileDiff): EventFileDiff {
+  // Project onto exactly the fields the event carries, so tool-local additions
+  // to FileDiff never silently widen the event contract.
+  return {
+    path: d.path,
+    patch: d.patch,
+    unchanged: d.unchanged,
+    binary: d.binary,
+    truncated: d.truncated,
+    additions: d.additions,
+    deletions: d.deletions,
+  };
+}
+
+function extractDiffs(data: unknown): { diffs?: EventFileDiff[] } {
+  if (data === null || typeof data !== 'object') return {};
+  const d = data as { diff?: unknown; diffs?: unknown };
+
+  const isDiff = (v: unknown): v is FileDiff =>
+    v !== null && typeof v === 'object' && typeof (v as FileDiff).path === 'string';
+
+  if (isDiff(d.diff)) return { diffs: [toEventDiff(d.diff)] };
+
+  if (Array.isArray(d.diffs)) {
+    // apply_patch nests each FileDiff alongside a `previewApplied` flag.
+    const collected = d.diffs
+      .map((entry) => {
+        if (isDiff(entry)) return entry;
+        const nested = (entry as { diff?: unknown } | null)?.diff;
+        return isDiff(nested) ? nested : null;
+      })
+      .filter((v): v is FileDiff => v !== null)
+      .map(toEventDiff);
+    if (collected.length > 0) return { diffs: collected };
+  }
+
+  return {};
+}
 
 export type PermissionChecker = (
   tool: string,
@@ -184,7 +242,9 @@ export class ToolExecutor {
     // Execute
     const result = await this.registry.execute(toolName, coerced, context);
 
-    // Emit result event
+    // Emit result event. Mutating file tools attach a unified diff of what
+    // they wrote; lift it onto the event so the UI can show the user the
+    // actual change instead of a raw JSON blob.
     context.eventStream.append({
       type: 'tool_call_result',
       result: {
@@ -193,6 +253,7 @@ export class ToolExecutor {
           ? JSON.stringify(result.data)
           : result.error ?? 'unknown error',
         exitCode: result.success ? 0 : 1,
+        ...(result.success ? extractDiffs(result.data) : {}),
       },
     });
 

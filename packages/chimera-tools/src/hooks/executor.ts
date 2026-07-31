@@ -9,6 +9,7 @@ import { spawn } from 'child_process';
 import { promises as fs } from 'fs';
 import path from 'path';
 import type { HookDefinition, HookContext, HookResult } from './schema.js';
+import { isWorkspaceTrusted } from './trust.js';
 
 export interface HookExecutorOptions {
   /** Default timeout for hooks in ms */
@@ -77,8 +78,14 @@ export class HookExecutor {
 
   /**
    * Load hooks from .chimera/hooks.yaml in the workspace.
+   * Skips loading entirely if the workspace is not trusted — a cloned repo
+   * must not auto-run its hook scripts. See trust.ts.
    */
   async loadFromWorkspace(workspaceRoot: string): Promise<void> {
+    if (!(await isWorkspaceTrusted(workspaceRoot))) {
+      // Untrusted: do not load or execute any workspace hook scripts.
+      return;
+    }
     const hooksPath = path.join(workspaceRoot, '.chimera', 'hooks.yaml');
     await this.loadFromFile(hooksPath);
   }
@@ -170,12 +177,18 @@ export class HookExecutor {
       // Parse output for param modifications
       let modifiedParams: Record<string, unknown> | undefined;
       let modifiedResult: unknown;
+      let block: boolean | undefined;
+      let reason: string | undefined;
 
-      if (output && hook.canModify) {
+      if (output) {
         try {
           const parsed = JSON.parse(output);
-          if (parsed.params) modifiedParams = parsed.params;
-          if (parsed.result) modifiedResult = parsed.result;
+          if (hook.canModify) {
+            if (parsed.params) modifiedParams = parsed.params;
+            if (parsed.result) modifiedResult = parsed.result;
+          }
+          if (parsed.block === true) block = true;
+          if (typeof parsed.reason === 'string') reason = parsed.reason;
         } catch {
           // Output is not JSON — use as-is
         }
@@ -186,6 +199,8 @@ export class HookExecutor {
         output,
         modifiedParams,
         modifiedResult,
+        block,
+        reason,
         duration: Date.now() - startTime,
       };
     } catch (err) {
