@@ -1,5 +1,37 @@
 # Persistence, Determinism & Skill-Building — Deliverables (Steps 1–8)
 
+**Package:** `@chimera/core` v0.5.7
+**Scope:** `packages/chimera-core`
+
+## Overview
+
+Chimera is a terminal-native, parallel multi-agent coding platform. Behind a
+unified CLI/TUI interface it orchestrates multiple specialized agents (writer,
+reviewer, challenger, synthesizer) that work in concert to help developers
+write, review, and ship code safely.
+
+`@chimera/core` is the central orchestrator package. It provides:
+
+- **Session orchestration** — mode-aware agent lifecycle (ASK, PLAN, CODE,
+  DEBUG, REVIEW) with escalation ladders and budget guards.
+- **Agent mesh** — multi-provider routing, cross-vendor review enforcement,
+  and purpose guards for every sub-agent.
+- **Coordinator engines** — solo, duo, trio, and fusion executors that
+  decompose complex tasks into parallelizable sub-agent runs with structured
+  result aggregation.
+- **Deliberation engine** — primary reasoning path with constraint analysis,
+  hypothesis generation, and response synthesis.
+- **Skill system** — deterministic skill discovery, capture, and workflow
+  composition (built-in workflows like `release-cut`, `quality-gate`,
+  `parallel-decompose`).
+- **Long-term memory** — vector-store persistence with embedding providers.
+- **Worktree isolation** — per-task sandboxed environments.
+- **Security** — prompt injection detection, secret scanning, and audit logging.
+- **Event stream** — structured `ChimeraEvent` emission for all orchestration
+  decisions.
+
+---
+
 Scope: `packages/chimera-core`. All changes are additive/observability-only — no
 existing success path was altered; delegation is an *extra rung* that falls back
 to the inline path on throw.
