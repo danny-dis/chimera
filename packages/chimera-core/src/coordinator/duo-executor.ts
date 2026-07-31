@@ -2,7 +2,7 @@ import { EventStream } from '../event-stream.js';
 import type { LLMProvider, ToolExecutorInterface, ToolRegistryInterface } from '../session-orchestrator.js';
 import type { ModelRegistry, ModelEntry } from '@chimera/providers';
 import type { CostTracker } from '../cost-tracker.js';
-import { ResponseSynthesizer, type SynthesisInput } from '../response-synthesizer.js';
+import { ResponseSynthesizer, type SynthesisInput } from './response-synthesizer.js';
 import { sanitizeWriterOutput, sanitizeReviewerOutput } from './output-sanitizer.js';
 import { TaskRouter } from '../task-router.js';
 import { runAgentToolLoop, countSourceFiles } from './agent-tool-loop.js';

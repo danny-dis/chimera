@@ -12,7 +12,7 @@ import { describe, it, expect, vi } from 'vitest';
 import { SoloExecutor } from '../solo-executor.js';
 import { DuoExecutor } from '../duo-executor.js';
 import { TrioExecutor } from '../trio-executor.js';
-import { ResponseSynthesizer } from '../../response-synthesizer.js';
+import { ResponseSynthesizer } from '../response-synthesizer.js';
 import { ModelRegistry } from '../../../../chimera-providers/src/model-registry.js';
 import { EventStream } from '../../event-stream.js';
 import type { LLMProvider } from '../../session-orchestrator.js';

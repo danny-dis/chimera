@@ -4,7 +4,7 @@ import type { LLMProvider, ToolExecutorInterface, ToolRegistryInterface } from '
 import type { ModelRegistry, ModelEntry } from '@chimera/providers';
 import type { CostTracker } from '../cost-tracker.js';
 import type { WorktreeIsolation, WorktreeInfo } from '../agent/worktree-isolation.js';
-import { ResponseSynthesizer, type SynthesisInput } from '../response-synthesizer.js';
+import { ResponseSynthesizer, type SynthesisInput } from './response-synthesizer.js';
 import { buildMessages, CHIMERA_CORE_IDENTITY } from '../prompts.js';
 import { zodToJsonSchema } from '../zod-json.js';
 import { sanitizeWriterOutput, sanitizeReviewerOutput } from './output-sanitizer.js';

@@ -240,6 +240,29 @@ export const writeFileTool: ToolDefinition<typeof WriteFileParamsSchema, typeof 
   returns: WriteFileReturnsSchema,
   category: 'filesystem',
   permissionLevel: 'write',
+  /**
+   * Pre-write preview: the same old/new buffers the write would use, diffed
+   * WITHOUT touching disk. Mirrors execute()'s guards — a write that would be
+   * refused (empty/truncated content, overwrite of an existing file with
+   * `overwrite:false`) yields no preview rather than a misleading one.
+   */
+  previewDiff: async (params, context) => {
+    try {
+      const resolved = resolveAndValidate(params.path as string, context.workspaceRoot);
+      let existingBuf: Buffer | null = null;
+      try {
+        existingBuf = await fs.readFile(resolved);
+        if (!params.overwrite) return null;
+      } catch {
+        existingBuf = null;
+      }
+      const contentText = (params.content as string | undefined) ?? (params.contents as string | undefined) ?? '';
+      if (contentText.length === 0 || contentLooksTruncated(contentText)) return null;
+      return [computeFileDiff(existingBuf, Buffer.from(contentText, 'utf-8'), params.path as string)];
+    } catch {
+      return null;
+    }
+  },
   execute: async (params, context: ToolContext) => {
     const resolved = resolveAndValidate(params.path, context.workspaceRoot);
 

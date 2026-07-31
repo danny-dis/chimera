@@ -222,12 +222,28 @@ export class ToolExecutor {
     }
 
     if (decision === 'ask') {
+      // Pre-write approval gate. For mutating write tools that expose a diff
+      // preview, compute what would change BEFORE the write lands and ride it
+      // on the event so the reviewer can block/allow against the real patch.
+      // Best-effort: a failed or unavailable preview degrades to no diffs and
+      // never to a blocked write.
+      let preview: EventFileDiff[] | undefined;
+      if (tool.previewDiff) {
+        try {
+          const diffs = await tool.previewDiff(coerced, context);
+          preview = diffs && diffs.length > 0 ? diffs.map(toEventDiff) : undefined;
+        } catch {
+          preview = undefined;
+        }
+      }
+
       // Emit event requesting permission, then block on a real prompt.
       context.eventStream.append({
         type: 'tool_call_requested',
         call: { tool: toolName, args: params },
         policy: 'ask',
-      });
+        ...(preview ? { diffs: preview } : {}),
+      } as Parameters<typeof context.eventStream.append>[0]);
 
       const granted = await promptAsk(toolName);
       if (granted !== 'allow') {

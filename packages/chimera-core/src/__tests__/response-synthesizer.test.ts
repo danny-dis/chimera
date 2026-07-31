@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { ResponseSynthesizer, type SynthesisInput, type Conflict } from '../response-synthesizer.js';
+import { ResponseSynthesizer, type SynthesisInput, type Conflict } from '../coordinator/response-synthesizer.js';
 import { EventStream } from '../event-stream.js';
 
 function makeInput(overrides: Partial<SynthesisInput> = {}): SynthesisInput {

@@ -186,8 +186,10 @@ async function metricCost(): Promise<MetricResult> {
   const registry = makeRegistry();
   const costTracker = new CostTracker(eventStream);
   const executor = new TrioExecutor({ eventStream, registry, costTracker });
+  const recordSpendSpy = vi.spyOn(costTracker, 'recordSpend');
 
-  // 3 frontier calls × $0.00525 each = $0.0158. Budget $0.001 trips.
+  // Frontier writer costs ~$0.00525/call. Budget $0.001 trips after the
+  // draft stage, so `recordSpend` must have fired before the degradation.
   const factory = (id: string) => {
     if (id === MOCK_IDS.challenger) return makeMockProvider([{ match: /./, content: 'challenge' }]);
     if (id === FRONTIER_MODEL_ID) return makeMockProvider([{ match: /./, content: 'content' }]);
@@ -201,12 +203,16 @@ async function metricCost(): Promise<MetricResult> {
     factory
   );
 
-  const score: Score = (result.degraded && /budget/i.test(result.degradationReason ?? '')) ? 1 : 0;
+  const budgetTripped = result.degraded && /budget/i.test(result.degradationReason ?? '');
+  const spentOnFrontier = recordSpendSpy.mock.calls.some((c) => c[0] === FRONTIER_MODEL_ID);
+  const totalSpend = costTracker.getTotalCost();
+
+  const score: Score = (budgetTripped && spentOnFrontier && totalSpend > 0) ? 1 : 0;
   return {
     name: 'Cost',
     score,
-    expected: 'degraded=true with reason matching /budget/i',
-    actual: `degraded=${result.degraded}, reason="${result.degradationReason}"`,
+    expected: 'recordSpend fires for the frontier writer, total cost > 0, then low budget trips degraded',
+    actual: `degraded=${result.degraded}, reason="${result.degradationReason}", recordSpendCalls=${recordSpendSpy.mock.calls.length}, totalCost=${totalSpend}`,
   };
 }
 

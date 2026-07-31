@@ -3,7 +3,7 @@ import type { ModelRegistry, ModelEntry } from '@chimera/providers';
 import { zodToJsonSchema } from '../zod-json.js';
 import type { CostTracker } from '../cost-tracker.js';
 import type { ToolExecutorInterface, ToolRegistryInterface } from '../session-orchestrator.js';
-import { ResponseSynthesizer, type SynthesisInput } from '../response-synthesizer.js';
+import { ResponseSynthesizer, type SynthesisInput } from './response-synthesizer.js';
 import { sanitizeWriterOutput, sanitizeReviewerOutput } from './output-sanitizer.js';
 import { TaskRouter } from '../task-router.js';
 import { runToolCalls, runAgentToolLoop, countSourceFiles } from './tool-execution-helper.js';

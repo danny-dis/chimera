@@ -18,6 +18,7 @@ import {
   readOnlyProfile,
   editFilesProfile,
   fullAccessProfile,
+  type PermissionRule,
 } from '@chimera/tools';
 import { runEval, formatEvalMarkdown } from './eval-runner.js';
 import { runSlashCommand } from './commands/registry.js';
@@ -212,6 +213,50 @@ interface FileDiffLike {
   truncated: boolean;
   additions: number;
   deletions: number;
+}
+
+/**
+ * Mutating write tools gated by the interactive pre-write approval flow.
+ * In a real terminal (non --yolo) these request approval, and the executor
+ * attaches a pre-write diff to the request so the user sees it before the
+ * write lands. The rule order matters: the 'ask' rules must precede any
+ * catch-all so they win the first-match evaluation.
+ */
+const WRITE_GATE_TOOLS: ReadonlyArray<PermissionRule> = [
+  { toolPattern: 'write_file', decision: 'ask' },
+  { toolPattern: 'edit_file', decision: 'ask' },
+  { toolPattern: 'search_replace', decision: 'ask' },
+  { toolPattern: 'apply_patch', decision: 'ask' },
+];
+
+/**
+ * Build the permission engine for a one-shot run. `--yolo` gets full access
+ * (plus auto-approve elsewhere); plan/ask/review are read-only. In edit modes
+ * with an interactive terminal, the write tools above are flipped to 'ask' so
+ * the pre-write approval gate engages (--yolo / headless bypass it).
+ */
+function buildPermissionEngine(
+  yolo: boolean,
+  mode: Mode,
+  interactive: boolean,
+): PermissionEngine {
+  const profile = yolo
+    ? fullAccessProfile
+    : mode === 'plan' || mode === 'ask' || mode === 'review'
+      ? readOnlyProfile
+      : editFilesProfile;
+  const engine = new PermissionEngine(profile);
+  if (!yolo && interactive) {
+    engine.loadProfile({
+      name: `${profile.name}Interactive`,
+      mode: profile.mode,
+      rules: [
+        ...(profile.rules ?? []).filter((r) => r.toolPattern !== '*'),
+        ...WRITE_GATE_TOOLS,
+      ],
+    });
+  }
+  return engine;
 }
 
 /**
@@ -548,13 +593,10 @@ export class CliRouter {
     // #1d/#1e/#3d — Mode-based permission gating.
     // plan/ask/review become read-only (no writes); `code`/`debug` permit edits.
     // `--yolo` opts into full-access (off by default, for CI/trusted automation).
+    // In an interactive terminal the four write tools flip to 'ask', engaging
+    // the pre-write approval gate (diff shown before the write lands).
     const yolo = process.argv.includes('--yolo') || opts.yolo === true;
-    const profile =
-      yolo ? fullAccessProfile
-      : mode === 'plan' || mode === 'ask' || mode === 'review'
-        ? readOnlyProfile
-        : editFilesProfile;
-    const permissionEngine = new PermissionEngine(profile);
+    const permissionEngine = buildPermissionEngine(yolo, mode, process.stdin.isTTY === true);
     ctx.toolExecutor.setPermissionEngine(permissionEngine);
     // When running headless (--yolo or NONINTERACTIVE=1 / --yes), auto-approve
     // the per-tool 'ask' gate so background/CI builds can actually write to
@@ -574,6 +616,14 @@ export class CliRouter {
           ? ' ' + JSON.stringify(call.args).slice(0, 80)
           : '';
         console.log(`  \u25b6 [tool] ${toolName}${argsPreview}`);
+        // Pre-write approval gate: when a write tool requests approval, the
+        // executor has attached a diff of exactly what is about to change —
+        // show it BEFORE the interactive prompt (which fires right after this
+        // event) so the user can approve against the real patch.
+        const policy = (event as any).policy as string | undefined;
+        if (policy === 'ask' || policy === 'escalate') {
+          this.printDiffs((event as any).diffs as FileDiffLike[] | undefined);
+        }
       } else if (event.type === 'tool_call_result') {
         const result = (event as any).result as
           | { tool?: string; exitCode?: number; diffs?: FileDiffLike[] }

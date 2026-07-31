@@ -120,6 +120,18 @@ export const applyPatchTool: ToolDefinition<typeof ApplyPatchParamsSchema, typeo
   returns: ApplyPatchReturnsSchema,
   category: 'edit',
   permissionLevel: 'write',
+  /**
+   * Pre-write preview: the same per-file diffs buildPatchPreview computes
+   * inside execute (before `git apply` runs). Advisory — the real write is
+   * delegated to a separate `git apply` process, so in fuzzy-match cases the
+   * preview is a best-effort approximation, not guaranteed byte-identical.
+   */
+  previewDiff: async (params, context) => {
+    const workingDir = params.path
+      ? path.resolve(context.workspaceRoot, params.path as string)
+      : context.workspaceRoot;
+    return buildPatchPreview(params.patch as string, workingDir);
+  },
   execute: async (params, context: ToolContext) => {
     const workingDir = params.path
       ? path.resolve(context.workspaceRoot, params.path)
@@ -279,6 +291,58 @@ const EditBlockReturnsSchema = z.object({
   diff: FileDiffSchema,
 });
 
+interface BuiltEdit {
+  newContent: string;
+  replacements: number;
+}
+
+/**
+ * Compute the post-edit content for an exact (or lenient line-anchored)
+ * replacement without touching disk. Shared by edit_block's execute (which
+ * writes the buffer) and its pre-write previewDiff (which only reports it).
+ * Returns `null` when oldText cannot be matched — the tool then fails in
+ * execute with similar-line suggestions.
+ */
+function buildEditNewContent(
+  content: string,
+  oldText: string,
+  newText: string,
+  replaceAll: boolean,
+): BuiltEdit | null {
+  // Exact match first.
+  const firstIndex = content.indexOf(oldText);
+  if (firstIndex === -1) {
+    // Lenient fallback: models (esp. small/cheap ones) often emit a partial
+    // or truncated oldText. Anchor on the first line that *contains* the
+    // snippet and replace that whole line. This turns a hard "not found"
+    // failure into a best-effort edit instead of dropping the change.
+    const needle = oldText.trim();
+    if (needle.length > 0) {
+      const lines = content.split('\n');
+      const lineIdx = lines.findIndex((ln) => ln.includes(needle));
+      if (lineIdx !== -1) {
+        lines[lineIdx] = newText;
+        return { newContent: lines.join('\n'), replacements: 1 };
+      }
+    }
+    return null;
+  }
+
+  if (replaceAll) {
+    const parts = content.split(oldText);
+    return { newContent: parts.join(newText), replacements: parts.length - 1 };
+  }
+
+  // Single replacement
+  return {
+    newContent:
+      content.substring(0, firstIndex) +
+      newText +
+      content.substring(firstIndex + oldText.length),
+    replacements: 1,
+  };
+}
+
 export const editBlockTool: ToolDefinition<typeof EditBlockParamsSchema, typeof EditBlockReturnsSchema> = {
   name: 'edit_block',
   description: 'Targeted text replacement in a file with exact match',
@@ -286,6 +350,22 @@ export const editBlockTool: ToolDefinition<typeof EditBlockParamsSchema, typeof 
   returns: EditBlockReturnsSchema,
   category: 'edit',
   permissionLevel: 'write',
+  previewDiff: async (params, context) => {
+    try {
+      const resolved = path.resolve(context.workspaceRoot, params.path as string);
+      const oldBuf = await fs.readFile(resolved);
+      const built = buildEditNewContent(
+        oldBuf.toString('utf-8'),
+        params.oldText as string,
+        (params.newText as string | undefined) ?? '',
+        params.replaceAll === true,
+      );
+      if (!built) return null;
+      return [computeFileDiff(oldBuf, Buffer.from(built.newContent, 'utf-8'), params.path as string)];
+    } catch {
+      return null;
+    }
+  },
   execute: async (params, context: ToolContext) => {
     const resolved = path.resolve(context.workspaceRoot, params.path);
 
@@ -295,56 +375,26 @@ export const editBlockTool: ToolDefinition<typeof EditBlockParamsSchema, typeof 
     }
 
     const oldBuf = await fs.readFile(resolved);
-    const content = oldBuf.toString('utf-8');
+    const built = buildEditNewContent(
+      oldBuf.toString('utf-8'),
+      params.oldText,
+      params.newText,
+      params.replaceAll,
+    );
 
-    // Exact match first.
-    const firstIndex = content.indexOf(params.oldText);
-    if (firstIndex === -1) {
-      // Lenient fallback: models (esp. small/cheap ones) often emit a partial
-      // or truncated oldText. Anchor on the first line that *contains* the
-      // snippet and replace that whole line. This turns a hard "not found"
-      // failure into a best-effort edit instead of dropping the change.
-      const needle = params.oldText.trim();
-      if (needle.length > 0) {
-        const lines = content.split('\n');
-        const lineIdx = lines.findIndex((ln) => ln.includes(needle));
-        if (lineIdx !== -1) {
-          lines[lineIdx] = params.newText;
-          const newContent = lines.join('\n');
-          const newBuf = Buffer.from(newContent, 'utf-8');
-          const diff = computeFileDiff(oldBuf, newBuf, params.path);
-          await fs.writeFile(resolved, newBuf);
-          return { applied: true, path: params.path, replacements: 1, diff };
-        }
-      }
+    if (!built) {
       // Provide helpful suggestions
-      const similarLines = findSimilarLines(content, params.oldText);
+      const similarLines = findSimilarLines(oldBuf.toString('utf-8'), params.oldText);
       throw new Error(
         `oldText not found in file. Similar lines found:\n${similarLines.join('\n')}`,
       );
     }
 
-    let replacements = 0;
-    let newContent: string;
-
-    if (params.replaceAll) {
-      const parts = content.split(params.oldText);
-      replacements = parts.length - 1;
-      newContent = parts.join(params.newText);
-    } else {
-      // Single replacement
-      newContent =
-        content.substring(0, firstIndex) +
-        params.newText +
-        content.substring(firstIndex + params.oldText.length);
-      replacements = 1;
-    }
-
-    const newBuf = Buffer.from(newContent, 'utf-8');
+    const newBuf = Buffer.from(built.newContent, 'utf-8');
     const diff = computeFileDiff(oldBuf, newBuf, params.path);
     await fs.writeFile(resolved, newBuf);
 
-    return { applied: true, path: params.path, replacements, diff };
+    return { applied: true, path: params.path, replacements: built.replacements, diff };
   },
 };
 
@@ -383,6 +433,16 @@ export const editFileTool: ToolDefinition<typeof EditFileParamsSchema, typeof Ed
   returns: EditFileReturnsSchema,
   category: 'edit',
   permissionLevel: 'write',
+  previewDiff: async (params, context) => {
+    const oldText = (params.old_string ?? params.oldText) as string;
+    const newText = (params.new_string ?? params.newText ?? '') as string;
+    return (
+      editBlockTool.previewDiff?.(
+        { path: params.path, oldText, newText, replaceAll: params.replaceAll === true },
+        context,
+      ) ?? null
+    );
+  },
   execute: async (params, context: ToolContext) => {
     const oldText = (params.old_string ?? params.oldText) as string;
     const newText = (params.new_string ?? params.newText ?? '') as string;
@@ -455,6 +515,42 @@ function parseSearchReplaceBlocks(text: string): SearchReplaceBlock[] {
   return blocks;
 }
 
+interface AppliedSearchReplace {
+  content: string;
+  replacements: number;
+  failures: Array<{ search: string; reason: string; similarLines: string[] }>;
+}
+
+/**
+ * Apply search/replace blocks to a string without touching disk. Shared by
+ * search_replace's execute (which writes when anything matched) and its
+ * pre-write previewDiff (which only reports).
+ */
+function applySearchReplaceBlocks(content: string, blocks: SearchReplaceBlock[]): AppliedSearchReplace {
+  let c = content;
+  let totalReplacements = 0;
+  const failures: Array<{ search: string; reason: string; similarLines: string[] }> = [];
+
+  for (const block of blocks) {
+    const index = c.indexOf(block.search);
+    if (index === -1) {
+      failures.push({
+        search: block.search.slice(0, 100),
+        reason: 'Search text not found in file',
+        similarLines: findSimilarLines(c, block.search),
+      });
+      continue;
+    }
+
+    const parts = c.split(block.search);
+    const count = parts.length - 1;
+    c = parts.join(block.replace);
+    totalReplacements += count;
+  }
+
+  return { content: c, replacements: totalReplacements, failures };
+}
+
 export const searchReplaceTool: ToolDefinition<typeof SearchReplaceParamsSchema, typeof SearchReplaceReturnsSchema> = {
   name: 'search_replace',
   description: 'Apply search-and-replace edits to a file. Accepts either structured blocks or raw SEARCH/REPLACE text format.',
@@ -462,34 +558,31 @@ export const searchReplaceTool: ToolDefinition<typeof SearchReplaceParamsSchema,
   returns: SearchReplaceReturnsSchema,
   category: 'edit',
   permissionLevel: 'write',
+  previewDiff: async (params, context) => {
+    try {
+      const resolved = resolveAndValidate(params.path as string, context.workspaceRoot);
+      const oldBuf = await fs.readFile(resolved);
+      const blocks: SearchReplaceBlock[] =
+        (params.blocks as SearchReplaceBlock[] | undefined) ??
+        parseSearchReplaceBlocks((params.text as string | undefined) ?? '');
+      const { content: newContent, replacements } = applySearchReplaceBlocks(oldBuf.toString('utf-8'), blocks);
+      if (replacements === 0) return null;
+      return [computeFileDiff(oldBuf, Buffer.from(newContent, 'utf-8'), params.path as string)];
+    } catch {
+      return null;
+    }
+  },
   execute: async (params, context: ToolContext) => {
     const resolved = resolveAndValidate(params.path, context.workspaceRoot);
     const oldBuf = await fs.readFile(resolved);
-    let content = oldBuf.toString('utf-8');
-    let totalReplacements = 0;
-    const failures: Array<{ search: string; reason: string; similarLines: string[] }> = [];
 
     // Resolve blocks from either structured input or raw text
     const blocks: SearchReplaceBlock[] = (params.blocks as SearchReplaceBlock[] | undefined) ?? parseSearchReplaceBlocks(params.text!);
 
-    for (const block of blocks) {
-      const index = content.indexOf(block.search);
-      if (index === -1) {
-        failures.push({
-          search: block.search.slice(0, 100),
-          reason: 'Search text not found in file',
-          similarLines: findSimilarLines(content, block.search),
-        });
-        continue;
-      }
+    const { content: newContent, replacements: totalReplacements, failures } =
+      applySearchReplaceBlocks(oldBuf.toString('utf-8'), blocks);
 
-      const parts = content.split(block.search);
-      const count = parts.length - 1;
-      content = parts.join(block.replace);
-      totalReplacements += count;
-    }
-
-    const newBuf = Buffer.from(content, 'utf-8');
+    const newBuf = Buffer.from(newContent, 'utf-8');
     const diff = computeFileDiff(oldBuf, newBuf, params.path);
 
     if (totalReplacements > 0) {

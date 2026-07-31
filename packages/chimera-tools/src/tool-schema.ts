@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import type { EventStream, CostTracker, PermissionDecision } from '@chimera/core';
+import type { FileDiff } from './diff-util.js';
 
 export type { PermissionDecision } from '@chimera/core';
 
@@ -57,6 +58,15 @@ export interface ToolDefinition<P extends z.ZodType = z.ZodType, R extends z.Zod
   timeout?: number;
   maxRetries?: number;
   retryableErrors?: string[];
+
+  /**
+   * Optional pre-write diff preview for mutating write tools. Called by the
+   * executor at the approval ('ask') gate, BEFORE the write lands on disk, so
+   * a reviewer can see exactly what would change before deciding. Returns the
+   * per-file diffs, or `null` when no reliable preview can be computed (the
+   * write may still be attempted). Must be side-effect free.
+   */
+  previewDiff?: (params: Record<string, unknown>, context: ToolContext) => Promise<FileDiff[] | null>;
 }
 
 // Shared schemas

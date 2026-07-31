@@ -65,7 +65,21 @@ export type ChimeraEvent =
   | { type: 'disagreement_detected'; agents: string[]; issue: string; resolution: 'voting' | 'challenger' | 'user' }
   | { type: 'handoff_triggered'; fromAgent: string; toAgent: string; reason: 'context_threshold' | 'task_boundary'; format: 'compact' | 'delta'; tokenCount: number; claimIds: string[] }
   | { type: 'handoff_validated'; accepted: boolean; checklist: HandoffChecklist; clarifications: string[] }
-  | { type: 'tool_call_requested'; call: { tool: string; args: Record<string, unknown> }; policy: 'allow' | 'ask' | 'deny' | 'escalate' }
+  | {
+      type: 'tool_call_requested';
+      call: { tool: string; args: Record<string, unknown> };
+      policy: 'allow' | 'ask' | 'deny' | 'escalate';
+      /** Pre-write unified diffs for mutating tools, so a reviewer can see what will change before approving (additive, optional). */
+      diffs?: Array<{
+        path: string;
+        patch: string;
+        unchanged: boolean;
+        binary: boolean;
+        truncated: boolean;
+        additions: number;
+        deletions: number;
+      }>;
+    }
   | {
       type: 'tool_call_result';
       result: {

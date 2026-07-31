@@ -11,11 +11,15 @@ export function expectedPathFromTask(task: string): string | undefined {
   // Prefer a path that follows a creation/output verb (e.g. "Write to
   // ./report.md") so the orchestrator's force-write gate targets the REAL
   // output file, not an unrelated file the task merely mentions reading.
+  // Use (?<!...) instead of \b at the start — \b fails between space and `.`
+  // (both non-word), so dotfile paths like ".foo/bar.txt" would never match.
   const verbPath = task.match(
-    /\b(?:write|create|generate|output|report|save|produce|append|add)\b[^.]*?\b([A-Za-z0-9_\-./]+\.(?:rs|ts|js|jsx|tsx|py|toml|json|md|ya?ml|go|java|cpp|c|rb|php|txt|html|css|sh))\b/i,
+    /\b(?:write|create|generate|output|report|save|produce|append|add)[\s\S]*?(?<![a-zA-Z0-9_])([A-Za-z0-9_\-./]+\.(?:rs|ts|js|jsx|tsx|py|toml|json|md|ya?ml|go|java|cpp|c|rb|php|txt|html|css|sh))\b/i,
   );
   if (verbPath) return verbPath[1];
-  const m = task.match(/\b([A-Za-z0-9_\-./]+\.(?:rs|ts|js|jsx|tsx|py|toml|json|md|ya?ml|go|java|cpp|c|rb|php|txt|html|css|sh))\b/);
+  // Fallback: match a named file anywhere in the task.
+  // Same fix: negative lookbehind instead of \b so dotfile paths match.
+  const m = task.match(/(?<![a-zA-Z0-9_])([A-Za-z0-9_\-./]+\.(?:rs|ts|js|jsx|tsx|py|toml|json|md|ya?ml|go|java|cpp|c|rb|php|txt|html|css|sh))\b/);
   return m ? m[1] : undefined;
 }
 

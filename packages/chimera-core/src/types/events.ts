@@ -77,6 +77,22 @@ export const ChimeraEventSchema = z.discriminatedUnion('type', [
     type: z.literal('tool_call_requested'),
     call: z.object({ tool: z.string(), args: z.record(z.unknown()) }),
     policy: z.enum(['allow', 'ask', 'deny', 'escalate']),
+    // Pre-write unified diffs for mutating write tools, so a reviewer can see
+    // exactly what will change BEFORE approving the call. Additive + optional:
+    // non-mutating tools and non-approval events omit it entirely.
+    diffs: z
+      .array(
+        z.object({
+          path: z.string(),
+          patch: z.string(),
+          unchanged: z.boolean(),
+          binary: z.boolean(),
+          truncated: z.boolean(),
+          additions: z.number(),
+          deletions: z.number(),
+        }).passthrough(),
+      )
+      .optional(),
   }),
   z.object({
     type: z.literal('tool_call_result'),

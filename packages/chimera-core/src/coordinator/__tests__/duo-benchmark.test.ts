@@ -4,8 +4,9 @@
  * Mirrors `trio-benchmark.test.ts` for the duo executor — a 2-model
  * sequential mode (writer → reviewer) with deterministic synthesis.
  * 3 metrics verify the defining properties of duo: role-authority
- * synthesis resolution, degraded fallback when Model B throws, and
- * budget enforcement.
+ * synthesis quality, the deterministic path (identical runs → identical
+ * output, reviewer wins, no LLM judge), and cost tracking + budget
+ * enforcement.
  *
  * Run with:
  *   npx vitest run src/coordinator/__tests__/duo-benchmark.test.ts
@@ -14,7 +15,8 @@
 import { describe, it, expect, vi } from 'vitest';
 import { DuoExecutor } from '../duo-executor.js';
 import { ModelRegistry } from '../../../../chimera-providers/src/model-registry.js';
-import { ResponseSynthesizer } from '../../response-synthesizer.js';
+import { ResponseSynthesizer } from '../response-synthesizer.js';
+import { CostTracker } from '../../cost-tracker.js';
 import { EventStream } from '../../event-stream.js';
 import type { LLMProvider } from '../../session-orchestrator.js';
 import type { ModelEntry } from '../../../../chimera-providers/src/model-registry.js';
@@ -98,63 +100,77 @@ async function metricSynthesisQuality(): Promise<MetricResult> {
 }
 
 /**
- * Degraded fallback: Model B throws. Verify the DuoExecutor returns
- * `degraded: true` with a defined degradation reason (never throws).
+ * Deterministic path: two identical runs with identical mock providers
+ * must produce identical output (no randomness, no LLM judge), the
+ * reviewer's improved answer wins when both peers succeed, and exactly
+ * 2 LLM calls are made (writer + reviewer — no hidden synthesizer call).
  */
-async function metricDegradedFallback(): Promise<MetricResult> {
+async function metricDeterministicPath(): Promise<MetricResult> {
   const eventStream = new EventStream();
   const registry = makeRegistry();
   const executor = new DuoExecutor({ eventStream, registry });
 
-  const writerFactory = () => makeMockProvider([{ match: /./, content: 'writer output' }]);
-  const brokenReviewerFactory = () => ({
-    complete: vi.fn().mockRejectedValue(new Error('model unavailable')),
-  } as unknown as LLMProvider);
+  const writerProvider = makeMockProvider([{ match: 'You are the writer', content: 'draft content' }]);
+  const reviewerProvider = makeMockProvider([{ match: 'You are the reviewer', content: 'reviewed content' }]);
 
   const factory = (id: string) => {
-    if (id === MOCK_IDS.writer) return writerFactory();
-    if (id === MOCK_IDS.reviewer) return brokenReviewerFactory();
+    if (id === MOCK_IDS.writer) return writerProvider;
+    if (id === MOCK_IDS.reviewer) return reviewerProvider;
     throw new Error(`unknown: ${id}`);
   };
 
-  const result = await executor.executeWithAnalysis(
-    'test',
-    { modelA: MOCK_IDS.writer, modelB: MOCK_IDS.reviewer, temperature: 0 },
-    factory
-  );
+  const config = { modelA: MOCK_IDS.writer, modelB: MOCK_IDS.reviewer, temperature: 0 };
+  const first = await executor.executeWithAnalysis('test', config, factory);
+  const second = await executor.executeWithAnalysis('test', config, factory);
 
-  const score: Score = (result.degraded && result.degradationReason !== undefined) ? 1 : 0;
+  const writerCalls = (writerProvider.complete as unknown as { mock: { calls: unknown[] } }).mock.calls.length;
+  const reviewerCalls = (reviewerProvider.complete as unknown as { mock: { calls: unknown[] } }).mock.calls.length;
+
+  const outputsIdentical = first.output === second.output;
+  const reviewerWins = first.output === 'reviewed content';
+  // Two runs × (writer + reviewer) = exactly 4 calls; no hidden judge/synthesizer call.
+  const noJudge = writerCalls + reviewerCalls === 4;
+  const notDegraded = !first.degraded && !second.degraded;
+
+  const score: Score = (outputsIdentical && reviewerWins && noJudge && notDegraded) ? 1 : 0;
   return {
-    name: 'Degraded fallback',
+    name: 'Deterministic path',
     score,
-    expected: 'degraded=true and degradationReason defined when Model B throws',
-    actual: `degraded=${result.degraded}, reason="${result.degradationReason}"`,
+    expected: 'two identical runs → identical output, reviewer content wins, exactly 2 LLM calls per run (no judge)',
+    actual: `run1="${first.output}", run2="${second.output}", identical=${outputsIdentical}, reviewerWins=${reviewerWins}, calls=${writerCalls + reviewerCalls}, degraded=${first.degraded}`,
   };
 }
 
 /**
- * Cost enforcement: use a frontier model with real pricing, set a very
- * low budget. Verify the executor degrades with a budget-related reason.
+ * Cost: a real `CostTracker` is wired in, `recordSpend` is spied, and a
+ * low budget on a frontier writer must trip the degraded path AFTER the
+ * spend was recorded (proving cost tracking AND enforcement both work).
  */
-async function metricCostEnforcement(): Promise<MetricResult> {
+async function metricCost(): Promise<MetricResult> {
   const eventStream = new EventStream();
   const registry = makeRegistry();
-  const executor = new DuoExecutor({ eventStream, registry });
+  const costTracker = new CostTracker(eventStream);
+  const executor = new DuoExecutor({ eventStream, registry, costTracker });
+  const recordSpendSpy = vi.spyOn(costTracker, 'recordSpend');
 
   const factory = (_id: string) => makeMockProvider([{ match: /./, content: 'content' }]);
 
   const result = await executor.executeWithAnalysis(
     'test',
-    { modelA: 'anthropic/claude-opus-4', modelB: 'openai/gpt-5', budgetUsd: 0.005, temperature: 0 },
+    { modelA: FRONTIER_MODEL_ID, modelB: 'openai/gpt-5', budgetUsd: 0.005, temperature: 0 },
     factory
   );
 
-  const score: Score = (result.degraded && /budget/i.test(result.degradationReason ?? '')) ? 1 : 0;
+  const budgetTripped = result.degraded && /budget/i.test(result.degradationReason ?? '');
+  const spendRecorded = recordSpendSpy.mock.calls.length > 0;
+  const totalSpend = costTracker.getTotalCost();
+
+  const score: Score = (budgetTripped && spendRecorded && totalSpend > 0) ? 1 : 0;
   return {
-    name: 'Cost enforcement',
+    name: 'Cost',
     score,
-    expected: 'degraded=true with reason matching /budget/i',
-    actual: `degraded=${result.degraded}, reason="${result.degradationReason}"`,
+    expected: 'recordSpend fires, total cost > 0, then low budget trips degraded',
+    actual: `degraded=${result.degraded}, reason="${result.degradationReason}", recordSpendCalls=${recordSpendSpy.mock.calls.length}, totalCost=${totalSpend}`,
   };
 }
 
@@ -162,8 +178,8 @@ async function metricCostEnforcement(): Promise<MetricResult> {
 
 const DUO_REFERENCE: Record<string, 1> = {
   'Synthesis quality': 1,
-  'Degraded fallback': 1,
-  'Cost enforcement': 1,
+  'Deterministic path': 1,
+  'Cost': 1,
 };
 
 function summarize(metrics: MetricResult[]): {
@@ -204,16 +220,16 @@ function printSingle(m: MetricResult): void {
 
 describe('Duo benchmark — individual metrics', () => {
   it('Synthesis quality', async () => { const m = await metricSynthesisQuality(); printSingle(m); expect(m.score).toBe(1); });
-  it('Degraded fallback', async () => { const m = await metricDegradedFallback(); printSingle(m); expect(m.score).toBe(1); });
-  it('Cost enforcement', async () => { const m = await metricCostEnforcement(); printSingle(m); expect(m.score).toBe(1); });
+  it('Deterministic path', async () => { const m = await metricDeterministicPath(); printSingle(m); expect(m.score).toBe(1); });
+  it('Cost', async () => { const m = await metricCost(); printSingle(m); expect(m.score).toBe(1); });
 });
 
 describe('Duo benchmark — full report', () => {
   it('produces a parity report', async () => {
     const metrics = await Promise.all([
       metricSynthesisQuality(),
-      metricDegradedFallback(),
-      metricCostEnforcement(),
+      metricDeterministicPath(),
+      metricCost(),
     ]);
     const summary = summarize(metrics);
     console.log(summary.table);
