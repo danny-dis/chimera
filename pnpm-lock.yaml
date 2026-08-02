@@ -266,6 +266,9 @@ importers:
       pdf-parse:
         specifier: ^1.1.1
         version: 1.1.4
+      typescript-language-server:
+        specifier: ^5.3.0
+        version: 5.3.0
       yaml:
         specifier: ^2.4.0
         version: 2.9.0
@@ -282,9 +285,6 @@ importers:
       '@types/node':
         specifier: ^22.0.0
         version: 22.19.19
-      typescript-language-server:
-        specifier: ^5.3.0
-        version: 5.3.0
 
   packages/chimera-tui:
     dependencies:

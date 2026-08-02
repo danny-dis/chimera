@@ -91,7 +91,13 @@ export { skillLoadTool, createSkillTool, createWorkflowTool } from './tools/skil
 
 // LSP tools
 export { lspTool } from './tools/lsp.js';
-export { getDiagnosticsForFile, formatDiagnostics, type LspDiagnosticIssue } from './lsp-diagnostics.js';
+export { getDiagnosticsForFile, type LspDiagnosticIssue } from './lsp-diagnostics.js';
+export {
+  getOrCreateLspService,
+  syncLspDocument,
+  disposeAllLspServices,
+  resolveDefaultLspConfig,
+} from './lsp-registry.js';
 
 // MCP client
 export { McpClient, McpManager } from './mcp-client.js';

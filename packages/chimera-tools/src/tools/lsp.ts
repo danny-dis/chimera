@@ -1,8 +1,8 @@
 import { z } from 'zod';
 import type { ToolDefinition, ToolContext } from '../tool-schema.js';
 import { buildTool } from '../tool-builder.js';
-import { ChimeraLspService } from '@chimera/lsp';
-import type { LspService, LspLocation, LspHover, LspDocumentSymbol, LspWorkspaceSymbol } from '@chimera/lsp';
+import type { LspLocation, LspHover, LspDocumentSymbol, LspWorkspaceSymbol } from '@chimera/lsp';
+import { getOrCreateLspService } from '../lsp-registry.js';
 
 // ── Schemas ───────────────────────────────────────────────────────────────────
 
@@ -27,20 +27,6 @@ const LspReturnsSchema = z.object({
   results: z.array(z.record(z.unknown())),
   formatted: z.string(),
 });
-
-// ── Service cache ─────────────────────────────────────────────────────────────
-
-const serviceCache = new Map<string, LspService>();
-
-async function getService(workspaceRoot: string): Promise<LspService> {
-  let service = serviceCache.get(workspaceRoot);
-  if (!service) {
-    service = new ChimeraLspService(workspaceRoot);
-    await service.start();
-    serviceCache.set(workspaceRoot, service);
-  }
-  return service;
-}
 
 // ── Formatters ────────────────────────────────────────────────────────────────
 
@@ -97,7 +83,7 @@ export const lspTool: ToolDefinition<typeof LspParamsSchema, typeof LspReturnsSc
   category: 'lsp',
   permissionLevel: 'read',
   execute: async (params, context: ToolContext) => {
-    const service = await getService(context.workspaceRoot);
+    const service = await getOrCreateLspService(context.workspaceRoot);
 
     switch (params.operation) {
       case 'goToDefinition': {

@@ -12,6 +12,7 @@ import {
 } from '../tool-schema.js';
 import { type MediaBlock, MediaBlockSchema } from './media-types.js';
 import { computeFileDiff, FileDiffSchema } from '../diff-util.js';
+import { syncLspDocument } from '../lsp-registry.js';
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -316,6 +317,7 @@ export const writeFileTool: ToolDefinition<typeof WriteFileParamsSchema, typeof 
     const diff = computeFileDiff(existingBuf, content, params.path);
 
     await fs.writeFile(resolved, content);
+    await syncLspDocument(resolved, context.workspaceRoot);
 
     return { path: params.path, bytesWritten: content.length, created, diff };
   },

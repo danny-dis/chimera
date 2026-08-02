@@ -6,6 +6,7 @@ import type { ToolDefinition, ToolContext } from '../tool-schema.js';
 import { PathSchema, MAX_OUTPUT_SIZE } from '../tool-schema.js';
 import { computeFileDiff, FileDiffSchema, isBinaryBuffer, type FileDiff } from '../diff-util.js';
 import { parsePatch, applyPatch as jsdiffApplyPatch } from 'diff';
+import { syncLspDocument } from '../lsp-registry.js';
 
 function resolveAndValidate(basePath: string, workspaceRoot: string): string {
   const resolved = path.resolve(workspaceRoot, basePath);
@@ -201,6 +202,7 @@ export const applyPatchTool: ToolDefinition<typeof ApplyPatchParamsSchema, typeo
       });
 
       if (result.exitCode === 0) {
+        await syncPatchFiles(filesToBackup, context.workspaceRoot);
         return {
           applied: true,
           filesChanged: filesToBackup,
@@ -234,6 +236,8 @@ export const applyPatchTool: ToolDefinition<typeof ApplyPatchParamsSchema, typeo
         // No .rej files found
       }
 
+      await syncPatchFiles(filesToBackup, context.workspaceRoot);
+
       return {
         applied: rejectResult.exitCode === 0 || rejectFiles.length === 0,
         filesChanged: filesToBackup,
@@ -263,6 +267,12 @@ function extractFilesFromPatch(patch: string): string[] {
     }
   }
   return Array.from(files);
+}
+
+async function syncPatchFiles(files: string[], workspaceRoot: string): Promise<void> {
+  for (const file of files) {
+    await syncLspDocument(path.resolve(workspaceRoot, file), workspaceRoot);
+  }
 }
 
 function countHunks(patch: string): number {
@@ -393,6 +403,7 @@ export const editBlockTool: ToolDefinition<typeof EditBlockParamsSchema, typeof 
     const newBuf = Buffer.from(built.newContent, 'utf-8');
     const diff = computeFileDiff(oldBuf, newBuf, params.path);
     await fs.writeFile(resolved, newBuf);
+    await syncLspDocument(resolved, context.workspaceRoot);
 
     return { applied: true, path: params.path, replacements: built.replacements, diff };
   },
@@ -587,6 +598,7 @@ export const searchReplaceTool: ToolDefinition<typeof SearchReplaceParamsSchema,
 
     if (totalReplacements > 0) {
       await fs.writeFile(resolved, newBuf);
+      await syncLspDocument(resolved, context.workspaceRoot);
     }
 
     return {

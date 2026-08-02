@@ -1,6 +1,6 @@
 import path from 'path';
-import { ChimeraLspService } from '@chimera/lsp';
-import type { LspDiagnostic, LspService } from '@chimera/lsp';
+import type { LspDiagnostic } from '@chimera/lsp';
+import { getOrCreateLspService } from './lsp-registry.js';
 
 export interface LspDiagnosticIssue {
   severity: 'error' | 'warning' | 'info' | 'hint';
@@ -32,32 +32,12 @@ export async function getDiagnosticsForFile(
   workspaceRoot: string,
   filePath: string,
 ): Promise<LspDiagnosticIssue[]> {
-  let service: LspService;
   try {
-    service = new ChimeraLspService(workspaceRoot);
-    await service.start();
-  } catch {
-    return [];
-  }
-
-  try {
+    const service = await getOrCreateLspService(workspaceRoot);
     const resolved = path.isAbsolute(filePath) ? filePath : path.resolve(workspaceRoot, filePath);
     const diagnostics = await service.getDiagnostics(resolved);
     return diagnostics.map(toIssue);
   } catch {
     return [];
-  } finally {
-    await service.dispose().catch(() => undefined);
   }
-}
-
-export function formatDiagnostics(diags: LspDiagnosticIssue[]): string {
-  if (diags.length === 0) return 'No LSP diagnostics.';
-  return diags
-    .map((d) => {
-      const location = d.line != null ? `${d.line}:${d.column ?? 1}` : '(unknown)';
-      const source = d.source ? ` [${d.source}]` : '';
-      return `${location}: ${d.severity}${source}: ${d.message}`;
-    })
-    .join('\n');
 }

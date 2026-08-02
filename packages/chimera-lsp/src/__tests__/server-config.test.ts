@@ -13,16 +13,23 @@ describe('matchesPattern', () => {
     expect(matchesPattern('file.js', '**/*.ts')).toBe(false);
   });
 
+  it('matches **/ with zero directories (root-level files)', () => {
+    expect(matchesPattern('file.ts', '**/*.ts')).toBe(true);
+    expect(matchesPattern('index.ts', '**/*.ts')).toBe(true);
+    expect(matchesPattern('src/file.ts', '**/*.ts')).toBe(true);
+    expect(matchesPattern('file.py', '**/*.ts')).toBe(false);
+  });
+
   it('matches single star patterns', () => {
     expect(matchesPattern('file.ts', '*.ts')).toBe(true);
     expect(matchesPattern('dir/file.ts', '*.ts')).toBe(false);
   });
 
   it('matches question mark wildcards', () => {
-    // Note: ? wildcard currently does not work due to escapeRegex order.
-    // The function escapes ? to \? before the [^/] replacement fires.
-    // This test documents the current behavior.
-    expect(matchesPattern('file1.ts', 'file?.ts')).toBe(false);
+    expect(matchesPattern('file1.ts', 'file?.ts')).toBe(true);
+    expect(matchesPattern('file12.ts', 'file?.ts')).toBe(false);
+    expect(matchesPattern('src/foo1.ts', 'src/foo?.ts')).toBe(true);
+    expect(matchesPattern('src/foo12.ts', 'src/foo?.ts')).toBe(false);
   });
 
   it('handles mixed patterns', () => {
@@ -59,8 +66,23 @@ describe('serverMatchesFile', () => {
     expect(serverMatchesFile(config, 'src/file.js', '/tmp')).toBe(false);
   });
 
-  it('accepts any file when no patterns specified', () => {
+  it('defaults to TypeScript/JavaScript files when no patterns or root files specified', () => {
     const config: LspServerConfig = { command: 'lsp', args: [] };
-    expect(serverMatchesFile(config, 'any-file.txt', '/tmp')).toBe(true);
+    expect(serverMatchesFile(config, 'src/foo.ts', '/tmp')).toBe(true);
+    expect(serverMatchesFile(config, 'src/foo.tsx', '/tmp')).toBe(true);
+    expect(serverMatchesFile(config, 'src/foo.py', '/tmp')).toBe(false);
+    expect(serverMatchesFile(config, 'index.ts', '/tmp')).toBe(true);
+    expect(serverMatchesFile(config, 'main.js', '/tmp')).toBe(true);
+    expect(serverMatchesFile(config, 'readme.md', '/tmp')).toBe(false);
+  });
+
+  it('lets explicitly configured patterns override the default', () => {
+    const config: LspServerConfig = {
+      command: 'lsp',
+      args: [],
+      filePatterns: ['**/*.py'],
+    };
+    expect(serverMatchesFile(config, 'src/foo.py', '/tmp')).toBe(true);
+    expect(serverMatchesFile(config, 'src/foo.ts', '/tmp')).toBe(false);
   });
 });

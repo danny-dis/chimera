@@ -12,6 +12,7 @@ import {
   readOnlyProfile,
   editFilesProfile,
   allTools,
+  getDiagnosticsForFile,
 } from '@chimera/tools';
 import { bootstrap, type WorkflowRegistry } from './bootstrap.js';
 import { writeMessage, success, error, ErrorCodes } from './json-rpc.js';
@@ -200,11 +201,25 @@ export class ChimeraDaemon {
       ),
     );
 
-    // Create orchestrator
+    // Create orchestrator. Wire the same LSP diagnostics hook as the CLI
+    // (cli-router.ts) so daemon sessions emit lsp_diagnostics events after
+    // file edits. Best-effort: a diagnostics failure must never break task
+    // execution (getDiagnosticsForFile already swallows errors, and the
+    // orchestrator try/catches the call — this is defense in depth).
     const orchestrator = new SessionOrchestrator(
       this.eventStream,
       { registry: toolRegistry as unknown as ToolRegistryInterface, executor: toolExecutor as unknown as ToolExecutorInterface },
       workspaceRoot,
+      undefined,
+      {
+        lspDiagnostics: (file: string) => {
+          try {
+            return getDiagnosticsForFile(workspaceRoot, file);
+          } catch {
+            return Promise.resolve([]);
+          }
+        },
+      },
     );
 
     // Create worker record
