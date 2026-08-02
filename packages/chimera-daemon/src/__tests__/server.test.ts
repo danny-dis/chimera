@@ -26,14 +26,9 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
-  daemon.dispose();
+  try { daemon.dispose(); } catch {}
   stdoutWrite.mockRestore();
-  await fs.rm(tmpDir, { recursive: true, force: true });
-});
-
-afterEach(() => {
-  daemon.dispose();
-  stdoutWrite.mockRestore();
+  await fs.rm(tmpDir, { recursive: true, force: true }).catch(() => {});
 });
 
 describe('ChimeraDaemon', () => {

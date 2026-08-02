@@ -116,6 +116,12 @@ for (const mode of modes) {
         ? `Create a file at ${scratchFile} whose entire contents are the single word: hello`
         : 'Say \\"hello\\" and nothing else.';
 
+    // Multi-model presets (trio/fusion) legitimately take longer than a
+    // single call, and a flaky upstream can add a fallback hop on top, so
+    // the budget scales with the preset instead of a flat 30s that reports
+    // "failure" for what is really "still working".
+    const timeoutMs = preset === 'solo' ? 90_000 : 240_000;
+
     try {
       // Build the command — use the CLI directly.
       // NOTE: `--preset` must actually be passed, otherwise every "preset"
@@ -124,12 +130,6 @@ for (const mode of modes) {
       // so a permission prompt would otherwise deadlock until the timeout.
       const cmd = `node packages/chimera-cli/dist/index.js ${mode} "${testTask}" --preset ${preset} --yolo`;
       const env = { ...process.env, NODE_NO_WARNINGS: '1' };
-
-      // Multi-model presets (trio/fusion) legitimately take longer than a
-      // single call, and a flaky upstream can add a fallback hop on top, so
-      // the budget scales with the preset instead of a flat 30s that reports
-      // "failure" for what is really "still working".
-      const timeoutMs = preset === 'solo' ? 90_000 : 240_000;
 
       const output = execSync(cmd, {
         encoding: 'utf-8',

@@ -234,9 +234,14 @@ export class HookExecutor {
       const child = spawn('node', ['-e', script], {
         env,
         cwd: context.workspaceRoot || this.options.defaultCwd,
-        timeout,
         stdio: ['pipe', 'pipe', 'pipe'],
       });
+
+      let timedOut = false;
+      const timer = setTimeout(() => {
+        timedOut = true;
+        child.kill('SIGKILL');
+      }, timeout);
 
       let stdout = '';
       let stderr = '';
@@ -250,14 +255,24 @@ export class HookExecutor {
       });
 
       child.on('close', (code) => {
-        if (code === 0) {
+        clearTimeout(timer);
+        if (timedOut && code === null) {
+          reject(new Error(`Hook script timed out after ${timeout}ms`));
+        } else if (code === 0) {
           resolve(stdout.trim());
         } else {
           reject(new Error(`Hook script exited with code ${code}: ${stderr}`));
         }
       });
 
-      child.on('error', reject);
+      child.on('error', (err) => {
+        clearTimeout(timer);
+        if (timedOut || err.message.includes('killed')) {
+          reject(new Error(`Hook script timed out after ${timeout}ms`));
+        } else {
+          reject(err);
+        }
+      });
     });
   }
 
@@ -280,10 +295,15 @@ export class HookExecutor {
       const child = spawn(command, {
         env,
         cwd: cwd || context.workspaceRoot || this.options.defaultCwd,
-        timeout,
         shell: true,
         stdio: ['pipe', 'pipe', 'pipe'],
       });
+
+      let timedOut = false;
+      const timer = setTimeout(() => {
+        timedOut = true;
+        child.kill('SIGKILL');
+      }, timeout);
 
       let stdout = '';
       let stderr = '';
@@ -297,14 +317,24 @@ export class HookExecutor {
       });
 
       child.on('close', (code) => {
-        if (code === 0) {
+        clearTimeout(timer);
+        if (timedOut && code === null) {
+          reject(new Error(`Hook command timed out after ${timeout}ms`));
+        } else if (code === 0) {
           resolve(stdout.trim());
         } else {
           reject(new Error(`Hook command exited with code ${code}: ${stderr}`));
         }
       });
 
-      child.on('error', reject);
+      child.on('error', (err) => {
+        clearTimeout(timer);
+        if (timedOut || err.message.includes('killed')) {
+          reject(new Error(`Hook command timed out after ${timeout}ms`));
+        } else {
+          reject(err);
+        }
+      });
     });
   }
 
