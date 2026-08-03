@@ -39,14 +39,15 @@ export function slugify(input: string): string {
 // ---------------------------------------------------------------------------
 
 /**
- * Stable 8-hex-char sha256 prefix. Used for thread identifiers (Slack /
- * Discord) that need to be short but low-collision.
+ * Stable 12-hex-char sha256 prefix. Used for thread identifiers (Slack /
+ * Discord) and worktree branch names. 12 hex chars = 2^48 space, which
+ * keeps collision probability negligible even under heavy parallel use.
  *
- * Example: `'slack:C0123:1700000000.000'` → `'a1b2c3d4'`
+ * Example: `'slack:C0123:1700000000.000'` → `'a1b2c3d4e5f6'`
  */
 export function shortHash(input: string): string {
   const hash = createHash('sha256').update(input).digest('hex');
-  return hash.substring(0, 8);
+  return hash.substring(0, 12);
 }
 
 // ---------------------------------------------------------------------------

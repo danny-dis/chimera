@@ -1,6 +1,6 @@
 {
   "name": "@chimera/daemon",
-  "version": "0.1.5",
+  "version": "0.5.7",
   "private": true,
   "description": "Chimera daemon process — JSON-RPC stdio server wrapping the core orchestrator",
   "main": "dist/index.js",

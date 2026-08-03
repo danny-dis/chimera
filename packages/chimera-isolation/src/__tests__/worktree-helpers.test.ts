@@ -41,9 +41,9 @@ describe('slugify', () => {
 });
 
 describe('shortHash', () => {
-  it('returns 8 hex characters', () => {
+  it('returns 12 hex characters', () => {
     const h = shortHash('any input');
-    expect(h).toMatch(/^[0-9a-f]{8}$/);
+    expect(h).toMatch(/^[0-9a-f]{12}$/);
   });
 
   it('is deterministic', () => {
@@ -56,7 +56,7 @@ describe('shortHash', () => {
 
   it('handles empty string', () => {
     const h = shortHash('');
-    expect(h).toMatch(/^[0-9a-f]{8}$/);
+    expect(h).toMatch(/^[0-9a-f]{12}$/);
   });
 });
 

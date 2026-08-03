@@ -60,13 +60,10 @@ export async function syncLspDocument(filePath: string, workspaceRoot: string): 
 
 export function disposeAllLspServices(): void {
   for (const service of services.values()) {
-    const internal = service as unknown as {
-      servers: Map<string, { child?: import('child_process').ChildProcessWithoutNullStreams }>;
-    };
-    for (const server of internal.servers.values()) {
-      if (server.child && !server.child.killed) {
-        server.child.kill();
-      }
+    try {
+      service.dispose();
+    } catch {
+      // Best-effort: don't throw during process exit handler.
     }
   }
   services.clear();

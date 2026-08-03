@@ -12,7 +12,7 @@ import { LearningEngine } from '@chimera/learning';
 import { UserSkillModel, tierMessage, suggestNextValue, resolveActiveStyle } from '@chimera/learning';
 import type { ObservedCapability } from '@chimera/learning';
 import type { TieredMessage, SkillTier } from '@chimera/learning';
-import { ToolRegistry, ToolExecutor, HookExecutor, allTools, getDiagnosticsForFile, setAutoApprove } from '@chimera/tools';
+import { ToolRegistry, ToolExecutor, HookExecutor, allTools, getDiagnosticsForFile, setAutoApprove, disposeAllLspServices } from '@chimera/tools';
 import {
   PermissionEngine,
   readOnlyProfile,
@@ -1425,6 +1425,7 @@ export class CliRouter {
       },
       onExit: () => {
         tui.cleanup();
+        disposeAllLspServices();
         process.exit(0);
       },
     });
@@ -1871,6 +1872,7 @@ export class CliRouter {
 
     rl.on('close', () => {
       console.log('\n  Goodbye.\n');
+      disposeAllLspServices();
       process.exit(0);
     });
   }

@@ -301,6 +301,7 @@ export class TrioExecutor {
     let challengeStage: TrioStageResult | null = null;
 
     const useParallel = config.parallel !== false && !!config.challenger;
+    let parallelReviewSucceeded = false;
 
     if (useParallel) {
       // ── Parallel path: reviewer + challenger run concurrently ──────
@@ -354,8 +355,16 @@ export class TrioExecutor {
         runChallenge(),
       ]);
 
-      // Extract review result — must succeed
-      if (reviewSettled.status === 'fulfilled') {
+      // Extract review result — if parallel review failed, fall through to
+      // sequential review below (skip the parallel block, don't discard draft).
+      if (reviewSettled.status !== 'fulfilled') {
+        parallelReviewSucceeded = false;
+        this.safeEmit({ type: 'quality_gate_parallel_failed', reviewerId: config.reviewer, reason: reviewSettled.reason instanceof Error ? reviewSettled.reason.message : String(reviewSettled.reason) });
+        // Clear parallel results; sequential path below will run review+challenge.
+        reviewStage = undefined as unknown as TrioStageResult;
+        challengeStage = null;
+      } else {
+        parallelReviewSucceeded = true;
         reviewStage = reviewSettled.value;
         totalTokens += reviewStage.inputTokens + reviewStage.outputTokens;
         const cost = this.computeCost(config.reviewer, reviewStage.inputTokens, reviewStage.outputTokens);
@@ -363,12 +372,6 @@ export class TrioExecutor {
         this.recordSpend(config.reviewer, cost);
         stages.push(reviewStage);
         this.safeEmit({ type: 'verified', agentId: config.reviewer, verdict: reviewStage.issues && reviewStage.issues.length > 0 ? 'needs_revision' : 'pass', findings: (reviewStage.issues ?? []).map((i) => ({ description: i.description, severity: i.severity as 'high' | 'med' | 'low', evidence: i.evidence })) });
-      } else {
-        // Review failed — fall back to sequential for the entire review+challenge block
-        return this.degraded(
-          `parallel review failed: ${reviewSettled.reason instanceof Error ? reviewSettled.reason.message : String(reviewSettled.reason)}`,
-          totalTokens, totalCostUsd, startTime, false, stages, worktreePath
-        );
       }
 
       // Extract challenge result — optional, graceful degradation
@@ -391,80 +394,92 @@ export class TrioExecutor {
           totalTokens, totalCostUsd, startTime, false, stages, worktreePath
         );
       }
+
+      // If parallel review failed, run sequential review+challenge to avoid
+      // discarding the draft that already completed.
+      if (!parallelReviewSucceeded) {
+        // Fall through to sequential block below.
+      } else {
+        // Parallel succeeded — skip sequential.
+      }
     } else {
       // ── Sequential path (fallback) ─────────────────────────────────
-      const reviewStart = Date.now();
-      try {
-        const reviewProvider = providerFactory(config.reviewer);
-        const reviewResult = await reviewProvider.complete(
-          [{ role: 'user', content: this.buildReviewPrompt(task, draftStage.content + linterFeedback, config.context) }],
-          { temperature: config.temperature, maxTokens: config.maxCompletionTokens, ...(config.reasoning !== undefined ? { reasoning: config.reasoning } : {}) }
-        );
-        const inputTokens = reviewResult.usage?.inputTokens ?? 0;
-        const outputTokens = reviewResult.usage?.outputTokens ?? 0;
-        const issues = this.tryExtractIssues(reviewResult.content);
-        reviewStage = {
-          modelId: config.reviewer,
-          role: 'reviewer',
-          content: sanitizeReviewerOutput(reviewResult.content),
-          inputTokens,
-          outputTokens,
-          durationMs: Date.now() - reviewStart,
-          issues,
-        };
-        totalTokens += inputTokens + outputTokens;
-        const cost = this.computeCost(config.reviewer, inputTokens, outputTokens);
-        totalCostUsd += cost;
-        this.recordSpend(config.reviewer, cost);
-      } catch (err) {
-        return this.degraded(`review stage failed: ${String(err)}`, totalTokens, totalCostUsd, startTime, false, stages, worktreePath);
-      }
-      stages.push(reviewStage);
-      this.safeEmit({ type: 'verified', agentId: config.reviewer, verdict: reviewStage.issues && reviewStage.issues.length > 0 ? 'needs_revision' : 'pass', findings: (reviewStage.issues ?? []).map((i) => ({ description: i.description, severity: i.severity as 'high' | 'med' | 'low', evidence: i.evidence })) });
-
-      if (this.isOverBudget(config, totalCostUsd)) {
-        return this.degraded(
-          `review cost pushed total $${totalCostUsd.toFixed(4)} past budget`,
-          totalTokens, totalCostUsd, startTime, false, stages, worktreePath
-        );
-      }
-
-      // Stage 3: Challenge (sequential — sees draft + review)
-      if (config.challenger) {
-        const challengeStart = Date.now();
+      if (parallelReviewSucceeded) {
+        // Parallel succeeded — sequential already captured above.
+      } else {
+        const reviewStart = Date.now();
         try {
-          const challengeProvider = providerFactory(config.challenger);
-          const challengeResult = await challengeProvider.complete(
-            [{ role: 'user', content: this.buildChallengePrompt(task, draftStage.content, reviewStage.content, config.context) }],
+          const reviewProvider = providerFactory(config.reviewer);
+          const reviewResult = await reviewProvider.complete(
+            [{ role: 'user', content: this.buildReviewPrompt(task, draftStage.content + linterFeedback, config.context) }],
             { temperature: config.temperature, maxTokens: config.maxCompletionTokens, ...(config.reasoning !== undefined ? { reasoning: config.reasoning } : {}) }
           );
-          const inputTokens = challengeResult.usage?.inputTokens ?? 0;
-          const outputTokens = challengeResult.usage?.outputTokens ?? 0;
-          const challenges = this.tryExtractChallenges(challengeResult.content);
-          challengeStage = {
-            modelId: config.challenger,
-            role: 'challenger',
-            content: challengeResult.content,
+          const inputTokens = reviewResult.usage?.inputTokens ?? 0;
+          const outputTokens = reviewResult.usage?.outputTokens ?? 0;
+          const issues = this.tryExtractIssues(reviewResult.content);
+          reviewStage = {
+            modelId: config.reviewer,
+            role: 'reviewer',
+            content: sanitizeReviewerOutput(reviewResult.content),
             inputTokens,
             outputTokens,
-            durationMs: Date.now() - challengeStart,
-            challenges,
+            durationMs: Date.now() - reviewStart,
+            issues,
           };
           totalTokens += inputTokens + outputTokens;
-          const cost = this.computeCost(config.challenger, inputTokens, outputTokens);
+          const cost = this.computeCost(config.reviewer, inputTokens, outputTokens);
           totalCostUsd += cost;
-          this.recordSpend(config.challenger, cost);
+          this.recordSpend(config.reviewer, cost);
         } catch (err) {
-          return this.degraded(`challenge stage failed: ${String(err)}`, totalTokens, totalCostUsd, startTime, false, stages, worktreePath);
+          return this.degraded(`review stage failed: ${String(err)}`, totalTokens, totalCostUsd, startTime, false, stages, worktreePath);
         }
-        stages.push(challengeStage);
-        this.safeEmit({ type: 'challenged', agentId: config.challenger, challenges: challengeStage.challenges ?? [], alternatives: challengeStage.alternatives ?? [] });
+        stages.push(reviewStage);
+        this.safeEmit({ type: 'verified', agentId: config.reviewer, verdict: reviewStage.issues && reviewStage.issues.length > 0 ? 'needs_revision' : 'pass', findings: (reviewStage.issues ?? []).map((i) => ({ description: i.description, severity: i.severity as 'high' | 'med' | 'low', evidence: i.evidence })) });
 
         if (this.isOverBudget(config, totalCostUsd)) {
           return this.degraded(
-            `challenge cost pushed total $${totalCostUsd.toFixed(4)} past budget`,
+            `review cost pushed total $${totalCostUsd.toFixed(4)} past budget`,
             totalTokens, totalCostUsd, startTime, false, stages, worktreePath
           );
+        }
+
+        // Stage 3: Challenge (sequential — sees draft + review)
+        if (config.challenger) {
+          const challengeStart = Date.now();
+          try {
+            const challengeProvider = providerFactory(config.challenger);
+            const challengeResult = await challengeProvider.complete(
+              [{ role: 'user', content: this.buildChallengePrompt(task, draftStage.content, reviewStage.content, config.context) }],
+              { temperature: config.temperature, maxTokens: config.maxCompletionTokens, ...(config.reasoning !== undefined ? { reasoning: config.reasoning } : {}) }
+            );
+            const inputTokens = challengeResult.usage?.inputTokens ?? 0;
+            const outputTokens = challengeResult.usage?.outputTokens ?? 0;
+            const challenges = this.tryExtractChallenges(challengeResult.content);
+            challengeStage = {
+              modelId: config.challenger,
+              role: 'challenger',
+              content: challengeResult.content,
+              inputTokens,
+              outputTokens,
+              durationMs: Date.now() - challengeStart,
+              challenges,
+            };
+            totalTokens += inputTokens + outputTokens;
+            const cost = this.computeCost(config.challenger, inputTokens, outputTokens);
+            totalCostUsd += cost;
+            this.recordSpend(config.challenger, cost);
+          } catch (err) {
+            return this.degraded(`challenge stage failed: ${String(err)}`, totalTokens, totalCostUsd, startTime, false, stages, worktreePath);
+          }
+          stages.push(challengeStage);
+          this.safeEmit({ type: 'challenged', agentId: config.challenger, challenges: challengeStage.challenges ?? [], alternatives: challengeStage.alternatives ?? [] });
+
+          if (this.isOverBudget(config, totalCostUsd)) {
+            return this.degraded(
+              `challenge cost pushed total $${totalCostUsd.toFixed(4)} past budget`,
+              totalTokens, totalCostUsd, startTime, false, stages, worktreePath
+            );
+          }
         }
       }
     }

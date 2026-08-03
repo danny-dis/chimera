@@ -7,18 +7,36 @@ import { MAX_OUTPUT_SIZE, DEFAULT_SHELL_TIMEOUT, MAX_SHELL_TIMEOUT } from '../to
 // ── Dangerous command patterns ───────────────────────────────────────────────
 
 const DANGEROUS_PATTERNS = [
+  // rm -rf / variants
   /^\s*rm\s+(-rf?|--force)\s+\/\s*$/,
   /^\s*rm\s+(-rf?|--force)\s+\/\s*;/,
   /^\s*rm\s+(-rf?|--force)\s+\/\s*\|/,
+  // dd / overwrite block devices
   /^\s*>\s*\/dev\/(sda|sdb|sdc)/,
   /^\s*dd\s+.*of=\/dev\/sd/,
   /^\s*mkfs/,
-  /^\s*:\(\)\{\s*:\|:\s*&\s*\}\s*;/,  // fork bomb
+  // fork bomb
+  /^\s*:\(\)\{\s*:\|:\s*&\s*\}\s*;/,
+  // chmod 777 on root
   /^\s*chmod\s+777\s+\/\s*$/,
   /^\s*chmod\s+-R\s+777\s+\/\s*$/,
+  // sudo rm -rf /
   /^\s*sudo\s+rm\s+(-rf?|--force)\s+\/\s*$/,
+  // sudo with rm
+  /^\s*sudo\s+.*\brm\b.*\s+(-rf?|--force)\s+\/\s*$/,
+  // mv to /dev/null (data loss)
   /^\s*mv\s+.*\/dev\/null/,
+  // shred
   /^\s*shred\s+/,
+  // Command substitution that could escape root: $(rm -rf /), `rm -rf /`
+  /\$\(\s*rm\s+(-rf?|--force)\s+\/\s*\)/,
+  /\`\s*rm\s+(-rf?|--force)\s+\/\s*\`/,
+  // Pipe to shell: echo "rm -rf /" | bash, command | sh
+  /\|\s*(?:ba)?sh\b/,
+  // eval with dangerous content
+  /\beval\b.*\brm\s+(-rf?|--force)\s+\/\s*/,
+  // curl/wget pipe to shell
+  /\b(curl|wget)\b.*\|\s*(?:ba)?sh/,
 ];
 
 function isDangerous(command: string): boolean {

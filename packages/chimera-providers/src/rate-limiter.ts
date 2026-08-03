@@ -2,6 +2,8 @@ export interface RateLimitConfig {
   rpm: number;
   tpm: number;
   rpd?: number;
+  /** Maximum retry attempts before giving up. Defaults to 10. */
+  maxRetries?: number;
 }
 
 interface TimestampedEntry {
@@ -19,7 +21,15 @@ export class RateLimiter {
   }
 
   async acquire(tokens: number): Promise<void> {
+    const maxRetries = this.limits.maxRetries ?? 10;
+    let retries = 0;
     while (true) {
+      if (++retries > maxRetries) {
+        throw new Error(
+          `Rate limit retry cap reached (${maxRetries}) after waiting for ${tokens} tokens ` +
+          `(rpm=${this.limits.rpm}, tpm=${this.limits.tpm})`
+        );
+      }
       const now = Date.now();
       const minuteAgo = now - 60_000;
       const dayAgo = now - 86_400_000;

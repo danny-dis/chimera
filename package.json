@@ -1,6 +1,6 @@
 {
   "name": "chimera",
-  "version": "0.1.5",
+  "version": "0.5.7",
   "private": true,
   "description": "Terminal-native parallel multi-agent coding platform",
   "workspaces": [

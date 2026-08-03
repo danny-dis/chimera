@@ -11,6 +11,9 @@ const TodoItemSchema = z.object({
 
 const TodosSchema = z.array(TodoItemSchema);
 
+// In-memory store — keyed by sessionId so parallel agents don't collide.
+const _todos = new Map<string, typeof TodosSchema._type>();
+
 const TodoWriteParamsSchema = z.object({
   todos: TodosSchema,
 });
@@ -27,8 +30,10 @@ export const todoWriteTool: ToolDefinition<typeof TodoWriteParamsSchema, typeof 
   returns: TodoWriteReturnsSchema,
   category: 'mcp',
   permissionLevel: 'read',
-  execute: async (params) => {
+  execute: async (params, context) => {
     const validatedTodos = TodosSchema.parse(params.todos);
+    // Store keyed by session so each session gets its own todo list.
+    _todos.set(context.sessionId, validatedTodos);
     return { todos: validatedTodos, count: validatedTodos.length };
   },
   isReadOnly: () => false,
@@ -45,8 +50,9 @@ export const todoReadTool: ToolDefinition<z.ZodTypeAny, typeof TodoReadReturnsSc
   returns: TodoReadReturnsSchema,
   category: 'mcp',
   permissionLevel: 'read',
-  execute: async () => {
-    return { todos: [] };
+  execute: async (_params, context) => {
+    const stored = _todos.get(context.sessionId);
+    return { todos: stored ?? [] };
   },
 };
 
