@@ -32,7 +32,7 @@ const VALID_MODE_PRESET_COMBOS: Record<Mode, readonly DeliberationMode[]> = {
 import { ChimeraEvent } from './types/events.js';
 import { ComplexityScore } from './types/router.js';
 import { ContextEngine, RelayRacing, HandoffProtocol, ToolContextRelay } from '@chimera/context';
-import { runCompactionPipeline } from '@chimera/context';
+import { runCompactionPipeline, runMicroCompactOnly, MICROCOMPACT_TOKEN_THRESHOLD } from '@chimera/context';
 import { BudgetEnforcer, type BudgetCheckResult } from '@chimera/providers';
 import { RateLimiter } from '@chimera/providers';
 import type { ModelRegistry } from '@chimera/providers';
@@ -970,12 +970,33 @@ export class SessionOrchestrator {
           }
         }
 
+        // #5a — Early micro-compaction: when estimated tokens exceed the
+        // lower MICROCOMPACT_TOKEN_THRESHOLD (0.50) but not yet the full
+        // compaction threshold, run the cheaper microCompact-only stage
+        // first. This is additive — it precedes (does not replace) the full
+        // pipeline below, which still fires at 0.80 if needed.
+        const estimatedTokensPre = this._writerMessages.reduce((sum, m) => sum + m.content.length, 0) / 4;
+        const CONTEXT_WINDOW = 200_000;
+        if (estimatedTokensPre > CONTEXT_WINDOW * MICROCOMPACT_TOKEN_THRESHOLD
+            && estimatedTokensPre <= CONTEXT_WINDOW * 0.80) {
+          const micro = runMicroCompactOnly(this._writerMessages);
+          if (micro.totalTokensSaved > 0) {
+            this._writerMessages = micro.messages;
+            this.eventStream.append({
+              type: 'compaction_triggered',
+              reason: 'microcompact_token_threshold',
+              estimatedTokensBefore: Math.round(estimatedTokensPre),
+              tokensSaved: micro.totalTokensSaved,
+              stages: micro.stages.map((s) => ({ stage: s.stage, saved: s.tokensSaved })),
+            } as any);
+          }
+        }
+
         // #5 — Proactive compaction: even if relay racing didn't trigger a
         // handoff, compact the message history when estimated tokens exceed
         // 80% of the context window. This prevents silent context degradation
         // on long tool loops where relay racing thresholds aren't hit.
         const estimatedTokens = this._writerMessages.reduce((sum, m) => sum + m.content.length, 0) / 4;
-        const CONTEXT_WINDOW = 200_000;
         const COMPACTION_THRESHOLD = 0.80;
         if (estimatedTokens > CONTEXT_WINDOW * COMPACTION_THRESHOLD) {
           const compacted = runCompactionPipeline(this._writerMessages);

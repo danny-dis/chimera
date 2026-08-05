@@ -15,6 +15,20 @@ import { runToolCalls } from './tool-execution-helper.js';
 import type { ToolCall } from '../types/agent.js';
 import type { ToolExecutorInterface, ToolRegistryInterface } from '../session-orchestrator.js';
 
+/** Known source-file extensions used by the path-matching patterns. */
+const EXT_LIST = 'rs|ts|js|jsx|tsx|mjs|cjs|py|toml|json|jsonc|md|ya?ml|go|java|cpp|c|rb|php|txt|html|css|sh|ini|cfg|conf|svg';
+
+/** Normalize a path for dedup comparison: strip leading ./ and lowercase. */
+function normPath(p: string): string {
+  return p.replace(/^\.\//, '').toLowerCase();
+}
+
+/** True if `calls` already contains an entry for `path` (normalized). */
+function hasPath(calls: ToolCall[], path: string): boolean {
+  const n = normPath(path);
+  return calls.some((c) => normPath(String(c.arguments.path)) === n);
+}
+
 function extractFencedCode(block: string): string {
   const fence = block.match(/```(?:[\w-]*)\n([\s\S]*?)```/);
   if (fence) return fence[1].replace(/\s+$/, '');
@@ -33,11 +47,15 @@ function splitEditBlock(block: string): { old_string: string; new_string: string
 
 /**
  * Parse writer prose into file-operation tool calls.
- * Handles three common narration shapes:
- *   1) `### ACTION: WRITE <path>` + fenced code block
- *   2) `### ACTION: EDIT <path>` + OLD:/NEW: fenced blocks
- *   3) `**DELTA:** <path>[:lines]` + fenced code block
- *   4) `write_file("<path>")` / `File: <path>` followed by a fenced block
+ * Handles common narration shapes:
+ *   1) `### ACTION: WRITE|EDIT <path>` + fenced code block
+ *   2) `**DELTA:** <path>[:lines]` + fenced code block
+ *   3) `write_file("<path>")` / `File:|Path: <path>` + fenced block
+ *   4) Inline-arg `write_file('path','content')` and write-intent verb + path
+ *   5) Bash heredoc narration
+ *   6) Bare fenced block when `expectedPath` is supplied
+ *   7) Fenced block with filename in the info string (```ts src/app.ts)
+ *   8) Leading path line (`src/app.ts:`) + fenced block
  */
 export function parseProseActions(text: string, expectedPath?: string): ToolCall[] {
   const calls: ToolCall[] = [];
@@ -68,8 +86,8 @@ export function parseProseActions(text: string, expectedPath?: string): ToolCall
     if (path && content) calls.push({ id: mkId(), name: 'write_file', arguments: { path, content } });
   }
 
-  // 4) write_file("<path>") / File: <path> + fenced block
-  const genRe = /(?:write_file\(\s*["']([^"']+)["']\s*\)|File:\s*(\S+))\s*\n```(?:[\w-]*)\n([\s\S]*?)```/gi;
+  // 4) write_file("<path>") / File:|Path:|Filepath:|Source: <path> + fenced block
+  const genRe = /(?:write_file\(\s*["']([^"']+)["']\s*\)|(?:File|Path|Filepath|Source)\s*:\s*(\S+))\s*\n```(?:[\w-]*)\n([\s\S]*?)```/gi;
   while ((m = genRe.exec(text))) {
     const path = (m[1] || m[2]).trim();
     const content = m[3];
@@ -85,7 +103,7 @@ export function parseProseActions(text: string, expectedPath?: string): ToolCall
   while ((m = inlineArgRe.exec(text))) {
     const path = m[1].trim();
     const content = m[2];
-    if (path && content && !calls.some((c) => c.arguments.path === path)) {
+    if (path && content && !hasPath(calls, path)) {
       calls.push({ id: mkId(), name: 'write_file', arguments: { path, content } });
     }
   }
@@ -100,11 +118,16 @@ export function parseProseActions(text: string, expectedPath?: string): ToolCall
   //     rewrote). Otherwise a *read* narration like "Read bug.js:" + a fenced
   //     block showing the OLD code would be matched and the bug would be
   //     re-written back in. The intent keyword disambiguates read vs write.
-  const inlineRe = /(?:wrote|write|writing|correct(?:ed)?|fix(?:ed)?|update(?:d)?|edit(?:ed)?|revise(?:d)?|patch(?:ed)?|rewrote|rewritten|replaced|changed)\b[\s\S]{0,80}?\b([A-Za-z0-9_\-./]+\.(?:rs|ts|js|jsx|tsx|py|toml|json|md|ya?ml|go|java|cpp|c|rb|php|txt|html|css|sh))\b[\s\S]{0,40}?\n+```(?:[a-zA-Z0-9_-]*)\n([\s\S]*?)```/gi;
+  const inlineRe = new RegExp(
+    '(?:wrote|write|writing|create(?:d)?|creating|save(?:d)?|saving|implement(?:ed)?|implementing|generate(?:d)?|generating|correct(?:ed)?|fix(?:ed)?|update(?:d)?|edit(?:ed)?|revise(?:d)?|patch(?:ed)?|rewrote|rewritten|replaced|changed)' +
+      '\\b[\\s\\S]{0,80}?\\b([A-Za-z0-9_\\-./]+\\.(?:' + EXT_LIST + '))' +
+      '\\b[\\s\\S]{0,40}?\\n+```(?:[a-zA-Z0-9_-]*)\\n([\\s\\S]*?)```',
+    'gi',
+  );
   while ((m = inlineRe.exec(text))) {
     const path = m[1].trim();
     const content = m[2].replace(/\s+$/, '');
-    if (path && content && !calls.some((c) => c.arguments.path === path)) {
+    if (path && content && !hasPath(calls, path)) {
       calls.push({ id: mkId(), name: 'write_file', arguments: { path, content } });
     }
   }
@@ -122,6 +145,40 @@ export function parseProseActions(text: string, expectedPath?: string): ToolCall
       const path = h[1].trim();
       const content = h[3];
       if (path && content) calls.push({ id: mkId(), name: 'write_file', arguments: { path, content } });
+    }
+  }
+
+  // 7) Fenced block with a filename in the info string, e.g.
+  //    ```ts path/to/file.ts   ```python foo/bar.py   ```./src/app.ts
+  //    Many tool-capable models put the target path on the opening fence
+  //    line. We require the path token to have a known extension so plain
+  //    language tags (```js, ```python) don't match.
+  const fenceHdrRe = new RegExp(
+    '```[ \\t]*(?:([a-zA-Z0-9_-]+)[ \\t]+)?([A-Za-z0-9_\\-./]+\\.(?:' + EXT_LIST + '))[ \\t]*\\n([\\s\\S]*?)```',
+    'gi',
+  );
+  while ((m = fenceHdrRe.exec(text))) {
+    const path = m[2].trim();
+    const content = m[3].replace(/\s+$/, '');
+    if (path && content && !hasPath(calls, path)) {
+      calls.push({ id: mkId(), name: 'write_file', arguments: { path, content } });
+    }
+  }
+
+  // 8) Leading path line: a line that IS a file path (with extension),
+  //    optionally followed by a colon, then a fenced block. Common when
+  //    models emit "src/app.ts:" or "./greeter.js" on its own line before
+  //    the code. The path must be the entire line start to avoid false
+  //    positives on prose that merely mentions a filename.
+  const leadingPathRe = new RegExp(
+    '^([A-Za-z0-9_\\-./]+\\.(?:' + EXT_LIST + '))[ \\t]*:?[ \\t]*\\n```(?:[a-zA-Z0-9_-]*)\\n([\\s\\S]*?)```',
+    'gim',
+  );
+  while ((m = leadingPathRe.exec(text))) {
+    const path = m[1].trim();
+    const content = m[2].replace(/\s+$/, '');
+    if (path && content && !hasPath(calls, path)) {
+      calls.push({ id: mkId(), name: 'write_file', arguments: { path, content } });
     }
   }
 

@@ -4,6 +4,7 @@ import type { LLMProvider, ToolExecutorInterface, ToolRegistryInterface } from '
 import type { ModelRegistry, ModelEntry } from '@chimera/providers';
 import type { CostTracker } from '../cost-tracker.js';
 import type { WorktreeIsolation, WorktreeInfo } from '../agent/worktree-isolation.js';
+import { ErrorRecovery } from './error-recovery.js';
 import { ResponseSynthesizer, type SynthesisInput } from './response-synthesizer.js';
 import { buildMessages, CHIMERA_CORE_IDENTITY } from '../prompts.js';
 import { zodToJsonSchema } from '../zod-json.js';
@@ -95,6 +96,7 @@ export class TrioExecutor {
   private toolExecutor?: ToolExecutorInterface;
   private toolRegistry?: ToolRegistryInterface;
   private style?: OutputStyle;
+  private errorRecovery: ErrorRecovery;
 
   constructor(deps: TrioExecutorDeps) {
     this.eventStream = deps.eventStream;
@@ -105,6 +107,7 @@ export class TrioExecutor {
     this.toolExecutor = deps.toolExecutor;
     this.toolRegistry = deps.toolRegistry;
     this.style = deps.style;
+    this.errorRecovery = new ErrorRecovery({ eventStream: this.eventStream });
   }
 
   /**
@@ -581,6 +584,20 @@ export class TrioExecutor {
   }
 
   // ── private helpers ───────────────────────────────────────────────
+
+  /** Call a provider with error-recovery wrapping. */
+  private _callProvider<T>(
+    factory: TrioProviderFactory,
+    modelId: string,
+    fn: () => Promise<T>,
+    timeoutMs?: number,
+  ) {
+    return this.errorRecovery.withTimeout(
+      fn,
+      timeoutMs,
+      { modelId },
+    );
+  }
 
   private async runLlmSynthesizer(
     chain: string[],

@@ -17,6 +17,14 @@ describe('expectedPathFromTask', () => {
     expect(expectedPathFromTask('generate .config/app.json')).toBe('.config/app.json');
   });
 
+  it('preserves a leading ../ parent-dir prefix', () => {
+    expect(expectedPathFromTask('write ../foo.txt')).toBe('../foo.txt');
+  });
+
+  it('preserves a bare dotfile (no directory segment)', () => {
+    expect(expectedPathFromTask('create .hidden.txt')).toBe('.hidden.txt');
+  });
+
   it('keeps extracting plain relative paths without a leading dot', () => {
     expect(expectedPathFromTask('fix the bug in src/main.ts')).toBe('src/main.ts');
     expect(expectedPathFromTask('create greeter.js')).toBe('greeter.js');

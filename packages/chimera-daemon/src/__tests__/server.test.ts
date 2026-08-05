@@ -259,6 +259,10 @@ describe('ChimeraDaemon', () => {
     });
 
     it('a blocking pre-tool-use hook fires through the daemon-wired orchestrator path', async () => {
+      // Windows spawn latency (node -e subprocess per hook fire) can exceed
+      // the default 5000ms vitest timeout; documented known-Windows-flakiness
+      // (AGENTS_CHECKLIST.md ~line 1031). Generous timeout keeps the assertion
+      // reliable on Windows without changing test logic.
       const { EventStream, SessionOrchestrator } = await import('@chimera/core');
       const { ToolRegistry, ToolExecutor, HookExecutor, runShellCommandTool } = await import('@chimera/tools');
 
@@ -294,6 +298,6 @@ describe('ChimeraDaemon', () => {
 
       expect(blocked.success).toBe(false);
       expect(ok.success).toBe(true);
-    });
+    }, 30000);
   });
 });

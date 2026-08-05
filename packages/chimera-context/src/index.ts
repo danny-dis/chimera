@@ -19,10 +19,12 @@ export type {
 
 export {
   runCompactionPipeline,
+  runMicroCompactOnly,
   applyToolResultBudget,
   snipCompact,
   microCompact,
   contextCollapse,
+  MICROCOMPACT_TOKEN_THRESHOLD,
 } from './compaction/index.js';
 export type { CompactionPipelineResult } from './compaction/index.js';
 

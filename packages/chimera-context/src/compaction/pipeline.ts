@@ -89,3 +89,37 @@ export function runCompactionPipeline(
     stages,
   };
 }
+
+/**
+ * Lightweight standalone micro-compaction. Runs only the `microCompact`
+ * stage (tool-result truncation) — cheaper than the full pipeline and
+ * intended as an earlier, lower-threshold step that precedes full
+ * compaction. Returns the same shape as `runCompactionPipeline` so the
+ * trigger site can treat both uniformly.
+ */
+export function runMicroCompactOnly(
+  messages: Array<{ role: string; content: string }>,
+): CompactionPipelineResult {
+  const stages: CompactionContext['stageResults'] = [];
+  let current = [...messages];
+  let totalTokensSaved = 0;
+
+  const before = estimateTokens(current);
+  const result = microCompact(current);
+  current = result.messages;
+  const after = estimateTokens(current);
+  const saved = Math.max(0, before - after);
+  totalTokensSaved += saved;
+  stages.push({
+    stage: 'microcompact',
+    tokensSaved: saved,
+    messagesBefore: messages.length,
+    messagesAfter: current.length,
+  });
+
+  return {
+    messages: current,
+    totalTokensSaved,
+    stages,
+  };
+}

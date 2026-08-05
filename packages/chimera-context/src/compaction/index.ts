@@ -1,4 +1,4 @@
-export { runCompactionPipeline } from './pipeline.js';
+export { runCompactionPipeline, runMicroCompactOnly } from './pipeline.js';
 export type { CompactionContext, CompactionPipelineResult } from './pipeline.js';
 export { applyToolResultBudget } from './tool-result-budget.js';
 export { snipCompact } from './snip.js';
