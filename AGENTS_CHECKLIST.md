@@ -5,7 +5,7 @@
 > **STATUS**: ACTIVE DEVELOPMENT — Archon 30-day integration in progress
 > **DIRECTIVE**: AGENTS MUST update this ledger character-for-character upon completion of subtasks.
 > **SYMBOLIC KEY**: `[x]` COMPLETE | `[~]` IN PROGRESS | `[ ]` PENDING | `[!]` BLOCKED
-> **EXECUTION ORDER**: Top of `## #PRIORITY EXECUTION ORDER#` below is the live plan. The 30-day Archon integration roadmap is the active critical path; the legacy PHASE 1-9 sections are retained for context but secondary.
+> **EXECUTION ORDER**: The `## #0. ACTIVE PLAN: ARCHON 30-DAY INTEGRATION (CRITICAL PATH)#` section below is the live plan. The 30-day Archon integration roadmap is the active critical path; the legacy PHASE 1-9 sections are retained for context but secondary.
 
 ---
 
@@ -89,6 +89,12 @@
 
 ### Smoke result: 21/24 passed (was 0/24)
 
+> **Re-run 2026-08-05 (post `f3846cc`)**: 21/24 again, providers `google` + `openai-compatible`.
+> Failures this run: `code/trio` and `debug/trio` = `needs_user` (model narrated instead of
+> calling a write tool — the gate honestly refused `done`), `debug/solo` = TIMEOUT at 90s.
+> The failing combo set varies between runs; all three are gate/model-reliability behavior, not
+> crashes or hangs.
+
 Remaining 3 (`code/duo`, `code/trio`, `debug/trio`) all report `needs_user` — and that is
 **correct behavior, not a bug**: none of the three wrote its file, verified by checking
 `smoke-tmp/` afterwards. The model narrated instead of calling a write tool, and the completion
@@ -104,18 +110,39 @@ reliability* on write tasks, not gate correctness. Which combos fail varies betw
 
 - [ ] Write-task reliability: on some runs the model answers in prose instead of calling
   `write_file`/`edit_file`. The force-write gate catches it and escalates, so nothing is
-  fabricated, but 3/12 write-mode combos needed user intervention in the last full run.
-- [ ] `expectedPathFromTask` (`coordinator/path-from-task.ts`) drops a leading dot: a task naming
-  `.foo/bar.txt` yields `foo/bar.txt` because the regex starts at a word boundary, so the
-  file-landed check looks for a path that does not exist.
-- [ ] Streaming LLM output, todo/task tracking, context compaction (`microCompact` is implemented
-  but never called), and multimodal input all remain implemented-but-unwired.
-- [ ] There is still no *approval* gate — the diff is shown after the write, not before it.
+  fabricated, but 3/12 write-mode combos needed user intervention in the 2026-08-05 re-run
+  (`code/trio`, `debug/trio` = `needs_user`; `debug/solo` = TIMEOUT). Which combos fail varies
+  between runs.
+- [ ] Streaming LLM output, todo/task tracking, and multimodal input remain
+  implemented-but-unwired. (Context compaction moved out of this bucket — see below.)
+
+### Fixed after the 2026-07-31 pass (verified 2026-08-05)
+
+- [x] **Pre-write approval gate** (was: "no approval gate — diff shown after the write"). The
+  interactive gate now exists: in a real terminal the mutating write tools flip to policy `ask`,
+  and the CLI prints the exact diff BEFORE the interactive prompt (`cli-router.ts` permission
+  gating + `tool-executor.ts` pre-write gate; landed in `e64d742` safety hardening). `--yolo` /
+  `NONINTERACTIVE=1` bypass it for CI/headless.
+- [x] **`expectedPathFromTask` leading-dot bug** (was: `.foo/bar.txt` → `foo/bar.txt`). The `\b`
+  boundary was replaced with a `(?<![a-zA-Z0-9_])` lookbehind in `coordinator/path-from-task.ts`;
+  5 regression tests cover `.foo/bar.txt`, `./baz.txt`, `.config/app.json`, `../foo.txt`,
+  `.hidden.txt` (`__tests__/path-from-task.test.ts`).
+- [x] **Micro-compaction unwired** (was: "`microCompact` is implemented but never called").
+  `runMicroCompactOnly` is now invoked by `session-orchestrator.ts` when estimated tokens exceed
+  `CONTEXT_WINDOW * MICROCOMPACT_TOKEN_THRESHOLD`; the constant is exported from `@chimera/context`
+  and the CLI renders a `[compaction] freed ~N tokens` line (landed in `f3846cc`).
 - [x] `.chimera/config.yaml` — **verified clean 2026-07-31**: the only tracked config
   (`packages/chimera-cli/.chimera/config.yaml`) uses `${CHIMERA_CHEAP_API_KEY}` env-var references
   in all three provider entries, and the root `.chimera/` is gitignored. A `git grep` for literal
   `sk-…` key material across the tracked tree returns only a synthetic fixture in
   `secret-detector.test.ts`. No live key is committed.
+
+### Repo doc drift (flagged 2026-08-05)
+
+- `roadmap.md` describes a DIFFERENT project ("ARGUS Visual Fusion" — RF/thermal/SAR image
+  fusion), not the chimera roadmap. Needs replacement or removal.
+- Capability-matrix totals are known-drifted (see NOTE 2026-07-30 above); the per-section
+  checkboxes are authoritative.
 
 ### Test counts across the 4 affected packages (post-integration)
 
@@ -133,7 +160,7 @@ reliability* on write tasks, not gate correctness. Which combos fail varies betw
 
 ## #0. ACTIVE PLAN: ARCHON 30-DAY INTEGRATION (CRITICAL PATH)#
 
-> **SOURCE**: `research/archon-vs-chimera-mineable-assets.md`. The 30-day plan has 4 weeks of work. **Weeks 1-3 are complete.** Week 4 is the next critical-path chunk. Detailed file paths + acceptance criteria below.
+> **SOURCE**: `research/archon-vs-chimera-mineable-assets.md`. The 30-day plan has 4 weeks of work. **Weeks 1-4 are complete** (Week 4 finished 2026-06-16; see #0.4). Weeks 5-8 are reserved (see #0.5). Detailed file paths + acceptance criteria below.
 
 ### #0.1 WEEK 1 — Foundation (DONE ✅ 2026-06-15)
 
