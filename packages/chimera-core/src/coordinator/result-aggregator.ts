@@ -1,4 +1,5 @@
 import type { LLMProvider } from '../session-orchestrator.js';
+import { withRetry } from '@chimera/providers';
 import type { SubTaskResult, AggregatedResult, Conflict } from './types.js';
 
 const MERGE_PROMPT = `[!] #RESULT SYNTHESIS DIRECTIVE# [!]
@@ -56,13 +57,13 @@ export class ResultAggregator {
       .join('\n\n');
 
     try {
-      const mergeResult = await this.provider.complete(
+      const mergeResult = await withRetry(() => this.provider.complete(
         [
           { role: 'system', content: MERGE_PROMPT },
           { role: 'user', content: outputsBlock },
         ],
-        { responseFormat: 'json_object', temperature: 0.2 },
-      );
+        { responseFormat: 'json_object', temperature: 0.2 }
+      ), { maxRetries: 2, baseDelayMs: 3000, maxDelayMs: 20000 });
 
       const parsed = JSON.parse(mergeResult.content);
 

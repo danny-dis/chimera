@@ -1,5 +1,6 @@
 import type { LLMProvider } from '../session-orchestrator.js';
 import { buildMessages } from '../prompts.js';
+import { withRetry } from '@chimera/providers';
 import type { DecompositionResult, SubTaskType } from './types.js';
 
 const VALID_SUBTASK_TYPES: SubTaskType[] = [
@@ -66,10 +67,10 @@ export class TaskDecomposer {
       messages.push({ role: 'user', content: `CONTEXT:\n${context}` });
     }
 
-    const result = await this.provider.complete(messages, {
+    const result = await withRetry(() => this.provider.complete(messages, {
       responseFormat: 'json_object',
       temperature: 0.2,
-    });
+    }), { maxRetries: 2, baseDelayMs: 3000, maxDelayMs: 20000 });
 
     try {
       const parsed = JSON.parse(result.content);

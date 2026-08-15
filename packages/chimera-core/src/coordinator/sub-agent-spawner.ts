@@ -4,6 +4,7 @@ import { AsyncSemaphore } from '../agent/async-semaphore.js';
 import { DynamicConcurrencyEngine, type ConcurrencyOverrides } from '../agent/dynamic-concurrency-engine.js';
 import { EventStream } from '../event-stream.js';
 import type { ProviderConfig } from '@chimera/providers';
+import { withRetry } from '@chimera/providers';
 import { runToolCalls } from './tool-execution-helper.js';
 import { executeProseActions } from './file-write-fallback.js';
 import type { ToolExecutorInterface, ToolRegistryInterface } from '../session-orchestrator.js';
@@ -226,7 +227,10 @@ export class SubAgentSpawner {
       let result: any;
       let lastAssistant: any;
       for (let round = 0; round <= MAX_TOOL_ROUNDS; round++) {
-        result = await this.withTimeout(task.provider.complete(messages as any, options as any), this.config.taskTimeoutMs);
+        result = await this.withTimeout(
+          withRetry(() => task.provider.complete(messages as any, options as any), { maxRetries: 2, baseDelayMs: 2000, maxDelayMs: 15000 }),
+          this.config.taskTimeoutMs
+        );
         const toolCalls: Array<{ id: string; name: string; arguments: unknown }> = result?.toolCalls ?? [];
         if (toolCalls.length === 0) break;
 

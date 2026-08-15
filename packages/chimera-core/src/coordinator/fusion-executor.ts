@@ -314,10 +314,10 @@ export class FusionExecutor {
                     'FINAL ANSWER:'
                 ].join('\n');
 
-                const res = await provider.complete(
+                const res = await withRetry(() => provider.complete(
                     [{ role: 'user', content: rebuttalPrompt }],
                     { temperature: config.temperature, maxTokens: config.maxCompletionTokens, ...(config.reasoning !== undefined ? { reasoning: config.reasoning } : {}) }
-                );
+                ), { maxRetries: 2, baseDelayMs: 4000, maxDelayMs: 25000 });
 
                 return {
                     modelId,
@@ -366,10 +366,10 @@ export class FusionExecutor {
     for (const judgeModel of judgeModels) {
       try {
         const judgeProvider = providerFactory(judgeModel);
-        const judgeRes = await judgeProvider.complete(
+        const judgeRes = await withRetry(() => judgeProvider.complete(
           [{ role: 'user', content: prompt }],
           { responseFormat: 'json_object', temperature: config.temperature, maxTokens: config.maxCompletionTokens, ...(config.reasoning !== undefined ? { reasoning: config.reasoning } : {}) }
-        );
+        ), { maxRetries: 2, baseDelayMs: 3000, maxDelayMs: 20000 });
 
         let parsed: Record<string, unknown> | null = null;
         try {
