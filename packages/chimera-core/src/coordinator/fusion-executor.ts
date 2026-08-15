@@ -1,6 +1,7 @@
 import { EventStream } from '../event-stream.js';
 import type { LLMProvider, ToolExecutorInterface, ToolRegistryInterface } from '../session-orchestrator.js';
 import type { ModelRegistry, ModelEntry } from '@chimera/providers';
+import { withRetry } from '@chimera/providers';
 import type { CostTracker } from '../cost-tracker.js';
 import { sanitizeWriterOutput } from './output-sanitizer.js';
 import { runAgentToolLoop, countSourceFiles } from './agent-tool-loop.js';
@@ -194,7 +195,7 @@ export class FusionExecutor {
             }))
           : undefined;
 
-        const res = await provider.complete(
+        const res = await withRetry(() => provider.complete(
           [{ role: 'user', content: finalTask }],
           {
             temperature: config.temperature,
@@ -202,7 +203,7 @@ export class FusionExecutor {
             ...(config.reasoning !== undefined ? { reasoning: config.reasoning } : {}),
             ...(this.toolExecutor && this.workspaceRoot && toolDefs ? { tools: toolDefs } : {}),
           }
-        );
+        ), { maxRetries: 2, baseDelayMs: 4000, maxDelayMs: 25000 });
 
         // Writer-panel path: route through the shared agentic tool loop so the
         // panel agent actually calls write_file instead of narrating the file in
@@ -357,7 +358,9 @@ export class FusionExecutor {
     const judgeStart = Date.now();
     let analysis: Partial<FusionAnalysis> | undefined;
     let judgeParseFailed = false;
-    const judgeModels = [config.judgeModel, ...(config.judgeFailover ?? [])];
+    // ponytail: writer is the last-resort judge — if all registry judges
+    // are rate-limited, we still get a synthesis instead of "all judges failed"
+    const judgeModels = [config.judgeModel, ...(config.judgeFailover ?? []), 'writer'];
     const prompt = this.buildJudgePrompt(task, panelResults);
 
     for (const judgeModel of judgeModels) {
@@ -418,7 +421,23 @@ export class FusionExecutor {
     }
 
     if (!analysis) {
-      return this.degraded('all judges failed', totalTokens, totalCostUsd, startTime);
+      // All judges failed (rate-limited). Use the best panel result as synthesis
+      // instead of erroring — we have panel output, we just can't synthesize it.
+      const bestPanel = panelResults.find((p) => p.content && p.content.trim().length > 0);
+      if (bestPanel) {
+        analysis = {
+          thought: 'All judges failed; using best panel output verbatim.',
+          finalResponse: bestPanel.content,
+          consensus: [],
+          conflicts: [],
+          uniqueInsights: [],
+          blindSpots: [],
+          confidence: 0.5,
+        };
+        judgeParseFailed = true;
+      } else {
+        return this.degraded('all judges failed', totalTokens, totalCostUsd, startTime);
+      }
     }
 
     this.safeEmit({ type: 'fusion_completed', task, durationMs: Date.now() - startTime, totalCostUsd });

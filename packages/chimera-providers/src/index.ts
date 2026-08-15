@@ -85,6 +85,9 @@ export {
   StreamingError,
 } from './errors.js';
 
+// Retry-with-backoff wrapper for transient provider errors (rate-limit, 503)
+export { withRetry, type RetryOptions } from './retry.js';
+
 // Offline mock — used when no real provider is configured (CI, dev, first-run)
 export { MockProvider, createDefaultMockProvider } from './providers/mock.js';
 export type { MockProviderOptions } from './providers/mock.js';

@@ -1,5 +1,6 @@
 import { EventStream } from '../event-stream.js';
 import type { ModelRegistry, ModelEntry } from '@chimera/providers';
+import { withRetry } from '@chimera/providers';
 import { zodToJsonSchema } from '../zod-json.js';
 import type { CostTracker } from '../cost-tracker.js';
 import type { ToolExecutorInterface, ToolRegistryInterface } from '../session-orchestrator.js';
@@ -405,10 +406,10 @@ export class SoloExecutor {
     }
     messages.push({ role: 'user', content: prompt });
 
-    const r = await provider.complete(
+    const r = await withRetry(() => provider.complete(
       messages,
       { temperature: config.temperature, maxTokens: config.maxCompletionTokens, ...(tools ? { tools, toolChoice: 'auto' } : {}), ...(config.reasoning !== undefined ? { reasoning: config.reasoning } : {}) }
-    );
+    ), { maxRetries: 2, baseDelayMs: 3000, maxDelayMs: 20000 });
     return {
       content: r.content,
       inputTokens: r.usage?.inputTokens ?? 0,

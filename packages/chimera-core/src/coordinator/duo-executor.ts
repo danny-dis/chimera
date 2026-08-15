@@ -1,6 +1,7 @@
 import { EventStream } from '../event-stream.js';
 import type { LLMProvider, ToolExecutorInterface, ToolRegistryInterface } from '../session-orchestrator.js';
 import type { ModelRegistry, ModelEntry } from '@chimera/providers';
+import { withRetry } from '@chimera/providers';
 import type { CostTracker } from '../cost-tracker.js';
 import { ResponseSynthesizer, type SynthesisInput } from './response-synthesizer.js';
 import { sanitizeWriterOutput, sanitizeReviewerOutput } from './output-sanitizer.js';
@@ -275,10 +276,10 @@ export class DuoExecutor {
       ? this.buildPeerPrompt(role, task, config.context)
       : this.buildReviewPrompt(task, draft!, config.context);
 
-    const r = await provider.complete(
+    const r = await withRetry(() => provider.complete(
       [{ role: 'user', content: prompt }],
       { temperature: config.temperature, maxTokens: config.maxCompletionTokens, ...(config.reasoning !== undefined ? { reasoning: config.reasoning } : {}) }
-    );
+    ), { maxRetries: 2, baseDelayMs: 3000, maxDelayMs: 20000 });
 
     // Writer path: route through the shared agentic tool loop so the writer
     // can actually call write_file instead of narrating the file in prose.

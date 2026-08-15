@@ -87,7 +87,9 @@ export class TaskDecomposer {
         rationale: parsed.rationale ?? '',
       };
     } catch {
-      // If parsing fails, treat the entire task as a single sub-task
+      // If parsing fails OR the provider returned an empty/rate-limited
+      // response, treat the entire task as a single sub-task. This
+      // prevents hive from dying on transient provider errors.
       return {
         subTasks: [
           {

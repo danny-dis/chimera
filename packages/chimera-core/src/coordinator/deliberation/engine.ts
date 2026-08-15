@@ -40,6 +40,7 @@ import { FusionExecutor } from '../fusion-executor.js';
 import type {
   FusionConfig,
 } from '../fusion-types.js';
+import { withRetry } from '@chimera/providers';
 
 import { ResultAggregator } from '../result-aggregator.js';
 import { TaskDecomposer } from '../task-decomposer.js';
@@ -82,6 +83,12 @@ export class DeliberationEngine {
    * `DeliberationResult`.
    */
   async run(config: DeliberationConfig): Promise<DeliberationResult> {
+    // Conversational fast-path: bypass the multi-agent pipeline for simple
+    // questions ("PONG", "who are you", etc.) that don't need deliberation.
+    // This avoids burning provider calls (and rate limits) on trivial tasks.
+    if (TaskRouter.isConversationalTask(config.task)) {
+      return this.runConversational(config);
+    }
     switch (config.mode) {
       case 'solo':
         return this.runSolo(config);
@@ -165,6 +172,51 @@ export class DeliberationEngine {
     );
 
     return this.normalizeSolo(inner, startTime);
+  }
+
+  // ── Conversational fast path ─────────────────────────────────────
+
+  /**
+   * Single LLM call for conversational/simple questions. Bypasses the
+   * multi-agent pipeline (no reviewer/challenger/judge) to save rate-limited
+   * provider calls for the cases where deliberation actually matters.
+   */
+  private async runConversational(cfg: DeliberationConfig): Promise<DeliberationResult> {
+    const startTime = Date.now();
+    const provider = this.deps.providerFactory('writer');
+
+    const prompt = [
+      'You are Chimera — a multi-agent coding platform. Answer the user simply and directly.',
+      '',
+      'User:',
+      cfg.task,
+    ].join('\n');
+
+    const result = await provider.complete(
+      [{ role: 'user', content: prompt }],
+      { temperature: 0.7, maxTokens: 512 },
+    );
+
+    const inputTokens = result.usage?.inputTokens ?? 0;
+    const outputTokens = result.usage?.outputTokens ?? 0;
+
+    return {
+      mode: 'solo',
+      output: result.content.trim(),
+      analysis: {
+        thought: '',
+        finalResponse: result.content.trim(),
+        consensus: [],
+        conflicts: [],
+        uniqueInsights: [],
+        blindSpots: [],
+        confidence: 0.9,
+      },
+      totalTokens: inputTokens + outputTokens,
+      totalCostUsd: 0,
+      durationMs: Date.now() - startTime,
+      degraded: false,
+    };
   }
 
   // ── Preset: duo ───────────────────────────────────────────────────
@@ -353,7 +405,31 @@ export class DeliberationEngine {
 
     // 1. Decompose task into subtasks
     const decomposer = new TaskDecomposer(mergeProvider);
-    const decomposition = await decomposer.decompose(cfg.task, cfg.context);
+    let decomposition;
+    try {
+      decomposition = await decomposer.decompose(cfg.task, cfg.context);
+    } catch (err) {
+      // Decomposition failed (provider error, rate limit, etc.) — fall back
+      // to treating the whole task as a single subtask so hive still runs.
+      const message = err instanceof Error ? err.message : String(err);
+      this.deps.eventStream.append({
+        type: 'hive_decompose_failed',
+        error: message,
+        fallback: 'single-subtask',
+      } as any);
+      decomposition = {
+        subTasks: [{
+          id: 'task-1',
+          description: cfg.task,
+          dependencies: [],
+          context: cfg.context ?? '',
+          provider: mergeProvider,
+          estimatedTokens: 2000,
+        }],
+        strategy: 'sequential',
+        rationale: `Decomposition failed (${message}) — treating as single task`,
+      };
+    }
 
     // 2. Truncate to maxSubTasks if specified
     const subtaskList = cfg.maxSubTasks

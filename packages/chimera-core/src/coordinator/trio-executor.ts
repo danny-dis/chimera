@@ -2,6 +2,7 @@ import { EventStream } from '../event-stream.js';
 import { existsSync, readdirSync, statSync } from 'fs';
 import type { LLMProvider, ToolExecutorInterface, ToolRegistryInterface } from '../session-orchestrator.js';
 import type { ModelRegistry, ModelEntry } from '@chimera/providers';
+import { withRetry } from '@chimera/providers';
 import type { CostTracker } from '../cost-tracker.js';
 import type { WorktreeIsolation, WorktreeInfo } from '../agent/worktree-isolation.js';
 import { ErrorRecovery } from './error-recovery.js';
@@ -194,10 +195,10 @@ export class TrioExecutor {
       // Style is injected by the caller (CLI layer), which owns the
       // `learning` dependency. core never imports `learning` (cycle).
       const style = this.style;
-      const draftResult = await draftProvider.complete(
+      const draftResult = await withRetry(() => draftProvider.complete(
         [{ role: 'user', content: this.buildDraftPrompt(task, config.context, style) }],
         { temperature: config.temperature, maxTokens: config.maxCompletionTokens, ...(config.reasoning !== undefined ? { reasoning: config.reasoning } : {}), ...(toolDefs ? { tools: toolDefs } : {}) }
-      );
+      ), { maxRetries: 2, baseDelayMs: 3000, maxDelayMs: 20000 });
       const inputTokens = draftResult.usage?.inputTokens ?? 0;
       const outputTokens = draftResult.usage?.outputTokens ?? 0;
       let draftContent = sanitizeWriterOutput(draftResult.content);
@@ -413,10 +414,10 @@ export class TrioExecutor {
         const reviewStart = Date.now();
         try {
           const reviewProvider = providerFactory(config.reviewer);
-          const reviewResult = await reviewProvider.complete(
+          const reviewResult = await withRetry(() => reviewProvider.complete(
             [{ role: 'user', content: this.buildReviewPrompt(task, draftStage.content + linterFeedback, config.context) }],
             { temperature: config.temperature, maxTokens: config.maxCompletionTokens, ...(config.reasoning !== undefined ? { reasoning: config.reasoning } : {}) }
-          );
+          ), { maxRetries: 2, baseDelayMs: 3000, maxDelayMs: 20000 });
           const inputTokens = reviewResult.usage?.inputTokens ?? 0;
           const outputTokens = reviewResult.usage?.outputTokens ?? 0;
           const issues = this.tryExtractIssues(reviewResult.content);

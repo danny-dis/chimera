@@ -244,7 +244,10 @@ async function runCombo(mode, preset) {
 
   // cleanup
   try { rmSync(workdir, { recursive: true, force: true }); } catch {}
-  await new Promise((r) => setTimeout(r, 1000));
+  // Inter-combo delay: 5s gives free-tier rate limits time to reset
+  // (tencent/hy3 says "retry in 16s" — a longer gap between combos
+  // avoids cascading 429s across the matrix).
+  await new Promise((r) => setTimeout(r, 5000));
 }
 
 // Quality stand-in imported from score-combo.mjs (pure, unit-tested).

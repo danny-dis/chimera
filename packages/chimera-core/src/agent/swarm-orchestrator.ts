@@ -176,38 +176,64 @@ export class SwarmOrchestrator extends EventEmitter {
       const pool = [primaryProvider, ...this.providerPool.filter((p) => p.id !== primaryProvider.id)];
       let lastErr: unknown;
       let completed = false;
-      for (const provider of pool) {
-        if (typeof provider.provider?.complete !== 'function') continue;
-        agent.providerId = provider.id;
-        provider.activeCount++;
-        try {
-          const result = await this.withTimeout(
-            provider.provider.complete(
-              [
-                { role: 'system', content: 'You are a swarm sub-agent. Execute the task and return only the result.' },
-                { role: 'user', content: task.context ? `TASK: ${task.description}\n\nCONTEXT:\n${task.context}` : `TASK: ${task.description}` },
-              ],
-              { temperature: 0.3 },
-            ),
-            this.config.taskTimeoutMs,
-          );
 
-          agent.status = 'completed';
-          agent.result = result.content;
-          agent.completedAt = Date.now();
-          agent.tokensUsed = (result.usage?.inputTokens ?? 0) + (result.usage?.outputTokens ?? 0);
-          const cost = this.estimateCost(provider.id, agent.tokensUsed);
-          agent.costUsd = cost;
-          completedResults.push({ taskId: task.id, output: result.content });
-          this.emit('agent_completed', { agentId, taskId: task.id, tokensUsed: agent.tokensUsed });
-          completed = true;
-          break;
-        } catch (err) {
-          lastErr = err;
-          agentErrors.push(`agent ${agentId} via ${provider.id}: ${err instanceof Error ? err.message : String(err)}`);
-          this.emit('agent_failed', { agentId, taskId: task.id, error: err instanceof Error ? err.message : String(err) });
-        } finally {
-          provider.activeCount--;
+      // If all providers fail (shared rate limit), retry the whole pool with
+      // backoff before giving up. Free-tier gateways exhaust their burst quota
+      // under concurrent fan-out and need a breather.
+      for (let attempt = 0; attempt < 3; attempt++) {
+        for (const provider of pool) {
+          if (typeof provider.provider?.complete !== 'function') continue;
+          agent.providerId = provider.id;
+          provider.activeCount++;
+          try {
+            let result = await this.withTimeout(
+              provider.provider.complete(
+                [
+                  { role: 'system', content: 'You are a swarm sub-agent. Execute the task and return only the result.' },
+                  { role: 'user', content: task.context ? `TASK: ${task.description}\n\nCONTEXT:\n${task.context}` : `TASK: ${task.description}` },
+                ],
+                { temperature: 0.3 },
+              ),
+              this.config.taskTimeoutMs,
+            );
+
+            // Retry empty-content blips (transient provider failures)
+            if (!result.content || result.content.trim().length === 0) {
+              await new Promise((r) => setTimeout(r, 2000));
+              result = await this.withTimeout(
+                provider.provider.complete(
+                  [
+                    { role: 'system', content: 'You are a swarm sub-agent. Execute the task and return only the result.' },
+                    { role: 'user', content: task.context ? `TASK: ${task.description}\n\nCONTEXT:\n${task.context}` : `TASK: ${task.description}` },
+                  ],
+                  { temperature: 0.3 },
+                ),
+                this.config.taskTimeoutMs,
+              );
+            }
+
+            agent.status = 'completed';
+            agent.result = result.content;
+            agent.completedAt = Date.now();
+            agent.tokensUsed = (result.usage?.inputTokens ?? 0) + (result.usage?.outputTokens ?? 0);
+            const cost = this.estimateCost(provider.id, agent.tokensUsed);
+            agent.costUsd = cost;
+            completedResults.push({ taskId: task.id, output: result.content });
+            this.emit('agent_completed', { agentId, taskId: task.id, tokensUsed: agent.tokensUsed });
+            completed = true;
+            break;
+          } catch (err) {
+            lastErr = err;
+            agentErrors.push(`agent ${agentId} via ${provider.id}: ${err instanceof Error ? err.message : String(err)}`);
+            this.emit('agent_failed', { agentId, taskId: task.id, error: err instanceof Error ? err.message : String(err) });
+          } finally {
+            provider.activeCount--;
+          }
+        }
+        if (completed) break;
+        // All providers failed — wait before retrying the whole pool
+        if (attempt < 2) {
+          await new Promise((r) => setTimeout(r, 3000 * (attempt + 1)));
         }
       }
       if (!completed) {
@@ -217,7 +243,7 @@ export class SwarmOrchestrator extends EventEmitter {
         failedTasks.push(task.id);
       }
       semaphore.release();
-    };
+      };
 
     // Staggered launch
     const promises: Promise<void>[] = [];
