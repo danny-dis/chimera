@@ -46,6 +46,8 @@ import type { AggregatedResult } from './coordinator/types.js';
 import { countSourceFiles } from './coordinator/agent-tool-loop.js';
 import type { DeliberationConfig, DeliberationMode, DeliberationResult } from './coordinator/deliberation/types.js';
 import { buildPool, inferCapabilities, coreToolsForTier, contextBudgetForTier } from './coordinator/model-capabilities.js';
+import { PresetEngine, getBuiltInPreset } from './coordinator/preset-engine.js';
+import { createAliasResolverFromConfig } from './coordinator/alias-resolvers.js';
 import type { MemoryPersistence } from './memory/memory-persistence.js';
 import type { AutoExtractService } from './memory/auto-extract.js';
 import type { RecallService } from './memory/recall-service.js';
@@ -425,6 +427,8 @@ export class SessionOrchestrator {
   private _attemptTrail: AttemptTrail = new AttemptTrail();
   public toolCallHistory: Array<{ toolName: string; args: Record<string, unknown>; result: any }> = [];
   private _lastComplexity: { overall: number; dimensions: Record<string, number> } | null = null;
+  private _configBackendUrl?: string;
+  private _configBackendKey?: string;
 
   constructor(
     eventStream?: EventStream,
@@ -443,6 +447,10 @@ export class SessionOrchestrator {
       autoDream?: AutoDreamService;
       /** Optional LSP diagnostics hook (wired from the CLI via @chimera/tools). */
       lspDiagnostics?: (file: string) => Promise<Array<{ severity: string; message: string; line?: number; column?: number }>>;
+      /** Backend URL for alias resolution (e.g. DMR-X gateway). */
+      configBackendUrl?: string;
+      /** Backend API key for alias resolution. */
+      configBackendKey?: string;
     },
   ) {
     this.eventStream = eventStream ?? new EventStream();
@@ -465,6 +473,8 @@ export class SessionOrchestrator {
     this.recallService = options?.recallService ?? null;
     this.autoDream = options?.autoDream ?? null;
     this.lspDiagnostics = options?.lspDiagnostics ?? null;
+    this._configBackendUrl = options?.configBackendUrl;
+    this._configBackendKey = options?.configBackendKey;
     if (tools) {
       this.toolRegistry = tools.registry;
       this.toolExecutor = tools.executor;
@@ -486,6 +496,11 @@ export class SessionOrchestrator {
 
   setWorkflowExecutor(executor: { execute(script: string): Promise<any> }) {
     this.workflowExecutor = executor;
+  }
+
+  setConfigBackend(url: string, apiKey?: string) {
+    this._configBackendUrl = url;
+    this._configBackendKey = apiKey;
   }
 
   async executeWorkflow(
@@ -596,6 +611,7 @@ export class SessionOrchestrator {
       challenger?: LLMProvider;
     };
     preset?: DeliberationMode;
+    presetAliases?: Record<string, string>;
     maxRetries?: number;
     costCap?: number;
     conversationHistory?: Array<{ role: string; content: string }>;
@@ -603,7 +619,7 @@ export class SessionOrchestrator {
     /** Already-resolved output style (CLI layer owns `learning`). core does not import `learning`. */
     style?: OutputStyle;
   }): Promise<OrchestratorResult> {
-    const { task, mode, providers, preset, costCap = 10, conversationHistory, skillModel, style } = params;
+    const { task, mode, providers, preset, presetAliases, costCap = 10, conversationHistory, skillModel, style } = params;
     // Snapshot the task's target file on disk BEFORE deliberation runs, so
     // the completion gate can tell a real edit (mtime/size change) from a
     // no-op: an edit of a pre-existing file always "exists", which would be
@@ -849,6 +865,7 @@ export class SessionOrchestrator {
             complexity,
             memoryContext,
             conversationHistory,
+            presetAliases,
           );
           return this.deliberationToOrchestratorResult(
             delibResult,
@@ -1309,16 +1326,25 @@ export class SessionOrchestrator {
     complexity?: ComplexityScore,
     context?: string,
     conversationHistory?: Array<{ role: string; content: string }>,
+    presetAliases?: Record<string, string>,
   ): Promise<DeliberationResult> {
     if (!this._registry) {
       throw new Error('ModelRegistry required for deliberation — pass options.registry');
+    }
+
+    // When a preset with alias mappings is provided, resolve aliases to providers.
+    // This enables preset-driven deliberation where each role uses a specific alias
+    // (e.g. writer=auto-eco, reviewer=auto-agentic, challenger=auto-reasoning).
+    let resolvedProviders = providers;
+    if (presetAliases && Object.keys(presetAliases).length > 0) {
+      resolvedProviders = await this.resolvePresetProviders(presetAliases, providers, this.eventStream);
     }
 
     const engine = new DeliberationEngine({
       eventStream: this.eventStream,
       registry: this._registry,
       costTracker: this.costTracker,
-      providerFactory: this.buildProviderFactory(providers),
+      providerFactory: this.buildProviderFactory(resolvedProviders),
       // CRITICAL: workspaceRoot must be passed so deliberation executors
       // actually execute tool calls (write_file/shell) against the repo.
       // Without it the `&& this.workspaceRoot` guard silently no-ops every tool.
@@ -1335,8 +1361,109 @@ export class SessionOrchestrator {
       ...(this._activeStyle ? { style: this._activeStyle } : {}),
     });
 
-    const config = this.buildDeliberationConfig(task, mode, providers, costCap, preset, complexity, context, conversationHistory);
+    const config = this.buildDeliberationConfig(task, mode, resolvedProviders, costCap, preset, complexity, context, conversationHistory);
     return engine.run(config);
+  }
+
+  /**
+   * Resolve preset aliases to providers.
+   * Each alias (e.g. 'auto-eco', 'auto-agentic') is resolved to a concrete provider.
+   * Falls back to the default role-mapped provider if alias resolution fails.
+   * Emits telemetry events for observability.
+   */
+  private async resolvePresetProviders(
+    aliases: Record<string, string>,
+    defaults: { writer: LLMProvider; reviewer: LLMProvider; challenger?: LLMProvider },
+    eventStream?: EventStream,
+  ): Promise<{ writer: LLMProvider; reviewer: LLMProvider; challenger?: LLMProvider }> {
+    // Read backend URL from config (fallback to localhost:47113 for backward compat)
+    const backendUrl = this._configBackendUrl ?? 'http://127.0.0.1:47113/v1';
+    const backendKey = this._configBackendKey ?? 'dummy';
+
+    const resolver = createAliasResolverFromConfig({
+      backend: 'dmr-x',
+      baseUrl: backendUrl,
+      apiKey: backendKey,
+    });
+
+    const resolved: { writer?: LLMProvider; reviewer?: LLMProvider; challenger?: LLMProvider } = {};
+    const resolvedRoles: string[] = [];
+    const failedRoles: string[] = [];
+    const startTime = Date.now();
+
+    // Emit resolution started
+    eventStream?.append({
+      type: 'preset_resolution_started',
+      preset: 'preset',
+      roles: Object.keys(aliases),
+      backend: resolver.backend,
+    } as unknown as ChimeraEvent);
+
+    // Map role names to provider roles
+    const roleMapping: Record<string, 'writer' | 'reviewer' | 'challenger'> = {
+      writer: 'writer',
+      reviewer: 'reviewer',
+      challenger: 'challenger',
+      judge: 'reviewer',
+      decomposer: 'writer',
+      worker: 'writer',
+      merger: 'reviewer',
+      voter: 'writer',
+    };
+
+    for (const [alias, role] of Object.entries(aliases)) {
+      const providerRole = roleMapping[role] ?? 'writer';
+      try {
+        const provider = await resolver.resolve(alias);
+        if (provider) {
+          resolved[providerRole] = provider as unknown as LLMProvider;
+          resolvedRoles.push(role);
+          eventStream?.append({
+            type: 'preset_role_resolved',
+            preset: 'preset',
+            role,
+            alias,
+            backend: resolver.backend,
+            success: true,
+          } as unknown as ChimeraEvent);
+        } else {
+          failedRoles.push(role);
+          eventStream?.append({
+            type: 'preset_role_resolved',
+            preset: 'preset',
+            role,
+            alias,
+            backend: resolver.backend,
+            success: false,
+          } as unknown as ChimeraEvent);
+        }
+      } catch (err) {
+        failedRoles.push(role);
+        const reason = err instanceof Error ? err.message : String(err);
+        eventStream?.append({
+          type: 'preset_fallback',
+          preset: 'preset',
+          role,
+          alias,
+          reason,
+        } as unknown as ChimeraEvent);
+      }
+    }
+
+    // Emit resolution complete
+    eventStream?.append({
+      type: 'preset_resolution_complete',
+      preset: 'preset',
+      resolvedRoles,
+      failedRoles,
+      durationMs: Date.now() - startTime,
+    } as unknown as ChimeraEvent);
+
+    return {
+      writer: resolved.writer ?? defaults.writer,
+      reviewer: resolved.reviewer ?? defaults.reviewer,
+      challenger: resolved.challenger ?? defaults.challenger,
+    };
   }
 
   private buildProviderFactory(

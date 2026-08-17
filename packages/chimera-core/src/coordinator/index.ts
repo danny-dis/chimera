@@ -27,6 +27,11 @@ export type {
 export { BiomeLinter } from './biome-linter.js';
 export type { BiomeLinterConfig } from './biome-linter.js';
 
+// Preset system — alias compositions into multi-agent deliberation patterns
+export { PresetEngine, BUILT_IN_PRESETS, getBuiltInPreset } from './preset-engine.js';
+export type { PresetDefinition, PresetRole, PresetPattern, ResolvedPreset, AliasResolver } from './preset-engine.js';
+export { DmrxAliasResolver, DirectAliasResolver, createAliasResolverFromConfig } from './alias-resolvers.js';
+
 // Cross-vendor review enforcement
 export {
   extractVendor,

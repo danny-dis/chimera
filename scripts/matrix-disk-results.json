@@ -1,14 +1,14 @@
 {
-  "writer": "tencent/hy3",
-  "reviewer": "gemini-2.5-flash",
-  "challenger": "open-mistral-7b",
-  "ranAt": "2026-07-12T22:46:29.596Z",
+  "writer": "auto-coding",
+  "reviewer": "auto-fast",
+  "challenger": "auto-agentic",
+  "ranAt": "2026-08-15T09:36:32.594Z",
   "results": [
     {
       "mode": "ask",
       "preset": "solo",
       "status": "done",
-      "ms": 57524,
+      "ms": 38163,
       "toolCalls": 0,
       "diskWrites": 0,
       "writeErrors": 0,
@@ -21,34 +21,34 @@
       "mode": "plan",
       "preset": "solo",
       "status": "done",
-      "ms": 157415,
-      "toolCalls": 2,
+      "ms": 104830,
+      "toolCalls": 3,
       "diskWrites": 2,
       "writeErrors": 1,
       "evErrors": [],
       "disk": null,
       "quality": 0.75,
-      "output": "# Plan: Minimal Node.js CLI that prints \"hello\"\n\n## 1. Goal & Scope\n\nCreate a Node.js command-line tool that, when invoked by name, writes the\nstring `hello` to"
+      "output": "This plan outlines the steps required to initialize, implement, configure, and verify a minimal Node.js Command Line Interface (CLI) application.\n\n---\n\n#### Ste"
     },
     {
       "mode": "plan",
       "preset": "duo",
-      "status": "done",
-      "ms": 119167,
-      "toolCalls": 1,
-      "diskWrites": 1,
-      "writeErrors": 1,
+      "status": "needs_user",
+      "ms": 275239,
+      "toolCalls": 0,
+      "diskWrites": 0,
+      "writeErrors": 0,
       "evErrors": [],
       "disk": null,
-      "quality": 0.75,
-      "output": "### Review of the Draft\n\n**Issues & Inaccuracies:**\n1. **Inconsistent file naming**: Step 3 suggests creating `cli.js` *or* `index.js`, but all subsequent steps"
+      "quality": 0.35,
+      "output": "\n\n[chimera] sequential calls failed: ProviderUnavailableError: fetch failed."
     },
     {
       "mode": "code",
       "preset": "auto",
       "status": "done",
-      "ms": 93489,
-      "toolCalls": 4,
+      "ms": 62273,
+      "toolCalls": 1,
       "diskWrites": 1,
       "writeErrors": 0,
       "evErrors": [],
@@ -56,9 +56,11 @@
         "targetExists": true,
         "valid": 1,
         "broken": 0,
+        "ran": 1,
         "files": [
           "greeter.js"
-        ]
+        ],
+        "runError": ""
       },
       "quality": 1,
       "output": "Task executed via tools."
@@ -67,27 +69,7 @@
       "mode": "code",
       "preset": "solo",
       "status": "done",
-      "ms": 89491,
-      "toolCalls": 3,
-      "diskWrites": 1,
-      "writeErrors": 0,
-      "evErrors": [],
-      "disk": {
-        "targetExists": true,
-        "valid": 1,
-        "broken": 0,
-        "files": [
-          "greeter.js"
-        ]
-      },
-      "quality": 1,
-      "output": "**Reviewer note:** The draft is incomplete and misapplies project-investigation procedure to a trivial file-creation task. It proposes unnecessary recon (checki"
-    },
-    {
-      "mode": "code",
-      "preset": "duo",
-      "status": "done",
-      "ms": 73394,
+      "ms": 26047,
       "toolCalls": 1,
       "diskWrites": 1,
       "writeErrors": 0,
@@ -96,18 +78,145 @@
         "targetExists": true,
         "valid": 1,
         "broken": 0,
+        "ran": 1,
         "files": [
           "greeter.js"
-        ]
+        ],
+        "runError": ""
       },
       "quality": 1,
-      "output": "**Review of the Draft:**\nThe draft answer is completely empty. It fails to address the task in any way:\n- It does not provide the content of (or a command to cr"
+      "output": "Task executed via tools."
+    },
+    {
+      "mode": "code",
+      "preset": "duo",
+      "status": "done",
+      "ms": 177932,
+      "toolCalls": 1,
+      "diskWrites": 1,
+      "writeErrors": 0,
+      "evErrors": [],
+      "disk": {
+        "targetExists": true,
+        "valid": 1,
+        "broken": 0,
+        "ran": 1,
+        "files": [
+          "greeter.js"
+        ],
+        "runError": ""
+      },
+      "quality": 1,
+      "output": "```javascript\n// This function returns a personalized greeting string.\nfunction greet(name) {\n  return \"Hello, \" + name;\n}\n```"
     },
     {
       "mode": "code",
       "preset": "trio",
+      "status": "error",
+      "ms": 193337,
+      "toolCalls": 1,
+      "diskWrites": 1,
+      "writeErrors": 0,
+      "evErrors": [
+        "error"
+      ],
+      "disk": {
+        "targetExists": true,
+        "valid": 1,
+        "broken": 0,
+        "ran": 1,
+        "files": [
+          "greeter.js"
+        ],
+        "runError": ""
+      },
+      "quality": 0,
+      "output": "Could not complete: \"Write a single file named greeter.js in the current directory containing a function greet(name) that returns \"Hello, \" + name. Include a on"
+    },
+    {
+      "mode": "code",
+      "preset": "fusion",
       "status": "done",
-      "ms": 107837,
+      "ms": 119784,
+      "toolCalls": 5,
+      "diskWrites": 5,
+      "writeErrors": 6,
+      "evErrors": [],
+      "disk": {
+        "targetExists": true,
+        "valid": 1,
+        "broken": 0,
+        "ran": 1,
+        "files": [
+          "greeter.js"
+        ],
+        "runError": ""
+      },
+      "quality": 1,
+      "output": "The tool output shows that `greeter.js` has been successfully created with the following content:\n```javascript\n// This function returns a greeting message\nfunc"
+    },
+    {
+      "mode": "code",
+      "preset": "hive",
+      "status": "done",
+      "ms": 21102,
+      "toolCalls": 1,
+      "diskWrites": 1,
+      "writeErrors": 0,
+      "evErrors": [],
+      "disk": {
+        "targetExists": true,
+        "valid": 1,
+        "broken": 0,
+        "ran": 1,
+        "files": [
+          "greeter.js"
+        ],
+        "runError": ""
+      },
+      "quality": 1,
+      "output": "Wrote greeter.js."
+    },
+    {
+      "mode": "code",
+      "preset": "swarm",
+      "status": "done",
+      "ms": 107062,
+      "toolCalls": 2,
+      "diskWrites": 1,
+      "writeErrors": 0,
+      "evErrors": [],
+      "disk": null,
+      "quality": 0.75,
+      "output": "\n\n---\n# #CONFLICT RESOLUTION LOG# #\n[!] #RESOLVED: QWEN/QWEN-2.5-72B AND MOONSHOT/KIMI-K2 OFFER DIFFERENT APPROACHES#\n>>> ACTION: HIGHER CONFIDENCE OUTPUT SELEC"
+    },
+    {
+      "mode": "debug",
+      "preset": "auto",
+      "status": "needs_user",
+      "ms": 237394,
+      "toolCalls": 3,
+      "diskWrites": 0,
+      "writeErrors": 0,
+      "evErrors": [],
+      "disk": {
+        "targetExists": true,
+        "valid": 1,
+        "broken": 0,
+        "ran": 1,
+        "files": [
+          "bug.js"
+        ],
+        "runError": ""
+      },
+      "quality": 0.35,
+      "output": "Task executed via tools."
+    },
+    {
+      "mode": "debug",
+      "preset": "solo",
+      "status": "needs_user",
+      "ms": 43781,
       "toolCalls": 2,
       "diskWrites": 1,
       "writeErrors": 1,
@@ -116,275 +225,190 @@
         "targetExists": true,
         "valid": 1,
         "broken": 0,
+        "ran": 1,
         "files": [
-          "greeter.js"
-        ]
+          "bug.js"
+        ],
+        "runError": ""
       },
-      "quality": 1,
-      "output": "READ FILES: Verify actual file content before re-testing.\n\nThe prior write reported success (102 bytes), but the verification command failed due to shell quotin"
+      "quality": 0.35,
+      "output": "Task executed via tools."
     },
     {
-      "mode": "code",
-      "preset": "fusion",
-      "status": "done",
-      "ms": 69494,
-      "toolCalls": 3,
-      "diskWrites": 3,
-      "writeErrors": 4,
+      "mode": "debug",
+      "preset": "duo",
+      "status": "needs_user",
+      "ms": 61154,
+      "toolCalls": 2,
+      "diskWrites": 2,
+      "writeErrors": 2,
       "evErrors": [],
       "disk": {
         "targetExists": true,
         "valid": 1,
         "broken": 0,
+        "ran": 1,
         "files": [
-          "greeter.js"
-        ]
+          "bug.js"
+        ],
+        "runError": ""
       },
-      "quality": 1,
-      "output": "// Returns a greeting for the given name\nfunction greet(name) {\n  return \"Hello, \" + name;\n}\n"
+      "quality": 0.35,
+      "output": "I notice a critical issue with the draft answer: **it's completely empty**. The draft provides no actual content for the corrected `bug.js` file.\n\nHere's the im"
     },
     {
-      "mode": "code",
-      "preset": "hive",
-      "status": "done",
-      "ms": 72963,
+      "mode": "debug",
+      "preset": "trio",
+      "status": "needs_user",
+      "ms": 127707,
       "toolCalls": 2,
-      "diskWrites": 1,
+      "diskWrites": 0,
       "writeErrors": 0,
       "evErrors": [],
       "disk": {
         "targetExists": true,
         "valid": 1,
         "broken": 0,
+        "ran": 1,
         "files": [
-          "greeter.js"
-        ]
+          "bug.js"
+        ],
+        "runError": ""
       },
-      "quality": 1,
+      "quality": 0.35,
       "output": ""
     },
     {
-      "mode": "code",
+      "mode": "debug",
+      "preset": "fusion",
+      "status": "error",
+      "ms": 95927,
+      "toolCalls": 12,
+      "diskWrites": 0,
+      "writeErrors": 0,
+      "evErrors": [],
+      "disk": {
+        "targetExists": true,
+        "valid": 1,
+        "broken": 0,
+        "ran": 1,
+        "files": [
+          "bug.js"
+        ],
+        "runError": ""
+      },
+      "quality": 0,
+      "output": "[chimera] all judges failed"
+    },
+    {
+      "mode": "debug",
       "preset": "swarm",
+      "status": "error",
+      "ms": 121831,
+      "toolCalls": 0,
+      "diskWrites": 0,
+      "writeErrors": 0,
+      "evErrors": [],
+      "disk": null,
+      "quality": 0,
+      "output": "[chimera] draft stage failed: ProviderUnavailableError: fetch failed"
+    },
+    {
+      "mode": "review",
+      "preset": "solo",
       "status": "needs_user",
-      "ms": 66195,
+      "ms": 14124,
       "toolCalls": 0,
       "diskWrites": 0,
       "writeErrors": 0,
       "evErrors": [],
       "disk": null,
       "quality": 0.35,
-      "output": "// Greets a person\nfunction greet(name) {\n  return \"Hello, \" + name;\n}\n\n[chimera] No file was written — the model narrated the result without producing a file. "
-    },
-    {
-      "mode": "debug",
-      "preset": "auto",
-      "status": "done",
-      "ms": 87050,
-      "toolCalls": 1,
-      "diskWrites": 0,
-      "writeErrors": 0,
-      "evErrors": [],
-      "disk": {
-        "targetExists": true,
-        "valid": 1,
-        "broken": 0,
-        "files": [
-          "bug.js"
-        ]
-      },
-      "quality": 1,
-      "output": "I'll observe the actual file first before making any changes."
-    },
-    {
-      "mode": "debug",
-      "preset": "solo",
-      "status": "done",
-      "ms": 108397,
-      "toolCalls": 1,
-      "diskWrites": 0,
-      "writeErrors": 0,
-      "evErrors": [],
-      "disk": {
-        "targetExists": true,
-        "valid": 1,
-        "broken": 0,
-        "files": [
-          "bug.js"
-        ]
-      },
-      "quality": 1,
-      "output": "I'll start by observing the actual file before making any changes."
-    },
-    {
-      "mode": "debug",
-      "preset": "duo",
-      "status": "done",
-      "ms": 49135,
-      "toolCalls": 0,
-      "diskWrites": 0,
-      "writeErrors": 0,
-      "evErrors": [],
-      "disk": {
-        "targetExists": true,
-        "valid": 1,
-        "broken": 0,
-        "files": [
-          "bug.js"
-        ]
-      },
-      "quality": 0.85,
-      "output": "### Review of the Draft Answer\n\n**Issues & Missing Parts:**\n1. **Empty Response:** The draft answer is completely blank. It does not contain any text, code, or "
-    },
-    {
-      "mode": "debug",
-      "preset": "trio",
-      "status": "done",
-      "ms": 39844,
-      "toolCalls": 2,
-      "diskWrites": 0,
-      "writeErrors": 0,
-      "evErrors": [],
-      "disk": {
-        "targetExists": true,
-        "valid": 1,
-        "broken": 0,
-        "files": [
-          "bug.js"
-        ]
-      },
-      "quality": 1,
-      "output": "<tool_calls:6124c78e>\n<tool_call:6124c78e>edit\n</tool_call:6124c78e>\n</tool_calls:6124c78e>"
-    },
-    {
-      "mode": "debug",
-      "preset": "fusion",
-      "status": "done",
-      "ms": 51852,
-      "toolCalls": 3,
-      "diskWrites": 0,
-      "writeErrors": 0,
-      "evErrors": [],
-      "disk": {
-        "targetExists": true,
-        "valid": 1,
-        "broken": 0,
-        "files": [
-          "bug.js"
-        ]
-      },
-      "quality": 1,
-      "output": "function subtract(a, b) {\n  return a - b;\n}\n\nmodule.exports = subtract;"
-    },
-    {
-      "mode": "debug",
-      "preset": "swarm",
-      "status": "done",
-      "ms": 50241,
-      "toolCalls": 0,
-      "diskWrites": 0,
-      "writeErrors": 0,
-      "evErrors": [],
-      "disk": null,
-      "quality": 0.6,
-      "output": "```javascript\nfunction subtract(a, b) {\n  return a - b;\n}\n\nmodule.exports = subtract;\n```"
-    },
-    {
-      "mode": "review",
-      "preset": "solo",
-      "status": "done",
-      "ms": 115031,
-      "toolCalls": 0,
-      "diskWrites": 0,
-      "writeErrors": 0,
-      "evErrors": [],
-      "disk": null,
-      "quality": 0.6,
-      "output": "**Issues found (FAIL — not PASS):**\n\n1. **Core logic defect (name/behavior mismatch):** The function identifier `divide` encodes a contract to compute `a / b`, "
+      "output": "\n\n[chimera] sequential calls failed: ProviderUnavailableError: fetch failed."
     },
     {
       "mode": "review",
       "preset": "auto",
-      "status": "done",
-      "ms": 123024,
-      "toolCalls": 0,
-      "diskWrites": 0,
-      "writeErrors": 0,
-      "evErrors": [],
-      "disk": null,
-      "quality": 0.6,
-      "output": "IMPROVED ANSWER:\n**FAIL — issues listed below:**\n\n1. **Primary bug — wrong operator:** `function divide(a,b){ return a*b; }` uses multiplication (`*`) instead o"
-    },
-    {
-      "mode": "review",
-      "preset": "duo",
-      "status": "done",
-      "ms": 84586,
-      "toolCalls": 0,
-      "diskWrites": 0,
-      "writeErrors": 0,
-      "evErrors": [],
-      "disk": null,
-      "quality": 0.6,
-      "output": "**Review of the Draft Answer:**\n- **Accuracy:** The draft correctly identifies the primary logic bug (using `*` instead of `/`) and does not hallucinate—the not"
-    },
-    {
-      "mode": "review",
-      "preset": "trio",
       "status": "needs_user",
-      "ms": 83078,
+      "ms": 13206,
       "toolCalls": 0,
       "diskWrites": 0,
       "writeErrors": 0,
       "evErrors": [],
       "disk": null,
       "quality": 0.35,
-      "output": "\n\n[chimera] parallel review failed: Model \"tencent/hy3\" returned empty content with no tool calls. This may indicate a content filter, rate limit, or provider i"
+      "output": "\n\n[chimera] thought call failed: ProviderUnavailableError: fetch failed."
     },
     {
       "mode": "review",
-      "preset": "fusion",
+      "preset": "duo",
       "status": "done",
-      "ms": 50599,
+      "ms": 29785,
       "toolCalls": 0,
       "diskWrites": 0,
       "writeErrors": 0,
       "evErrors": [],
       "disk": null,
       "quality": 0.6,
-      "output": "ISSUES:\n1. Incorrect operation: Function named 'divide' uses multiplication (`return a * b;`) instead of division (`return a / b;`). This is a logic bug.\n2. Mis"
+      "output": "### Review of Draft\nThe draft is accurate and identifies the primary issues correctly. However, it could be improved by mentioning the lack of input validation "
+    },
+    {
+      "mode": "review",
+      "preset": "trio",
+      "status": "done",
+      "ms": 46112,
+      "toolCalls": 0,
+      "diskWrites": 0,
+      "writeErrors": 0,
+      "evErrors": [],
+      "disk": null,
+      "quality": 0.6,
+      "output": "**FAIL** — 1 bug found:\n\n| # | Issue | Location |\n|---|-------|----------|\n| 1 | **Wrong operator** — function is named `divide` but uses `*` (multiplication) i"
+    },
+    {
+      "mode": "review",
+      "preset": "fusion",
+      "status": "needs_user",
+      "ms": 33490,
+      "toolCalls": 0,
+      "diskWrites": 0,
+      "writeErrors": 0,
+      "evErrors": [],
+      "disk": null,
+      "quality": 0.35,
+      "output": "ISSUE: The function is named `divide`, but it performs multiplication (`a * b`) instead of division (`a / b`).\n\n[chimera] deliberation degraded."
     },
     {
       "mode": "review",
       "preset": "swarm",
       "status": "done",
-      "ms": 10719,
+      "ms": 13963,
       "toolCalls": 0,
       "diskWrites": 0,
       "writeErrors": 0,
       "evErrors": [],
       "disk": null,
       "quality": 0.6,
-      "output": "- The function is named `divide` but uses the multiplication operator (`*`) instead of the division operator (`/`), so it incorrectly returns the product `a * b"
+      "output": "Issues:\n- Logic error: The function performs multiplication (`*`) instead of division (`/`). It should return `a / b`."
     },
     {
       "mode": "oal",
       "preset": "solo",
       "status": "done",
-      "ms": 102010,
+      "ms": 36846,
       "toolCalls": 0,
       "diskWrites": 0,
       "writeErrors": 0,
       "evErrors": [],
       "disk": null,
       "quality": 0.6,
-      "output": "STEP1\nSTEP2\n\nLoop closed: 2 transitions traversed across states S0→S1→S2, both emissions autonomous within one continuous session, zero intermediate prompts."
+      "output": "STEP1\nSTEP2"
     },
     {
       "mode": "auto",
       "preset": "auto",
       "status": "done",
-      "ms": 54418,
+      "ms": 11009,
       "toolCalls": 0,
       "diskWrites": 0,
       "writeErrors": 0,
@@ -397,7 +421,7 @@
       "mode": "auto",
       "preset": "solo",
       "status": "done",
-      "ms": 61413,
+      "ms": 6969,
       "toolCalls": 0,
       "diskWrites": 0,
       "writeErrors": 0,
@@ -410,46 +434,46 @@
       "mode": "auto",
       "preset": "duo",
       "status": "done",
-      "ms": 25691,
+      "ms": 12889,
       "toolCalls": 0,
       "diskWrites": 0,
       "writeErrors": 0,
       "evErrors": [],
       "disk": null,
       "quality": 0.6,
-      "output": "**Review:**\nThe draft answer contains exactly the single word \"PONG\" and nothing else, which is precisely what the task instructed. There are no hallucinations,"
+      "output": "*   Draft: A chain-of-thought process ending with `</thought>PONG`.\n    *   Goal: Review the draft, identify issues, and provide an improved version.\n\n    *   T"
     },
     {
       "mode": "auto",
       "preset": "trio",
       "status": "done",
-      "ms": 40903,
+      "ms": 22833,
       "toolCalls": 0,
       "diskWrites": 0,
       "writeErrors": 0,
       "evErrors": [],
       "disk": null,
       "quality": 0.6,
-      "output": "PONG"
+      "output": "I must follow the system instructions and the persona of Chimera's Lead Implementation Engineer, but the task is extremely simple and explicit.\n\nGoal: Reply wit"
     },
     {
       "mode": "auto",
       "preset": "fusion",
-      "status": "done",
-      "ms": 24470,
+      "status": "needs_user",
+      "ms": 37170,
       "toolCalls": 0,
       "diskWrites": 0,
       "writeErrors": 0,
       "evErrors": [],
       "disk": null,
-      "quality": 0.6,
-      "output": "PONG"
+      "quality": 0.35,
+      "output": "PONG\n\n[chimera] deliberation degraded."
     },
     {
       "mode": "auto",
       "preset": "hive",
       "status": "done",
-      "ms": 23242,
+      "ms": 17493,
       "toolCalls": 0,
       "diskWrites": 0,
       "writeErrors": 0,
@@ -462,7 +486,7 @@
       "mode": "auto",
       "preset": "swarm",
       "status": "done",
-      "ms": 1520,
+      "ms": 7603,
       "toolCalls": 0,
       "diskWrites": 0,
       "writeErrors": 0,

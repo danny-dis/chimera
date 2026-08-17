@@ -40,12 +40,25 @@ const DefaultsSchema = z
   })
   .optional();
 
+const PresetRoleSchema = z.enum(['writer', 'reviewer', 'challenger', 'judge', 'decomposer', 'worker', 'merger', 'voter']);
+
+const PresetDefinitionSchema = z.object({
+  id: z.enum(['solo', 'duo', 'trio', 'fusion', 'hive', 'swarm', 'auto']),
+  description: z.string().optional(),
+  roles: z.record(PresetRoleSchema, z.string()),
+  pattern: z.enum(['serial', 'parallel', 'panel', 'decompose']),
+  budget_usd: z.number().nonnegative().optional(),
+  max_depth: z.number().int().positive().optional(),
+});
+
 const ChimeraConfigSchema = z
   .object({
     providers: z.array(ProviderEntrySchema).min(1),
     defaults: DefaultsSchema,
+    presets: z.array(PresetDefinitionSchema).optional(),
     fusion_mode: z.boolean().optional(),
     merge_mode: z.boolean().optional(),
+    backend: z.string().optional(),
   })
   .refine(
     (data) => {

@@ -300,6 +300,7 @@ async function main() {
   const outPath = join(repoRoot, 'scripts', 'matrix-disk-results.json');
   writeFileSync(outPath, JSON.stringify({ writer: writerModel, reviewer: reviewerModel, challenger: challengerEntry.model, ranAt: new Date().toISOString(), results }, null, 2));
   console.log(`Wrote ${outPath}`);
+  process.exit(0);
 }
 
 main().catch((e) => { console.error('FATAL', e); process.exit(1); });

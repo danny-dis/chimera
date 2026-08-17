@@ -5,6 +5,7 @@ import { readFileSync } from 'fs';
 import { SessionOrchestrator, EventStream, LongTermMemory, MemoryPersistence, CoordinatorEngine, runWorkflow, SchedulerManager } from '@chimera/core';
 import type { LLMProvider, OrchestratorResult, ToolExecutorInterface, ToolRegistryInterface, WorkflowDefinition } from '@chimera/core';
 import type { Mode, DeliberationMode } from '@chimera/core';
+import { getBuiltInPreset } from '@chimera/core';
 import { ProviderFactory, RateLimitError, ProviderUnavailableError, ProviderError, ModelRegistry, BudgetEnforcer, RateLimiter, ProviderCostTracker } from '@chimera/providers';
 import type { ModelProvider, ModelEntry } from '@chimera/providers';
 import { CheckpointStore } from '@chimera/session';
@@ -586,9 +587,20 @@ export class CliRouter {
       ? adaptProvider(mapped.reviewer)
       : (allProviders.length > 1 ? createFallbackProvider(allProviders) : adaptProvider(allProviders[0]));
     const challenger = mapped.challenger ? adaptProvider(mapped.challenger) : undefined;
-  
+
+    // Resolve preset aliases: map preset name → role→alias mapping
+    const presetAliases = this.resolvePresetAliases(preset);
+
     const ctx = await this.buildRunContext();
     const orchestrator = ctx.orchestrator;
+    // Pass backend URL from config to orchestrator for alias resolution
+    const config = loadConfig();
+    const backendUrl = (config as any)?.backend === 'dmr-x' && config?.providers?.[0]?.base_url
+      ? config.providers[0].base_url
+      : undefined;
+    if (backendUrl) {
+      orchestrator.setConfigBackend(backendUrl, config?.providers?.[0]?.api_key);
+    }
 
     // #1d/#1e/#3d — Mode-based permission gating.
     // plan/ask/review become read-only (no writes); `code`/`debug` permit edits.
@@ -644,6 +656,7 @@ export class CliRouter {
         task,
         mode,
         preset,
+        presetAliases: presetAliases ?? undefined,
         providers: { writer, reviewer, ...(challenger ? { challenger } : {}) },
         skillModel,
         style,
@@ -665,6 +678,26 @@ export class CliRouter {
       // process can exit as soon as the result has been printed.
       orchestrator.dispose();
     }
+  }
+
+  /**
+   * Resolve a preset name to a role→alias mapping.
+   * Reads from YAML config presets, falling back to built-in presets.
+   */
+  private resolvePresetAliases(preset: DeliberationMode): Record<string, string> | undefined {
+    // Read custom presets from YAML config
+    const config = loadConfig();
+    const customPresets = (config as any)?.presets as Array<{ id: string; roles: Record<string, string> }> | undefined;
+    if (customPresets?.length) {
+      const found = customPresets.find(p => p.id === preset);
+      if (found) return found.roles;
+    }
+
+    // Fall back to built-in presets
+    const builtIn = getBuiltInPreset(preset);
+    if (builtIn) return builtIn.roles;
+
+    return undefined;
   }
 
   /**
@@ -1155,6 +1188,14 @@ export class CliRouter {
       : (allProvidersTui.length > 1 ? createFallbackProvider(allProvidersTui) : adaptProvider(allProvidersTui[0]));
     const challenger = mapped.challenger ? adaptProvider(mapped.challenger) : undefined;
     const orchestrator = await this.initOrchestrator();
+    // Pass backend URL from config to orchestrator for alias resolution
+    const tuiConfig = loadConfig();
+    const tuiBackendUrl = (tuiConfig as any)?.backend === 'dmr-x' && tuiConfig?.providers?.[0]?.base_url
+      ? tuiConfig.providers[0].base_url
+      : undefined;
+    if (tuiBackendUrl) {
+      orchestrator.setConfigBackend(tuiBackendUrl, tuiConfig?.providers?.[0]?.api_key);
+    }
     const sessionId = this.sessionStore.generateSessionId();
 
     let currentMessages: Message[] = [];
@@ -1306,12 +1347,16 @@ export class CliRouter {
         tui.update({ messages: currentMessages, agents: currentAgents, tokenUsage: computeTokenUsage(), diffFiles: currentDiffFiles, activeTool: undefined });
 
         try {
+          // Resolve preset aliases from config for multi-agent deliberation
+          const presetAliases = this.resolvePresetAliases(currentPreset);
+
           // TODO: Phase 2 — wire up WorkflowDispatcher for background execution
           await orchestrator.execute({
             task: text,
             mode: currentMode,
             providers: { writer, reviewer, ...(challenger ? { challenger } : {}) },
             preset: currentPreset,
+            presetAliases: presetAliases ?? undefined,
             conversationHistory,
             skillModel,
             style,
