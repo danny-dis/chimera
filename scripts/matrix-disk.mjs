@@ -206,6 +206,31 @@ function validateJs(workdir) {
   return { valid, broken, ran, files, runError };
 }
 
+// Separate INFRA failures from CAPABILITY failures.
+//
+// A `fetch failed` / `ProviderUnavailableError` / empty-completion is the
+// DMR-X gateway dying mid-run, NOT a defect in the preset that happened to
+// be executing. Counting them against the preset is precisely how a flaky
+// run gets recorded as a quality finding: three runs of THIS harness on the
+// same commit within 80 minutes produced 19/30, 25/30 and duo-still-broken,
+// because gateway blips landed on different combos each time.
+//
+// Infra rows are reported separately and EXCLUDED from the quality average.
+const INFRA_PATTERNS = [
+  /ProviderUnavailableError/i,
+  /fetch failed/i,
+  /returned empty content with no tool calls/i,
+  /ECONNREFUSED|ETIMEDOUT|ENOTFOUND|EAI_AGAIN|socket hang up/i,
+  /\b(?:429|500|502|503|504)\b/,
+  /rate ?limit/i,
+  /timed? ?out/i,
+];
+
+function classifyFailure(text) {
+  if (!text) return null;
+  return INFRA_PATTERNS.some((re) => re.test(text)) ? 'infra' : 'capability';
+}
+
 const results = [];
 const failures = [];
 
@@ -282,7 +307,14 @@ async function runCombo(mode, preset) {
   // Not a real LLM judge (that path is unwired) — a transparent stand-in so
   // the "more agents = better" curve can be plotted. Range 0-1.
   const score = scoreCombo({ mode, preset, status, disk, diskWrites, toolCalls, evErrors });
-  const rec = { mode, preset, status, ms, toolCalls, diskWrites, writeErrors, evErrors: [...new Set(evErrors)], disk, quality: score, output: (result?.output || result?.result || result?.error || '').toString().slice(0, 160) };
+  // Persist the failure text INTO the artifact. Historically results.json
+  // carried `error: None` while the real `ERR:` string existed only in the
+  // .log, so a run could not be triaged from the JSON alone.
+  const errorText = (status === 'error' || status === 'throw')
+    ? (result?.error || result?.output || '').toString()
+    : '';
+  const failureClass = classifyFailure(errorText);
+  const rec = { mode, preset, status, ms, toolCalls, diskWrites, writeErrors, evErrors: [...new Set(evErrors)], disk, quality: score, failureClass, errorText: errorText.slice(0, 400), output: (result?.output || result?.result || result?.error || '').toString().slice(0, 160) };
   results.push(rec);
   const diskStr = disk ? ` disk.target=${disk.targetExists} valid=${disk.valid} broken=${disk.broken} ran=${disk.ran}` : '';
   console.log(`  ${mode}/${preset} -> ${status} (${ms}ms tools=${toolCalls} diskW=${diskWrites}${diskStr}${evErrors.length ? ' EV:' + [...new Set(evErrors)].join(',') : ''})${status === 'throw' || status === 'error' ? ' ERR:' + ((result?.error || result?.output || '').toString().slice(0, 300)) : ''}`);
@@ -316,7 +348,27 @@ async function main() {
   const codeBrokenDone = codeRows.filter((r) => r.status === 'done' && r.disk && (r.disk.broken > 0 || !r.disk.targetExists));
   const codeUnrunnableDone = codeRows.filter((r) => r.status === 'done' && r.disk && r.disk.valid > 0 && r.disk.ran === 0);
   console.log(`\n=== SUMMARY: ${done}/${results.length} done/complete ===`);
+  const infraRows = results.filter((r) => r.failureClass === 'infra');
+  const capRows = results.filter((r) => r.failureClass === 'capability');
+  const totalWriteErrors = results.reduce((a, r) => a + (r.writeErrors || 0), 0);
   console.log(`code/debug rows: ${codeRows.length}, broken-and-done: ${codeBrokenDone.length}, unrunnable-done: ${codeUnrunnableDone.length}`);
+  console.log(`\n=== FAILURE BUCKETS ===`);
+  console.log(`  infra (gateway/network — NOT a Chimera defect): ${infraRows.length}`);
+  for (const r of infraRows) console.log(`    ${r.mode}/${r.preset}: ${r.errorText.slice(0, 110)}`);
+  console.log(`  capability (real Chimera defect): ${capRows.length}`);
+  for (const r of capRows) console.log(`    ${r.mode}/${r.preset}: ${r.errorText.slice(0, 110)}`);
+  if (infraRows.length) {
+    console.log(`  >> ${infraRows.length} row(s) failed on infrastructure. Re-run before treating`);
+    console.log('     this pass as a quality measurement; probe the gateway first.');
+  }
+  // writeErrors was collected per-combo but never asserted on or reported.
+  console.log(`\n=== TOOL WRITE ERRORS: ${totalWriteErrors} ===`);
+  if (totalWriteErrors) {
+    for (const r of results.filter((x) => x.writeErrors > 0)) {
+      console.log(`  ${r.mode}/${r.preset}: ${r.writeErrors} write/tool error event(s) (status=${r.status})`);
+    }
+    console.log('  NOTE: tool errors occurred even in rows that reported success.');
+  }
   if (failures.length) { console.log('FAILURES:'); for (const f of failures) console.log('  ' + JSON.stringify(f)); }
   else console.log('No broken-and-done code/debug rows. Truncation guard OK.');
 
@@ -335,16 +387,28 @@ async function main() {
   }
   const soloRows = results.filter((r) => r.preset === 'solo');
   const multiRows = results.filter((r) => r.preset !== 'solo' && r.preset !== 'auto');
-  const soloQ = avg(soloRows.map((r) => r.quality));
-  const multiQ = avg(multiRows.map((r) => r.quality));
-  console.log('\n=== SOLO vs MULTI-AGENT ===');
-  console.log(`  solo     avgQuality=${soloQ.toFixed(2)}`);
-  console.log(`  multi    avgQuality=${multiQ.toFixed(2)}  delta=${(multiQ - soloQ >= 0 ? '+' : '')}${(multiQ - soloQ).toFixed(2)}`);
+  // Exclude infra failures from the gradient: a gateway blip is not a preset
+  // quality signal, and a 0 from `fetch failed` silently poisons the average.
+  const cleanSolo = soloRows.filter((r) => r.failureClass !== 'infra');
+  const cleanMulti = multiRows.filter((r) => r.failureClass !== 'infra');
+  const soloQ = avg(cleanSolo.map((r) => r.quality));
+  const multiQ = avg(cleanMulti.map((r) => r.quality));
+  console.log('\n=== SOLO vs MULTI-AGENT (infra failures excluded) ===');
+  console.log(`  solo     avgQuality=${soloQ.toFixed(2)}  n=${cleanSolo.length}${soloRows.length !== cleanSolo.length ? ` (${soloRows.length - cleanSolo.length} infra row(s) dropped)` : ''}`);
+  console.log(`  multi    avgQuality=${multiQ.toFixed(2)}  n=${cleanMulti.length}${multiRows.length !== cleanMulti.length ? ` (${multiRows.length - cleanMulti.length} infra row(s) dropped)` : ''}`);
+  console.log(`  delta    ${(multiQ - soloQ >= 0 ? '+' : '')}${(multiQ - soloQ).toFixed(2)}`);
+  console.log('  CAVEAT: `quality` is a completion rubric (finished + wrote a file + no error');
+  console.log('  event), NOT a judgement of code quality — see scripts/score-combo.mjs. The');
+  console.log('  benchmark tasks are also near-trivial (9/30 combos are a PONG ping), so a');
+  console.log('  reviewer model has no room to add value. Do NOT quote this delta as a');
+  console.log('  solo-vs-multi finding, and do NOT trust a single run: repeat and take the');
+  console.log('  median — observed run-to-run spread on one commit was +/- 6 combos.');
   if (multiQ <= soloQ) console.log('  NOTE: multi-agent did NOT beat solo on this stand-in — gradient unproven (expected; this is a placeholder metric).');
 
-  const outPath = join(repoRoot, 'scripts', 'matrix-disk-results.json');
-  writeFileSync(outPath, JSON.stringify({ writer: writerModel, reviewer: reviewerModel, challenger: challengerEntry.model, ranAt: new Date().toISOString(), results }, null, 2));
+  const outPath = join(repoRoot, 'scripts', comboFilter ? 'matrix-disk-results-smoke.json' : 'matrix-disk-results.json');
+  writeFileSync(outPath, JSON.stringify({ writer: writerModel, reviewer: reviewerModel, challenger: challengerEntry.model, ranAt: new Date().toISOString(), smoke: comboFilter || undefined, comboCount: results.length, results }, null, 2));
   console.log(`Wrote ${outPath}`);
+  if (comboFilter) console.log('(smoke run — full-run artifact matrix-disk-results.json left untouched)');
   process.exit(0);
 }
 
