@@ -789,6 +789,54 @@ export class SessionOrchestrator {
       }
 
       this.transition({ status: 'classifying', task });
+
+      // Populate the TaskRouter with the providers actually passed in.
+      // `setProviders` previously had ZERO callers, so `taskRouter.providers`
+      // stayed empty and `selectProvider(role)` always returned null. The
+      // deliberation engine then fell through to the literal string 'default'
+      // for every role, which made `duo` throw ("modelA=modelB=default") and
+      // `fusion` degrade ("no panel models available") — every duo/fusion
+      // combo failed structurally rather than on quality.
+      try {
+        const routerProviders = (
+          [
+            ['writer', providers.writer],
+            ['reviewer', providers.reviewer],
+            ['challenger', providers.challenger],
+          ] as const
+        )
+          .filter(([, p]) => Boolean(p))
+          .map(([role, p]) => {
+            const info = (p as LLMProvider & { getModel?: () => { provider?: string; model?: string; name?: string } }).getModel?.();
+            const modelId =
+              (p as LLMProvider & { getModelId?: () => string }).getModelId?.() ??
+              info?.model ??
+              info?.name ??
+              'default';
+            return {
+              id: `${role}:${modelId}`,
+              role,
+              provider: info?.provider ?? role,
+              model: modelId,
+              constraints: {
+                maxTokensPerTurn: 4096,
+                costCapPerTask: costCap ?? 10,
+                costCapPerSession: 20,
+                costCapPerDay: 50,
+                maxParallelInstances: 1,
+                rateLimitRpm: 60,
+              },
+            };
+          });
+        // Only register when the roles resolve to genuinely distinct models —
+        // a same-model registration would still collapse duo back to solo,
+        // which the deliberation engine already handles via its own guard.
+        this.taskRouter.setProviders(routerProviders as unknown as Parameters<TaskRouter['setProviders']>[0]);
+      } catch {
+        // Never fail a run because model metadata was unavailable; the engine
+        // falls back to its previous 'default' behavior.
+      }
+
       const complexity = await this.taskRouter.classifyTask(task);
       this._lastComplexity = complexity;
 
@@ -1343,6 +1391,14 @@ export class SessionOrchestrator {
       registry: this._registry,
       costTracker: this.costTracker,
       providerFactory: this.buildProviderFactory(resolvedProviders),
+      // CRITICAL: the engine's own `selectModel()` reads `deps.taskRouter` to
+      // resolve a model per role. It was never passed, so `deps.taskRouter`
+      // was always undefined and every role collapsed to the literal string
+      // 'default' — which made `duo` throw ("modelA=modelB=default") and
+      // `fusion` degrade ("no panel models available"). Passing the router
+      // (now populated via setProviders in execute()) is what actually lets
+      // multi-model presets resolve distinct models.
+      taskRouter: this.taskRouter,
       // CRITICAL: workspaceRoot must be passed so deliberation executors
       // actually execute tool calls (write_file/shell) against the repo.
       // Without it the `&& this.workspaceRoot` guard silently no-ops every tool.

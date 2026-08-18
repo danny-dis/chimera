@@ -27,7 +27,7 @@ try {
 } catch {}
 
 const { SessionOrchestrator, EventStream } = require('@chimera/core');
-const { ProviderFactory, ModelRegistry, BudgetEnforcer, RateLimiter, ProviderCostTracker } = require('@chimera/providers');
+const { ProviderFactory, SimpleModelRegistry, RateLimiter } = require('@chimera/providers');
 const { ToolRegistry, ToolExecutor, allTools } = require('@chimera/tools');
 const { scoreCombo } = await import('./score-combo.mjs');
 
@@ -110,7 +110,52 @@ for (const tool of allTools) {
 }
 // CORRECT wiring: executor MUST receive the registry, else writes silently fail.
 const toolExecutor = new ToolExecutor(toolRegistry, () => 'allow');
-const budgetEnforcer = new BudgetEnforcer({ perTask: 10, perSession: 100, perDay: 500, alertThresholds: [0.5, 0.8] }, new ProviderCostTracker(new ModelRegistry()));
+// Build a POPULATED model registry. `buildDeliberationConfig` derives every
+// preset's model ids from `registry.getAll()`; an EMPTY registry made it fall
+// back to the literal string 'default' for every role, so duo threw
+// ("modelA=modelB=default") and fusion degraded ("no panel models available").
+// The real CLI (cli-router.ts) populates the registry from the resolved
+// providers — this mirrors that so the matrix tests the same wiring.
+function buildRegistry(providers) {
+  const reg = new SimpleModelRegistry();
+  for (const prov of providers) {
+    if (!prov) continue;
+    let info, pricing;
+    try { info = prov.getModel ? prov.getModel() : null; } catch { info = null; }
+    try { pricing = prov.getPricing ? prov.getPricing() : null; } catch { pricing = null; }
+    const id = info?.id || info?.name;
+    if (!id) continue;
+    try {
+      reg.register({
+        id,
+        name: info.name ?? id,
+        provider: info.provider ?? 'openai-compatible',
+        contextWindow: info.contextWindow ?? 128000,
+        maxOutputTokens: info.maxOutputTokens ?? 4096,
+        pricing: {
+          inputPerMillion: pricing?.inputPerMillion ?? 0,
+          outputPerMillion: pricing?.outputPerMillion ?? 0,
+          cacheReadPerMillion: pricing?.cacheReadPerMillion ?? 0,
+          cacheWritePerMillion: pricing?.cacheWritePerMillion ?? 0,
+        },
+        capabilities: {
+          toolCalling: prov.supportsToolCalling ? prov.supportsToolCalling() : true,
+          structuredOutput: prov.supportsStructuredOutput ? prov.supportsStructuredOutput() : true,
+          vision: prov.supportsVision ? prov.supportsVision() : false,
+          reasoning: prov.supportsReasoning ? prov.supportsReasoning() : false,
+          parallelToolCalls: false,
+        },
+        degradationThreshold: 0.75,
+        tier: 'frontier',
+      });
+    } catch {
+      // A partial/odd entry shouldn't abort the matrix.
+    }
+  }
+  return reg;
+}
+
+const budgetEnforcer = undefined; // metadata subsystem removed (72b668d); core uses its own BudgetGuard
 const rateLimiter = new RateLimiter({ rpm: 60, tpm: 1_000_000 });
 
 const VALID = [
@@ -186,7 +231,7 @@ async function runCombo(mode, preset) {
     { registry: toolRegistry, executor: toolExecutor },
     workdir,
     undefined,
-    { registry: new ModelRegistry(), budgetEnforcer, rateLimiter, providerFactory, availableProviders: ['writer', 'reviewer', 'challenger'] },
+    { registry: buildRegistry([writer, reviewer, challenger]), budgetEnforcer, rateLimiter, providerFactory, availableProviders: ['writer', 'reviewer', 'challenger'] },
   );
 
   const start = Date.now();
