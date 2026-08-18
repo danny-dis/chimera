@@ -9,7 +9,7 @@
 
 import { describe, it, expect, vi } from 'vitest';
 import { DeliberationEngine } from '../deliberation/engine.js';
-import { ModelRegistry, type ModelEntry } from '../../../../chimera-providers/src/model-registry.js';
+import { SimpleModelRegistry, type ModelEntry } from '@chimera/providers';
 import { CostTracker } from '../../cost-tracker.js';
 import { EventStream } from '../../event-stream.js';
 import type { LLMProvider } from '../../session-orchestrator.js';
@@ -48,8 +48,8 @@ function makeMockEntry(id: string, overrides?: Partial<ModelEntry>): ModelEntry 
   } as ModelEntry;
 }
 
-function createMockRegistry(entries: ModelEntry[]): ModelRegistry {
-  const registry = new ModelRegistry();
+function createMockRegistry(entries: ModelEntry[]): SimpleModelRegistry {
+  const registry = new SimpleModelRegistry();
   const internal = registry as unknown as { models: Map<string, ModelEntry> };
   for (const entry of entries) {
     internal.models.set(entry.id, entry);

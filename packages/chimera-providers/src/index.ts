@@ -1,15 +1,17 @@
 // @chimera/providers — Provider abstraction layer
 
- export {
-   ModelEntrySchema,
-   SimpleModelRegistry,
-   type ModelEntry,
-   type ModelRegistry,
- } from './model-entry.js';
+export {
+  ModelEntrySchema,
+  SimpleModelRegistry,
+  recommendFromProviders,
+  type ModelEntry,
+  type ModelRegistry,
+} from './model-entry.js';
 
 export { ProviderRegistry } from './provider-registry.js';
 export { ProviderFactory, listModels } from './provider-factory.js';
 export { ModelAdapter, ProviderConfigSchema, type ProviderConfig } from './model-adapter.js';
+export { RateLimiter } from './rate-limiter.js';
 
 // DMR-X backend routing — auto-map roles to DMR-X meta-models
 export {

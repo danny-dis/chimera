@@ -1140,10 +1140,8 @@ export class SessionOrchestrator {
         });
         this.agentMesh.registerAgent(this.buildAgentConfig(challengerId, 'challenger', costCap));
 
-        const challengerBudget = this.checkBudget(8192);
-        if (challengerBudget && challengerBudget.action === 'stop') {
-          return this.finalize('needs_user', outputs, totalCost, task, resolvedMode);
-        }
+        // ponytail: checkBudget is a no-op stub (BudgetEnforcer removed).
+        void this.checkBudget(8192);
 
         await this.enforceRateLimit(8192);
 

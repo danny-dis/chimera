@@ -6,7 +6,7 @@ import { SessionOrchestrator, EventStream, LongTermMemory, MemoryPersistence, Co
 import type { LLMProvider, OrchestratorResult, ToolExecutorInterface, ToolRegistryInterface, WorkflowDefinition } from '@chimera/core';
 import type { Mode, DeliberationMode } from '@chimera/core';
 import { getBuiltInPreset } from '@chimera/core';
-import { ProviderFactory, RateLimitError, ProviderUnavailableError, ProviderError, ModelRegistry, BudgetEnforcer, RateLimiter, ProviderCostTracker } from '@chimera/providers';
+import { ProviderFactory, RateLimitError, ProviderUnavailableError, ProviderError, RateLimiter, SimpleModelRegistry } from '@chimera/providers';
 import type { ModelProvider, ModelEntry } from '@chimera/providers';
 import { CheckpointStore } from '@chimera/session';
 import { LearningEngine } from '@chimera/learning';
@@ -263,17 +263,15 @@ function buildPermissionEngine(
 /**
  * Fully-wired run context, produced by `buildRunContext()` and consumed by
  * every entry point (one-shot run, REPL, TUI, resume, slash commands).
- * The orchestrator is created with a live `ModelRegistry` plus active
- * `BudgetEnforcer`/`RateLimiter` so the DeliberationEngine path is live.
+ * The orchestrator is created with a live `SimpleModelRegistry` plus active
+ * `RateLimiter` so the DeliberationEngine path is live.
  */
 export interface RunContext {
   orchestrator: SessionOrchestrator;
   writer?: ModelProvider;
   reviewer?: ModelProvider;
   challenger?: ModelProvider;
-  registry: ModelRegistry;
-  costTracker: ProviderCostTracker;
-  budgetEnforcer: BudgetEnforcer;
+  registry: import('@chimera/providers').ModelRegistry;
   rateLimiter: RateLimiter;
   toolRegistry: ToolRegistry;
   toolExecutor: ToolExecutor;
@@ -306,7 +304,7 @@ export class CliRouter {
 
   /**
    * Build a fully-wired run context: tools, resolved providers, a live
-   * `ModelRegistry`, active `BudgetEnforcer`/`RateLimiter`, and a
+   * `SimpleModelRegistry`, active `RateLimiter`, and a
    * `SessionOrchestrator` that receives all of them. Previously this method
    * omitted `options.registry` and the enforcers, which left `_registry` null
    * and silently disabled the entire DeliberationEngine
@@ -345,10 +343,8 @@ export class CliRouter {
     }
     const resolved = [writer, reviewer, challenger].filter(Boolean) as ModelProvider[];
 
-    // Build the registry from the resolved providers. Start off the hardcoded
-    // default models and skip async cache loading (offline-safe); then layer
-    // in live metadata from whatever providers are actually wired.
-    const registry = new ModelRegistry(undefined, { skipCacheLoading: true });
+    // Build the registry from the resolved providers.
+    const registry = new SimpleModelRegistry();
     for (const p of resolved) {
       const info = p.getModel();
       const pricing = p.getPricing();
@@ -382,17 +378,6 @@ export class CliRouter {
       }
     }
 
-    // Cost tracking + enforceable budgets from the resolved constraints.
-    const costTracker = new ProviderCostTracker(registry);
-    const budgetEnforcer = new BudgetEnforcer(
-      {
-        perTask: 10,
-        perSession: 20,
-        perDay: 50,
-        alertThresholds: [0.5, 0.75, 0.9],
-      },
-      costTracker,
-    );
     const rateLimiter = new RateLimiter({ rpm: 60, tpm: 1_000_000 });
 
     const orchestrator = new SessionOrchestrator(
@@ -402,7 +387,6 @@ export class CliRouter {
       undefined,
       {
         registry,
-        budgetEnforcer,
         rateLimiter,
         memoryPersistence: this.memoryPersistence,
         lspDiagnostics: (file: string) => getDiagnosticsForFile(process.cwd(), file),
@@ -415,8 +399,6 @@ export class CliRouter {
       reviewer,
       challenger,
       registry,
-      costTracker,
-      budgetEnforcer,
       rateLimiter,
       toolRegistry,
       toolExecutor,

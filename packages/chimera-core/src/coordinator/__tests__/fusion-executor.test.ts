@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from 'vitest';
 import { FusionExecutor } from '../fusion-executor.js';
 import { EventStream } from '../../event-stream.js';
 import { CostTracker } from '../../cost-tracker.js';
-import { ModelRegistry, type ModelEntry } from '../../../../chimera-providers/src/model-registry.js';
+import { SimpleModelRegistry, type ModelEntry } from '@chimera/providers';
 import type { LLMProvider } from '../../session-orchestrator.js';
 
 function makeEntry(id: string, overrides?: Partial<ModelEntry>): ModelEntry {
@@ -21,8 +21,8 @@ function makeEntry(id: string, overrides?: Partial<ModelEntry>): ModelEntry {
   } as ModelEntry;
 }
 
-function makeRegistryWithEntries(entries: ModelEntry[]): ModelRegistry {
-  const registry = new ModelRegistry();
+function makeRegistryWithEntries(entries: ModelEntry[]): SimpleModelRegistry {
+  const registry = new SimpleModelRegistry();
   const internal = registry as unknown as { models: Map<string, ModelEntry> };
   for (const entry of entries) internal.models.set(entry.id, entry);
   return registry;
@@ -31,7 +31,7 @@ function makeRegistryWithEntries(entries: ModelEntry[]): ModelRegistry {
 describe('FusionExecutor', () => {
   it('executes a fusion task with a panel of 3 models and a judge', async () => {
     const eventStream = new EventStream();
-    const registry = new ModelRegistry();
+    const registry = new SimpleModelRegistry();
     const executor = new FusionExecutor({ eventStream, registry });
 
     const mockProvider: LLMProvider = {
@@ -89,7 +89,7 @@ describe('FusionExecutor', () => {
 
   it('emits fusion_recursion_blocked and degrades when context.depth >= maxDepth', async () => {
     const eventStream = new EventStream();
-    const registry = new ModelRegistry();
+    const registry = new SimpleModelRegistry();
     const executor = new FusionExecutor({ eventStream, registry });
 
     const provider: LLMProvider = {
@@ -114,7 +114,7 @@ describe('FusionExecutor', () => {
 
   it('fails over to the second judge in judgeFailover when the primary judge throws', async () => {
     const eventStream = new EventStream();
-    const registry = new ModelRegistry();
+    const registry = new SimpleModelRegistry();
     const executor = new FusionExecutor({ eventStream, registry });
 
     const panelProvider: LLMProvider = {

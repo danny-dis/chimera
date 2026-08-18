@@ -808,7 +808,7 @@ describe('SessionOrchestrator', () => {
       const orch = new SessionOrchestrator(eventStream);
       // A registry is required for the deliberation path; the hardcoded
       // catalog is enough (no cache load).
-      (orch as any)._registry = new (await import('@chimera/providers')).ModelRegistry(undefined, { skipCacheLoading: true });
+      (orch as any)._registry = new (await import('@chimera/providers')).SimpleModelRegistry();
 
       const provider = mockStructuredProvider({ response: 'ok', confidence: 0.9, rationale: 'x' });
 

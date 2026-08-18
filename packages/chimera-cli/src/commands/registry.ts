@@ -9,7 +9,6 @@ import type {
 } from '@chimera/core';
 import { runWorkflow, SchedulerManager } from '@chimera/core';
 import type { ModelProvider } from '@chimera/providers';
-import { ModelMetadataFetcher } from '@chimera/providers';
 import type { CheckpointStore } from '@chimera/session';
 import type { UserSkillModel } from '@chimera/learning';
 import { trustWorkspace, isWorkspaceTrusted, trustStorePath } from '@chimera/tools';
@@ -27,7 +26,6 @@ const HELP_TEXT = [
   '',
   '  Settings:',
   '    /model /status /config /doctor /export',
-  '    /refresh-models  — fetch latest model metadata from APIs',
   '    /trust <path>    — trust workspace; /trust --untrust <path>; /trust --list',
 ];
 
@@ -231,8 +229,6 @@ export async function runSlashCommand(
       return handleResume(ctx, args);
     case 'sessions':
       return handleSessions(ctx);
-    case 'refresh-models':
-      return handleRefreshModels(args);
     case 'clear':
       console.clear();
       return 'continue';
@@ -506,38 +502,7 @@ async function handleInit(args: string[]): Promise<ReplExitSignal> {
   return 'continue';
 }
 
-async function handleRefreshModels(args: string[]): Promise<ReplExitSignal> {
-  const force = args.includes('--force');
-  const fetcher = new ModelMetadataFetcher();
 
-  console.log('  Fetching model metadata from OpenRouter API...');
-
-  try {
-    let metadata;
-    if (force) {
-      console.log('  (forcing refresh, ignoring cache)');
-      metadata = await fetcher.refreshMetadata();
-    } else {
-      metadata = await fetcher.getMetadata();
-    }
-
-    const ctxCount = metadata.filter((m) => m.contextWindow > 0).length;
-    const pricingCount = metadata.filter((m) => m.inputPerMillion > 0 || m.outputPerMillion > 0).length;
-
-    console.log(`  ✓ Fetched metadata for ${metadata.length} models`);
-    console.log(`  ✓ ${ctxCount} models with context window info`);
-    console.log(`  ✓ ${pricingCount} models with pricing info`);
-    console.log(`  ✓ Cache saved to: ${fetcher['config'].cachePath}`);
-    console.log('');
-    console.log('  Context windows are now available for cost calculations.');
-    console.log('  Restart the session to apply to existing providers.');
-  } catch (err) {
-    console.error(`  Failed to fetch model metadata: ${err instanceof Error ? err.message : String(err)}`);
-    console.log('  Using hardcoded values as fallback.');
-  }
-
-  return 'continue';
-}
 
 async function handleModel(ctx: ReplContext, args: string[]): Promise<ReplExitSignal> {
   const providers = await ctx.getProviders();

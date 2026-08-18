@@ -45,6 +45,7 @@ export { DeliberationEngine } from './coordinator/deliberation/index.js';
 export type { DeliberationResult, DeliberationConfig } from './coordinator/deliberation/index.js';
 export type { DeliberationMode, UserPreset } from './coordinator/deliberation/types.js';
 export { BiomeLinter } from './coordinator/biome-linter.js';
+export { PresetEngine, getBuiltInPreset } from './coordinator/preset-engine.js';
 export type { BiomeLinterConfig } from './coordinator/biome-linter.js';
 
 // Cross-vendor review enforcement

@@ -8,11 +8,11 @@
 
 import { describe, it, expect, vi } from 'vitest';
 import { DuoExecutor } from '../duo-executor.js';
-import { ModelRegistry } from '../../../../chimera-providers/src/model-registry.js';
+import { SimpleModelRegistry } from '@chimera/providers';
 import { CostTracker } from '../../cost-tracker.js';
 import { EventStream } from '../../event-stream.js';
 import type { LLMProvider } from '../../session-orchestrator.js';
-import type { ModelEntry } from '../../../../chimera-providers/src/model-registry.js';
+import type { ModelEntry } from '@chimera/providers';
 
 const MOCK_IDS = {
   modelA: 'mock/duo-a',
@@ -43,8 +43,8 @@ function makeMockProvider(
   } as unknown as LLMProvider;
 }
 
-function makeRegistry(): ModelRegistry {
-  const reg = new ModelRegistry();
+function makeRegistry(): SimpleModelRegistry {
+  const reg = new SimpleModelRegistry();
   const internal = reg as unknown as { models: Map<string, ModelEntry> };
   const mockEntry: ModelEntry = {
     id: MOCK_IDS.modelA,
@@ -62,6 +62,7 @@ function makeRegistry(): ModelRegistry {
       internal.models.set(id, { ...mockEntry, id, name: id });
     }
   }
+  if (!internal.models.has('anthropic/claude-opus-4')) internal.models.set('anthropic/claude-opus-4', { id: 'anthropic/claude-opus-4', name: 'Claude Opus 4', provider: 'anthropic', contextWindow: 200000, maxOutputTokens: 8192, pricing: { inputPerMillion: 15, outputPerMillion: 75 }, capabilities: { toolCalling: true, structuredOutput: true, vision: true, reasoning: true, parallelToolCalls: true }, degradationThreshold: 0.6, tier: 'frontier' });
   return reg;
 }
 

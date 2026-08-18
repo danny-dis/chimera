@@ -12,11 +12,11 @@
 
 import { describe, it, expect, vi } from 'vitest';
 import { DeliberationEngine, presets } from '../engine.js';
-import { ModelRegistry } from '../../../../../chimera-providers/src/model-registry.js';
+import { SimpleModelRegistry } from '@chimera/providers';
 import { CostTracker } from '../../../cost-tracker.js';
 import { EventStream } from '../../../event-stream.js';
 import type { LLMProvider } from '../../../session-orchestrator.js';
-import type { ModelEntry } from '../../../../../chimera-providers/src/model-registry.js';
+import type { ModelEntry } from '@chimera/providers';
 
 const MOCK_IDS = {
   solo: 'mock/engine-solo',
@@ -56,8 +56,8 @@ function makeMockProvider(
   } as unknown as LLMProvider;
 }
 
-function makeRegistry(): ModelRegistry {
-  const reg = new ModelRegistry();
+function makeRegistry(): SimpleModelRegistry {
+  const reg = new SimpleModelRegistry();
   const internal = reg as unknown as { models: Map<string, ModelEntry> };
   const mockEntry: ModelEntry = {
     id: MOCK_IDS.solo,

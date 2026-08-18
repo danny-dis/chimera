@@ -59,3 +59,36 @@ export class SimpleModelRegistry implements ModelRegistry {
     this.models.set(entry.id, entry);
   }
 }
+
+// ponytail: recommendFromProviders was a 60-line module. Inlined here
+// because the only callers are setup.ts and config-loader.ts. Delete when
+// per-role model recommendation is no longer needed.
+const TIER_RANK: Record<ModelEntry['tier'], number> = {
+  reasoning: 3,
+  frontier: 2,
+  mid: 1,
+  cheap: 0,
+};
+
+export function recommendFromProviders(
+  providers: string[],
+  registry: ModelRegistry = new SimpleModelRegistry(),
+): { writer: string; reviewer: string; challenger: string } {
+  const pool = registry.getAll().filter((m) => providers.includes(m.provider));
+  const source = pool.length > 0 ? pool : registry.getAll();
+
+  const ranked = [...source].sort((a, b) => {
+    const t = TIER_RANK[b.tier] - TIER_RANK[a.tier];
+    if (t !== 0) return t;
+    return b.contextWindow - a.contextWindow;
+  });
+
+  const best = ranked[0];
+  const second = ranked.find((m) => m.id !== best?.id) ?? best;
+
+  return {
+    writer: best?.id ?? '',
+    reviewer: best?.id ?? '',
+    challenger: second?.id ?? best?.id ?? '',
+  };
+}
