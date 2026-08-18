@@ -34,7 +34,33 @@ Multiple agents work this repo in parallel.
 
 ---
 
-## Live Gateway Test Results — 2026-08-18
+## Live Gateway Test Results — 2026-08-18 (Post-Restart)
+
+**Gateway restarted:** `apps/gateway` → `bun src/main.ts` (picked up new catalog)
+**Change:** Removed retired `gemini-2.0-flash` from catalog + native adapter map.
+
+| Provider | Model | Status | Response |
+|----------|-------|--------|----------|
+| google | gemini-3.6-flash | ✅ 200 | "Pong" |
+| google | gemini-2.0-flash (retired) | ✅ 200 | "pong" (fallback chain mapped to live model) |
+| cohere | command-r | ✅ 200 | "pong" |
+| mistral | codestral-2508 | ✅ 200 | "pong" |
+| nvidia-nim | meta/llama-3.2-11b | ✅ 200 | "It looks like you sent" |
+| codestral-free | codestral-2508 | ❌ 502 | "All providers failed" (dead key) |
+| gitlawb | xiaomi/mimo-v2.5 | ❌ 502 | "All providers failed" (host unreachable) |
+| openrouter-free | openrouter/auto | ❌ 502 | "All providers failed" (dead key) |
+| tokenrouter | auto | ❌ 503 | "All providers currently unavailable" (empty key in .env) |
+
+**Post-restart improvement:** 5/9 working (vs 4/9 before). Google, Mistral, and the retired-model fallback all recovered.
+
+### Remaining failures
+
+| Provider | Root Cause | Fix |
+|----------|-----------|-----|
+| codestral-free | Dead API key | Remove from `.env` or replace key |
+| gitlawb | `api.gitlawb.ai` unreachable (timeout) | Check DNS/firewall or remove |
+| openrouter-free | Dead API key | Remove from `.env` or replace key |
+| tokenrouter | Empty `TOKENROUTER_API_KEY=` in .env | Set a key or remove the provider |
 
 **Gateway:** `http://127.0.0.1:47113/v1` | **Auth:** `Bearer dmrx-local-admin-key-2026`
 **Script:** `test_all_providers.py` | **Payload:** `{model, messages:[{role:"user",content:"ping"}], max_tokens:5}`
