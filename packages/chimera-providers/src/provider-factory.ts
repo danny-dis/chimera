@@ -373,37 +373,3 @@ async function listOllamaModels(): Promise<string[]> {
 
 // ── Default Model Registry ───────────────────────────────────────────────
 
-import { ModelRegistry } from './model-registry.js';
-
-let defaultRegistry: ModelRegistry | null = null;
-
-/**
- * Get the default ModelRegistry instance.
- * The registry automatically loads cached model metadata from disk on construction.
- * This provides a singleton registry with dynamically updated context windows and pricing.
- * 
- * @example
- * ```typescript
- * import { getDefaultRegistry } from '@chimera/providers';
- * 
- * const registry = getDefaultRegistry();
- * const model = registry.get('anthropic/claude-sonnet-4-20250514');
- * console.log(model?.contextWindow); // Uses cached value if available
- * 
- * // Refresh from API
- * await registry.refreshFromAPI();
- * ```
- */
-export function getDefaultRegistry(): ModelRegistry {
-  if (!defaultRegistry) {
-    defaultRegistry = new ModelRegistry(); // Auto-loads cache in constructor
-  }
-  return defaultRegistry;
-}
-
-/**
- * Reset the default registry (useful for testing).
- */
-export function resetDefaultRegistry(): void {
-  defaultRegistry = null;
-}

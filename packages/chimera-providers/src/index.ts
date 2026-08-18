@@ -1,22 +1,15 @@
 // @chimera/providers — Provider abstraction layer
 
+ export {
+   ModelEntrySchema,
+   SimpleModelRegistry,
+   type ModelEntry,
+   type ModelRegistry,
+ } from './model-entry.js';
+
 export { ProviderRegistry } from './provider-registry.js';
-export { ProviderFactory, listModels, getDefaultRegistry, resetDefaultRegistry } from './provider-factory.js';
+export { ProviderFactory, listModels } from './provider-factory.js';
 export { ModelAdapter, ProviderConfigSchema, type ProviderConfig } from './model-adapter.js';
-
-export {
-  ModelRegistry,
-  ModelEntrySchema,
-  type ModelEntry,
-} from './model-registry.js';
-
-export {
-  recommendRoleModels,
-  recommendFromProviders,
-  rankByTier,
-  type RoleModels,
-  type ConfigProviderRole,
-} from './recommend.js';
 
 // DMR-X backend routing — auto-map roles to DMR-X meta-models
 export {
@@ -28,53 +21,6 @@ export {
   type DmrxPreset,
   type ChimeraMode,
 } from './dmrx-routing.js';
-
-export {
-  ModelMetadataFetcher,
-  fetchAndCacheModelMetadata,
-  getModelEntriesFromAPI,
-  type FetchedModelMetadata,
-  type CacheEntry,
-  type FetcherConfig,
-} from './model-metadata-fetcher.js';
-
-export {
-  MetadataAwareProviderFactory,
-  createMetadataAwareFactory,
-  createProviderWithDynamicMetadata,
-  type MetadataAwareFactoryConfig,
-} from './metadata-aware-factory.js';
-
-export {
-  CostCalculator,
-  type CostBreakdown,
-} from './cost-calculator.js';
-
-export {
-  ProviderCostTracker,
-  type CostSession,
-} from './cost-tracker-provider.js';
-
-export {
-  BudgetEnforcer,
-  type BudgetConfig,
-  type BudgetAction,
-  type BudgetCheckResult,
-} from './budget-enforcer.js';
-
-export {
-  RateLimiter,
-} from './rate-limiter.js';
-
-export {
-  CostProjectionEngine,
-  type CostProjection,
-} from './cost-projection.js';
-
-export {
-  ModelComparator,
-  type ModelComparison,
-} from './model-comparator.js';
 
 export {
   ProviderError,

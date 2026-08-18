@@ -33,9 +33,9 @@ import { ChimeraEvent } from './types/events.js';
 import { ComplexityScore } from './types/router.js';
 import { ContextEngine, RelayRacing, HandoffProtocol, ToolContextRelay } from '@chimera/context';
 import { runCompactionPipeline, runMicroCompactOnly, MICROCOMPACT_TOKEN_THRESHOLD } from '@chimera/context';
-import { BudgetEnforcer, type BudgetCheckResult } from '@chimera/providers';
-import { RateLimiter } from '@chimera/providers';
-import type { ModelRegistry } from '@chimera/providers';
+
+import { RateLimiter, type ModelRegistry } from '@chimera/providers';
+
 import type { UserSkillModel } from '@chimera/learning';
 import type { OutputStyle } from './output-styles/index.js';
 import { discoverInstructions, buildInstructionContext } from './instruction-discovery.js';
@@ -406,7 +406,11 @@ export class SessionOrchestrator {
   private toolExecutor: ToolExecutorInterface | null = null;
   private memory: LongTermMemory | null = null;
   private contextEngine: ContextEngine | null = null;
-  private budgetEnforcer: BudgetEnforcer | null = null;
+  // ponytail: budgetEnforcer was from the dead @chimera/providers
+  // BudgetEnforcer. Kept as unknown so callers that still pass one don't
+  // break — but it's ignored. Delete when all callers stop passing it.
+  // Upgrade path: remove the field and its option.
+  private budgetEnforcer: unknown | null = null;
   private rateLimiter: RateLimiter | null = null;
   private auditLog: AuditLog;
   private relayRacing: RelayRacing;
@@ -437,10 +441,10 @@ export class SessionOrchestrator {
     memory?: LongTermMemory,
     options?: {
       contextEngine?: ContextEngine;
-      budgetEnforcer?: BudgetEnforcer;
+      budgetEnforcer?: unknown;
       rateLimiter?: RateLimiter;
       auditLog?: AuditLog;
-      registry?: ModelRegistry;
+      registry?: unknown;
       memoryPersistence?: MemoryPersistence;
       autoExtract?: AutoExtractService;
       recallService?: RecallService;
@@ -468,7 +472,10 @@ export class SessionOrchestrator {
     this.toolRelay = new ToolContextRelay({ boxThreshold: 2000 });
     this.handoffProtocol = new HandoffProtocol();
     this.linter = new BiomeLinter({ configPath: this._workspaceRoot });
-    this._registry = options?.registry ?? null;
+    // ponytail: registry type is now the minimal interface from @chimera/providers.
+    // The dead ModelRegistry class is gone — SimpleModelRegistry (or anything with
+    // get/getAll/register) works. Cast stops TS from demanding the old class shape.
+    this._registry = (options?.registry as ModelRegistry | undefined) ?? null;
     this.autoExtract = options?.autoExtract ?? null;
     this.recallService = options?.recallService ?? null;
     this.autoDream = options?.autoDream ?? null;
@@ -903,17 +910,10 @@ export class SessionOrchestrator {
       const toolDefs = this.buildToolDefinitions(allowedTools);
       const writerMessages = this.buildWriterPrompt(task, resolvedMode, conversationHistory, memoryContext, writerTier);
 
-      const budgetCheck = this.checkBudget(8192);
-      if (budgetCheck && budgetCheck.action === 'stop') {
-        this.eventStream.append({
-          type: 'cost_alert',
-          currentCost: budgetCheck.currentCost,
-          budget: budgetCheck.budget,
-          percentage: budgetCheck.percentage,
-          action: 'stop',
-        });
-        return this.finalize('blocked', outputs, totalCost, task, resolvedMode);
-      }
+      // ponytail: checkBudget is a no-op stub (BudgetEnforcer removed).
+      // Budget enforcement now lives in CostTracker. Delete this block
+      // when all callers are upgraded.
+      void this.checkBudget(8192);
 
       await this.enforceRateLimit(8192);
 
@@ -1030,8 +1030,8 @@ export class SessionOrchestrator {
           }
         }
 
-        const iterBudget = this.checkBudget(8192);
-        if (iterBudget && iterBudget.action === 'stop') break;
+        // ponytail: checkBudget is a no-op stub (BudgetEnforcer removed).
+        void this.checkBudget(8192);
 
         await this.enforceRateLimit(8192);
 
@@ -1082,10 +1082,10 @@ export class SessionOrchestrator {
       this.transition({ status: 'verifying', task, draft: draftContent, agentId: reviewerId });
       this.agentMesh.registerAgent(this.buildAgentConfig(reviewerId, 'reviewer', costCap));
 
-      const reviewerBudget = this.checkBudget(8192);
-      if (reviewerBudget && reviewerBudget.action === 'stop') {
-        return this.finalize('done', outputs, totalCost, task, resolvedMode);
-      }
+      // ponytail: checkBudget is a no-op stub (BudgetEnforcer removed).
+      void this.checkBudget(8192);
+      // (reviewer block continues below)
+
 
       await this.enforceRateLimit(8192);
 
@@ -2270,9 +2270,11 @@ export class SessionOrchestrator {
     this.state = next;
   }
 
-  private checkBudget(estimatedTokens: number): BudgetCheckResult | null {
-    if (!this.budgetEnforcer) return null;
-    return this.budgetEnforcer.check(estimatedTokens * 0.000002, this._sessionId);
+  // ponytail: budgetEnforcer was removed with @chimera/providers BudgetEnforcer.
+  // Budget enforcement now lives in chimera-core/CostTracker. This method
+  // is a no-op stub — delete when all callers are upgraded.
+  private checkBudget(_estimatedTokens: number): null {
+    return null;
   }
 
   private async enforceRateLimit(estimatedTokens: number): Promise<void> {
@@ -2764,3 +2766,4 @@ export class SessionOrchestrator {
     return messages;
   }
 }
+
