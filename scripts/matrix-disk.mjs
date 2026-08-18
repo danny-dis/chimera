@@ -1,5 +1,17 @@
 // scripts/matrix-disk.mjs
-// Full 29-combo live matrix, asserting DISK side-effects + validity.
+// Full 37-combo live matrix, asserting DISK side-effects + validity + an
+// OBJECTIVE grade from hidden tests (scripts/task-suite.mjs).
+//
+// Gradeable modes (code, debug, code_multi) are scored by the fraction of
+// hidden assertions their artifact passes — NOT by a completion heuristic.
+// Non-gradeable modes (ask/plan/review/oal/auto) still use the rubric in
+// score-combo.mjs and are reported separately; the two are never averaged.
+//
+// Env:
+//   COMBO=mode/preset   run a single combo (writes a SEPARATE smoke artifact)
+//   RUNS=n              repeat the whole list n times, report per-combo median
+//                       + spread and name every non-reproducible combo
+//
 // Verifies the truncation-hardened write_file: code/debug must land a
 // syntactically-valid file OR route to needs_user — never broken-and-done.
 //
@@ -30,6 +42,8 @@ const { SessionOrchestrator, EventStream } = require('@chimera/core');
 const { ProviderFactory, SimpleModelRegistry, RateLimiter } = require('@chimera/providers');
 const { ToolRegistry, ToolExecutor, allTools } = require('@chimera/tools');
 const { scoreCombo } = await import('./score-combo.mjs');
+const { promptFor, GRADEABLE, TASKS } = await import('./task-suite.mjs');
+const { gradeTask, seedTask, validateJsFiles } = await import('./grade-task.mjs');
 
 function adaptProvider(provider) {
   return {
@@ -163,17 +177,23 @@ const VALID = [
   ['plan', 'solo'], ['plan', 'duo'],
   ['code', 'auto'], ['code', 'solo'], ['code', 'duo'], ['code', 'trio'], ['code', 'fusion'], ['code', 'hive'], ['code', 'swarm'],
   ['debug', 'auto'], ['debug', 'solo'], ['debug', 'duo'], ['debug', 'trio'], ['debug', 'fusion'], ['debug', 'swarm'],
+  // code_multi: two files that must agree on export names — the cross-file
+  // consistency failure the old suite never tested (BUG-3).
+  ['code_multi', 'auto'], ['code_multi', 'solo'], ['code_multi', 'duo'], ['code_multi', 'trio'], ['code_multi', 'fusion'], ['code_multi', 'hive'], ['code_multi', 'swarm'],
   ['review', 'solo'], ['review', 'auto'], ['review', 'duo'], ['review', 'trio'], ['review', 'fusion'], ['review', 'swarm'],
   ['oal', 'solo'],
   ['auto', 'auto'], ['auto', 'solo'], ['auto', 'duo'], ['auto', 'trio'], ['auto', 'fusion'], ['auto', 'hive'], ['auto', 'swarm'],
 ];
 
 function taskFor(mode) {
+  // Gradeable modes get the real task suite (task-suite.mjs) whose prompts
+  // hide edge cases a careless single pass misses. The old trivial prompts
+  // ("Hello, " + name) gave a reviewer nothing to catch (BUG-3).
+  const real = promptFor(mode);
+  if (real) return real;
   switch (mode) {
     case 'ask': return 'Reply with exactly the single word: PONG';
     case 'plan': return 'Write a plan (as markdown) to create a small Node.js CLI that prints "hello". Do not write code files, just the plan.';
-    case 'code': return 'Write a single file named greeter.js in the current directory containing a function greet(name) that returns "Hello, " + name. Include a one-line comment.';
-    case 'debug': return 'There is a file bug.js in the current directory with a deliberate bug (it adds instead of subtracts). Fix it so subtract(a,b) returns a-b. Write the corrected file.';
     case 'review': return 'Review this code for bugs: function divide(a,b){ return a*b; }. Reply with PASS or list the issues.';
     case 'oal': return 'Loop: first say STEP1, then say STEP2. Demonstrate a 2-step autonomous loop.';
     case 'auto': return 'Reply with exactly the single word: PONG';
@@ -181,30 +201,14 @@ function taskFor(mode) {
   }
 }
 
-// For debug, seed a buggy bug.js in the working dir.
-function seedDebug(workdir) {
-  writeFileSync(join(workdir, 'bug.js'), 'function subtract(a, b) {\n  return a + b; // BUG: should subtract\n}\nmodule.exports = subtract;\n');
-}
+// Seeding and JS validation now live in grade-task.mjs (seedTask /
+// validateJsFiles) so the harness and the offline grader tests share one
+// implementation. The old seedDebug/validateJs were removed here.
 
-// Validate JS files on disk: syntax (--check) + runnability (require).
-// ponytail: runnability is the LANDED != CORRECT closure — a file that
-// parses but throws on load (missing dep, top-level crash) is the defect
-// class the matrix previously missed. Only *fail* on the strong signal
-// (parsable but completely unrunnable); partial side-effect files stay soft.
-function validateJs(workdir) {
-  let valid = 0, broken = 0, ran = 0, files = [];
-  let runError = '';
-  for (const f of readdirSync(workdir)) {
-    if (!f.endsWith('.js')) continue;
-    const fp = join(workdir, f);
-    files.push(f);
-    try { execFileSync(process.execPath, ['--check', fp], { stdio: 'pipe' }); valid++; }
-    catch { broken++; }
-    try { execFileSync(process.execPath, ['-e', `require(${JSON.stringify(fp)})`], { stdio: 'pipe' }); ran++; }
-    catch (e) { if (!runError) runError = String(e?.stderr || e?.message || e).slice(0, 200); }
-  }
-  return { valid, broken, ran, files, runError };
-}
+// validateJs was replaced by validateJsFiles (grade-task.mjs), which also
+// skips the generated grader runner. Kept as a thin alias so any remaining
+// call site keeps working.
+const validateJs = validateJsFiles;
 
 // Separate INFRA failures from CAPABILITY failures.
 //
@@ -234,10 +238,10 @@ function classifyFailure(text) {
 const results = [];
 const failures = [];
 
-async function runCombo(mode, preset) {
+async function runCombo(mode, preset, runIndex = 1) {
   const workdir = join(tmpdir(), `chimera-matrix-${mode}-${preset}-${Date.now()}`);
   mkdirSync(workdir, { recursive: true });
-  if (mode === 'debug') seedDebug(workdir);
+  seedTask(mode, workdir);
 
   const eventStream = new EventStream();
   let toolCalls = 0, diskWrites = 0, writeErrors = 0;
@@ -286,9 +290,9 @@ async function runCombo(mode, preset) {
   // a false needs_user (code/swarm) or a false pass (debug/swarm, target is
   // pre-seeded). Remove the artifact; score swarm on status/events only.
   let disk = null;
-  if ((mode === 'code' || mode === 'debug') && preset !== 'swarm') {
+  if (GRADEABLE.has(mode) && preset !== 'swarm') {
     const js = validateJs(workdir);
-    const targetExists = mode === 'code' ? existsSync(join(workdir, 'greeter.js')) : existsSync(join(workdir, 'bug.js'));
+    const targetExists = existsSync(join(workdir, TASKS[mode].target));
     disk = { targetExists, ...js };
     // A "done" with a broken/target-missing file is the failure we are hunting.
     const brokenDone = (status === 'done') && (js.broken > 0 || !targetExists);
@@ -303,10 +307,24 @@ async function runCombo(mode, preset) {
     }
   }
 
-  // ponytail: honest quality scalar from evidence the harness already has.
-  // Not a real LLM judge (that path is unwired) — a transparent stand-in so
-  // the "more agents = better" curve can be plotted. Range 0-1.
-  const score = scoreCombo({ mode, preset, status, disk, diskWrites, toolCalls, evErrors });
+  // OBJECTIVE GRADING (BUG-4): run hidden tests against the artifact. Must
+  // happen BEFORE the workdir is removed. For gradeable modes this REPLACES
+  // the completion rubric as `quality`, so the headline number reflects
+  // whether the code actually works rather than whether a file appeared.
+  let grade = null;
+  if (GRADEABLE.has(mode)) {
+    try { grade = gradeTask(mode, workdir); } catch (e) { grade = { gradeable: true, passed: 0, total: 0, ratio: null, failures: ['grader crashed: ' + String(e?.message).slice(0, 120)] }; }
+  }
+  // A graded row that finished but failed assertions is a real defect the
+  // old rubric scored 1.00. Record it.
+  if (grade && grade.ratio !== null && status === 'done' && grade.ratio < 1) {
+    failures.push({ mode, preset, status, reason: `done but only ${grade.passed}/${grade.total} hidden tests pass: ${(grade.failures || []).slice(0, 3).join('; ')}` });
+  }
+
+  const rubricScore = scoreCombo({ mode, preset, status, disk, diskWrites, toolCalls, evErrors });
+  const useObjective = grade && typeof grade.ratio === 'number';
+  const score = useObjective ? grade.ratio : rubricScore;
+  const scoreKind = useObjective ? 'objective' : 'rubric';
   // Persist the failure text INTO the artifact. Historically results.json
   // carried `error: None` while the real `ERR:` string existed only in the
   // .log, so a run could not be triaged from the JSON alone.
@@ -314,10 +332,11 @@ async function runCombo(mode, preset) {
     ? (result?.error || result?.output || '').toString()
     : '';
   const failureClass = classifyFailure(errorText);
-  const rec = { mode, preset, status, ms, toolCalls, diskWrites, writeErrors, evErrors: [...new Set(evErrors)], disk, quality: score, failureClass, errorText: errorText.slice(0, 400), output: (result?.output || result?.result || result?.error || '').toString().slice(0, 160) };
+  const rec = { run: runIndex, mode, preset, status, ms, toolCalls, diskWrites, writeErrors, evErrors: [...new Set(evErrors)], disk, quality: score, scoreKind, rubricScore, grade, failureClass, errorText: errorText.slice(0, 400), output: (result?.output || result?.result || result?.error || '').toString().slice(0, 160) };
   results.push(rec);
   const diskStr = disk ? ` disk.target=${disk.targetExists} valid=${disk.valid} broken=${disk.broken} ran=${disk.ran}` : '';
-  console.log(`  ${mode}/${preset} -> ${status} (${ms}ms tools=${toolCalls} diskW=${diskWrites}${diskStr}${evErrors.length ? ' EV:' + [...new Set(evErrors)].join(',') : ''})${status === 'throw' || status === 'error' ? ' ERR:' + ((result?.error || result?.output || '').toString().slice(0, 300)) : ''}`);
+  const gradeStr = grade && grade.total ? ` grade=${grade.passed}/${grade.total}` : '';
+  console.log(`  ${mode}/${preset} -> ${status} (${ms}ms tools=${toolCalls} diskW=${diskWrites}${diskStr}${gradeStr}${evErrors.length ? ' EV:' + [...new Set(evErrors)].join(',') : ''})${status === 'throw' || status === 'error' ? ' ERR:' + ((result?.error || result?.output || '').toString().slice(0, 300)) : ''}`);
 
   // cleanup
   try { rmSync(workdir, { recursive: true, force: true }); } catch {}
@@ -328,6 +347,41 @@ async function runCombo(mode, preset) {
 }
 
 // Quality stand-in imported from score-combo.mjs (pure, unit-tested).
+const RUNS = Math.max(1, Number(process.env.RUNS || 1));
+
+function median(xs) {
+  if (!xs.length) return 0;
+  const s = [...xs].sort((a, b) => a - b);
+  const m = Math.floor(s.length / 2);
+  return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2;
+}
+
+// Aggregate every row of a mode/preset across runs. Median is the headline —
+// a single sample is not a quality gate (BUG-2: one commit produced 19/30,
+// 25/30 and duo-broken across three passes).
+function buildAggregates(rows) {
+  const byCombo = new Map();
+  for (const r of rows) {
+    const k = `${r.mode}/${r.preset}`;
+    if (!byCombo.has(k)) byCombo.set(k, []);
+    byCombo.get(k).push(r);
+  }
+  const agg = {};
+  for (const [k, rs] of byCombo) {
+    const qs = rs.map((r) => r.quality);
+    const statuses = [...new Set(rs.map((r) => r.status))];
+    agg[k] = {
+      mode: rs[0].mode, preset: rs[0].preset, n: rs.length,
+      medianQuality: median(qs), min: Math.min(...qs), max: Math.max(...qs),
+      spread: Math.max(...qs) - Math.min(...qs),
+      statuses, flaky: statuses.length > 1,
+      scoreKind: rs[0].scoreKind,
+      anyInfra: rs.some((r) => r.failureClass === 'infra'),
+    };
+  }
+  return agg;
+}
+
 async function main() {
   // Optional: COMBO=mode/preset runs a single combo (smoke test).
   const comboFilter = process.env.COMBO;
@@ -336,12 +390,15 @@ async function main() {
     console.error(`COMBO '${comboFilter}' not found in VALID list.`);
     process.exit(2);
   }
-  console.log(`Matrix (disk+validity): writer=${writerModel} reviewer=${reviewerModel} challenger=${challengerEntry.model}${comboFilter ? ` [smoke: ${comboFilter}]` : ''}`);
-  let i = 0;
-  for (const [mode, preset] of combos) {
-    i++;
-    console.log(`[${i}/${combos.length}]`);
-    await runCombo(mode, preset);
+  console.log(`Matrix (disk+validity+grade): writer=${writerModel} reviewer=${reviewerModel} challenger=${challengerEntry.model}${comboFilter ? ` [smoke: ${comboFilter}]` : ''}${RUNS > 1 ? ` [RUNS=${RUNS}]` : ''}`);
+  for (let run = 1; run <= RUNS; run++) {
+    if (RUNS > 1) console.log(`\n########## RUN ${run}/${RUNS} ##########`);
+    let i = 0;
+    for (const [mode, preset] of combos) {
+      i++;
+      console.log(`[${i}/${combos.length}]${RUNS > 1 ? ` (run ${run})` : ''}`);
+      await runCombo(mode, preset, run);
+    }
   }
   const done = results.filter((r) => r.status === 'done' || r.status === 'complete').length;
   const codeRows = results.filter((r) => r.mode === 'code' || r.mode === 'debug');
@@ -372,41 +429,55 @@ async function main() {
   if (failures.length) { console.log('FAILURES:'); for (const f of failures) console.log('  ' + JSON.stringify(f)); }
   else console.log('No broken-and-done code/debug rows. Truncation guard OK.');
 
-  // Quality stand-in: parse the evidence the harness already collected.
-// Imported from score-combo.mjs (pure, unit-tested) so the "more agents =
-// better?" curve can be plotted without a live LLM judge.
-// ponytail: per-preset quality aggregate — the "more agents = better?" curve.
-  const presets = [...new Set(results.map((r) => r.preset))];
+  const aggregates = buildAggregates(results);
+  const aggList = Object.values(aggregates);
+
+  console.log('\n=== QUALITY BY PRESET (median across runs) ===');
+  console.log('  objective = fraction of hidden tests passing; rubric = completion heuristic');
+  const presets = [...new Set(aggList.map((a) => a.preset))];
   const avg = (xs) => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : 0);
-  console.log('\n=== QUALITY BY PRESET (stand-in 0-1, not LLM judge) ===');
   for (const p of presets) {
-    const rows = results.filter((r) => r.preset === p);
-    const q = avg(rows.map((r) => r.quality));
-    const pass = rows.filter((r) => r.status === 'done' || r.status === 'complete').length / rows.length;
-    console.log(`  ${p.padEnd(7)} n=${rows.length} avgQuality=${q.toFixed(2)} passRate=${pass.toFixed(2)}`);
+    const objRows = aggList.filter((a) => a.preset === p && a.scoreKind === 'objective' && !a.anyInfra);
+    const rubRows = aggList.filter((a) => a.preset === p && a.scoreKind === 'rubric' && !a.anyInfra);
+    const objStr = objRows.length ? `objective=${avg(objRows.map((a) => a.medianQuality)).toFixed(2)} (n=${objRows.length})` : 'objective=n/a';
+    const rubStr = rubRows.length ? `rubric=${avg(rubRows.map((a) => a.medianQuality)).toFixed(2)} (n=${rubRows.length})` : 'rubric=n/a';
+    console.log(`  ${p.padEnd(7)} ${objStr}  ${rubStr}`);
   }
-  const soloRows = results.filter((r) => r.preset === 'solo');
-  const multiRows = results.filter((r) => r.preset !== 'solo' && r.preset !== 'auto');
-  // Exclude infra failures from the gradient: a gateway blip is not a preset
-  // quality signal, and a 0 from `fetch failed` silently poisons the average.
-  const cleanSolo = soloRows.filter((r) => r.failureClass !== 'infra');
-  const cleanMulti = multiRows.filter((r) => r.failureClass !== 'infra');
-  const soloQ = avg(cleanSolo.map((r) => r.quality));
-  const multiQ = avg(cleanMulti.map((r) => r.quality));
-  console.log('\n=== SOLO vs MULTI-AGENT (infra failures excluded) ===');
-  console.log(`  solo     avgQuality=${soloQ.toFixed(2)}  n=${cleanSolo.length}${soloRows.length !== cleanSolo.length ? ` (${soloRows.length - cleanSolo.length} infra row(s) dropped)` : ''}`);
-  console.log(`  multi    avgQuality=${multiQ.toFixed(2)}  n=${cleanMulti.length}${multiRows.length !== cleanMulti.length ? ` (${multiRows.length - cleanMulti.length} infra row(s) dropped)` : ''}`);
+
+  if (RUNS > 1) {
+    console.log('\n=== REPRODUCIBILITY ===');
+    const flaky = aggList.filter((a) => a.flaky);
+    const spready = aggList.filter((a) => a.spread > 0);
+    console.log(`  runs=${RUNS}  combos=${aggList.length}`);
+    console.log(`  status-unstable combos: ${flaky.length}`);
+    for (const a of flaky) console.log(`    ${a.mode}/${a.preset}: ${a.statuses.join(' | ')}`);
+    console.log(`  quality-varying combos: ${spready.length}`);
+    for (const a of spready) console.log(`    ${a.mode}/${a.preset}: min=${a.min.toFixed(2)} max=${a.max.toFixed(2)} spread=${a.spread.toFixed(2)}`);
+    if (!flaky.length && !spready.length) console.log('  fully reproducible across runs.');
+  } else {
+    console.log('\n=== REPRODUCIBILITY ===');
+    console.log('  RUNS=1 — single sample, variance UNMEASURED. Re-run with RUNS=3 before');
+    console.log('  quoting any score (BUG-2: one commit gave 19/30, 25/30 and duo-broken).');
+  }
+
+  // Solo vs multi on MEDIANS, objective rows only, infra excluded.
+  const objAgg = aggList.filter((a) => a.scoreKind === 'objective' && !a.anyInfra);
+  const soloAgg = objAgg.filter((a) => a.preset === 'solo');
+  const multiAgg = objAgg.filter((a) => !['solo', 'auto'].includes(a.preset));
+  const soloQ = avg(soloAgg.map((a) => a.medianQuality));
+  const multiQ = avg(multiAgg.map((a) => a.medianQuality));
+  console.log('\n=== SOLO vs MULTI-AGENT (objective medians, infra excluded) ===');
+  console.log(`  solo     medianQuality=${soloQ.toFixed(2)}  n=${soloAgg.length}`);
+  console.log(`  multi    medianQuality=${multiQ.toFixed(2)}  n=${multiAgg.length}`);
   console.log(`  delta    ${(multiQ - soloQ >= 0 ? '+' : '')}${(multiQ - soloQ).toFixed(2)}`);
-  console.log('  CAVEAT: `quality` is a completion rubric (finished + wrote a file + no error');
-  console.log('  event), NOT a judgement of code quality — see scripts/score-combo.mjs. The');
-  console.log('  benchmark tasks are also near-trivial (9/30 combos are a PONG ping), so a');
-  console.log('  reviewer model has no room to add value. Do NOT quote this delta as a');
-  console.log('  solo-vs-multi finding, and do NOT trust a single run: repeat and take the');
-  console.log('  median — observed run-to-run spread on one commit was +/- 6 combos.');
-  if (multiQ <= soloQ) console.log('  NOTE: multi-agent did NOT beat solo on this stand-in — gradient unproven (expected; this is a placeholder metric).');
+  console.log('  `quality` for code/debug/code_multi is now OBJECTIVE (hidden tests, see');
+  console.log('  scripts/task-suite.mjs). Non-gradeable modes (ask/plan/review/oal/auto)');
+  console.log('  still use the completion rubric in score-combo.mjs and are reported');
+  console.log(`  separately above.${RUNS > 1 ? '' : ' RUNS=1: treat this as ONE sample, not a finding.'}`);
+  if (multiQ <= soloQ && multiAgg.length) console.log('  NOTE: multi-agent did NOT beat solo on the objective tasks.');
 
   const outPath = join(repoRoot, 'scripts', comboFilter ? 'matrix-disk-results-smoke.json' : 'matrix-disk-results.json');
-  writeFileSync(outPath, JSON.stringify({ writer: writerModel, reviewer: reviewerModel, challenger: challengerEntry.model, ranAt: new Date().toISOString(), smoke: comboFilter || undefined, comboCount: results.length, results }, null, 2));
+  writeFileSync(outPath, JSON.stringify({ writer: writerModel, reviewer: reviewerModel, challenger: challengerEntry.model, ranAt: new Date().toISOString(), smoke: comboFilter || undefined, runs: RUNS, comboCount: results.length, aggregates, results }, null, 2));
   console.log(`Wrote ${outPath}`);
   if (comboFilter) console.log('(smoke run — full-run artifact matrix-disk-results.json left untouched)');
   process.exit(0);
