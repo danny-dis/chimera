@@ -1,0 +1,96 @@
+#!/usr/bin/env node
+/* dmrx — A2A driver for DMR-X (:47114)
+ * Usage:
+ *   dmrx send "text" [--agent <id>] [--context <ctxId>]
+ *   dmrx stream "text"
+ *   dmrx get <taskId>
+ *   dmrx cancel <taskId>
+ *   dmrx tasks
+ *   dmrx agents
+ *   dmrx status
+ */
+const http = require('http');
+const A2A = process.env.A2A_URL || 'http://127.0.0.1:47114/a2a';
+const GW = process.env.GW_URL || 'http://127.0.0.1:47113';
+const TENANT = process.env.X_DMR_TENANT_KEY || 'g';
+
+// Keep-alive agent to avoid TIME_WAIT accumulation under load
+const a2aAgent = new http.Agent({ keepAlive: true, maxSockets: 10 });
+const gwAgent = new http.Agent({ keepAlive: true, maxSockets: 5 });
+
+function rpc(method, params) {
+  return new Promise((resolve, reject) => {
+    const body = JSON.stringify({ jsonrpc: '2.0', id: Date.now().toString(), method, params });
+    const req = http.request({ hostname: '127.0.0.1', port: 47114, path: '/a2a', method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-dmr-tenant-key': TENANT, 'content-length': Buffer.byteLength(body) },
+      agent: a2aAgent
+    }, res => { let b = ''; res.on('data', d => b += d); res.on('end', () => { try { resolve(JSON.parse(b)); } catch (e) { resolve({ error: b }); } }); });
+    req.on('error', reject);
+    req.write(body); req.end();
+  });
+}
+
+function gw(path) {
+  return new Promise((resolve, reject) => {
+    const req = http.request({ hostname: '127.0.0.1', port: 47113, path, method: 'GET',
+      headers: { 'authorization': 'Bearer ' + TENANT },
+      agent: gwAgent
+    }, res => { let b = ''; res.on('data', d => b += d); res.on('end', () => { try { resolve(JSON.parse(b)); } catch (e) { resolve({ error: b }); } }); });
+    req.on('error', reject); req.end();
+  });
+}
+
+const [, , cmd, ...rest] = process.argv;
+
+(async () => {
+  try {
+    if (cmd === 'send') {
+      const text = rest[0];
+      if (!text) { console.error('usage: dmrx send "text" [--agent <id>] [--context <id>]'); process.exit(1); }
+      let agentId, ctxId;
+      for (let i = 1; i < rest.length; i++) { if (rest[i] === '--agent') agentId = rest[++i]; if (rest[i] === '--context') ctxId = rest[++i]; }
+      const msg = { messageId: 'm-' + Date.now(), role: 'user', parts: [{ kind: 'text', text }] };
+      if (ctxId) msg.contextId = ctxId;
+      const params = { message: msg };
+      if (agentId) params.agentId = agentId;
+      const r = await rpc('message/send', params);
+      if (r.error) { console.error('ERROR:', r.error); process.exit(1); }
+      const t = r.result;
+      console.log('TASK_ID :', t.id);
+      console.log('CONTEXT :', t.contextId);
+      console.log('STATE   :', t.status.state);
+      if (t.artifacts?.length) console.log('RESULT  :\n' + t.artifacts.map(a => a.parts.map(p => p.text).join('\n')).join('\n---\n'));
+    }
+    else if (cmd === 'get') {
+      const id = rest[0]; if (!id) { console.error('usage: dmrx get <taskId>'); process.exit(1); }
+      const r = await rpc('tasks/get', { id, historyLength: 3 });
+      const t = r.result;
+      console.log('STATE   :', t.status.state);
+      console.log('HISTORY :'); (t.history || []).forEach(m => console.log('  ' + m.role + ': ' + (m.parts?.[0]?.text || '').slice(0, 120)));
+      if (t.artifacts?.length) console.log('ARTIFACTS:\n' + t.artifacts.map(a => a.parts.map(p => p.text).join('\n')).join('\n---\n'));
+    }
+    else if (cmd === 'cancel') {
+      const id = rest[0]; if (!id) { console.error('usage: dmrx cancel <taskId>'); process.exit(1); }
+      const r = await rpc('tasks/cancel', { id });
+      console.log('CANCELLED:', r.result?.id, r.result?.status?.state || r.error?.message);
+    }
+    else if (cmd === 'agents') {
+      const data = await gw('/v1/agents/instances');
+      data.items.forEach(i => console.log(i.id, '|', i.definitionName, '| runs:', i.executionCount, '| cost24h: $' + (i.costCents24h / 100).toFixed(2)));
+    }
+    else if (cmd === 'status') {
+      const data = await gw('/.well-known/agent.json');
+      console.log('Name   :', data.name);
+      console.log('Version:', data.version);
+      console.log('Skills :', data.skills?.length);
+    }
+    else {
+      console.log(`dmrx — A2A driver for DMR-X
+  send <text> [--agent <id>] [--context <id>]   blocking task
+  get <taskId>                                   check task state
+  cancel <taskId>                                cancel a task
+  agents                                         list agent instances
+  status                                         server status`);
+    }
+  } catch (e) { console.error('ERR:', e.message); process.exit(1); }
+})();
