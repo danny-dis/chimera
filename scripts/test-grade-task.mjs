@@ -10,7 +10,7 @@
 import { mkdtempSync, writeFileSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
-import { gradeTask, seedTask } from './grade-task.mjs';
+import { gradeTask, seedTask, baselineFor } from './grade-task.mjs';
 
 function fresh() { return mkdtempSync(join(tmpdir(), 'chimera-grade-')); }
 
@@ -126,6 +126,30 @@ for (const [label, mode, dir, bound, kind] of cases) {
     if (g.loadError) console.log(`      loadError: ${g.loadError.slice(0, 120)}`);
   }
   rmSync(dir, { recursive: true, force: true });
+}
+
+// --- BUG-12: the do-nothing baseline must be known and non-trivial ---------
+// `debug`'s seed already passes 3/7, so a raw ratio of 0.43 means the model
+// changed NOTHING. If this assertion ever fails, either the seed or the tests
+// changed and every recorded `debug` score needs re-interpreting.
+console.log('\n=== DO-NOTHING BASELINES (BUG-12) ===');
+const EXPECTED_BASELINES = {
+  code: [0, 10],
+  debug: [3, 7],        // <-- the trap: NOT zero
+  code_multi: [0, 6],
+};
+for (const [mode, [expPassed, expTotal]] of Object.entries(EXPECTED_BASELINES)) {
+  const b = baselineFor(mode);
+  const good = b && b.baselinePassed === expPassed && b.baselineTotal === expTotal;
+  console.log(`${good ? 'PASS' : 'FAIL'}  ${mode.padEnd(12)} baseline=${b ? `${b.baselinePassed}/${b.baselineTotal}` : 'null'} (expected ${expPassed}/${expTotal})`);
+  if (!good) ok = false;
+}
+// A graded score must be compared against its baseline, not against zero.
+{
+  const b = baselineFor('debug');
+  const noChangeIsFlagged = b.baselineRatio > 0;
+  console.log(`${noChangeIsFlagged ? 'PASS' : 'FAIL'}  debug baseline is NON-ZERO (a raw 0.43 means no work done)`);
+  if (!noChangeIsFlagged) ok = false;
 }
 
 // The discrimination assertions — the actual point of this file.

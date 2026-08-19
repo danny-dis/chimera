@@ -183,7 +183,110 @@ Rows carried `error: None` while the real `ERR:` string existed only in the `.lo
 run could not be triaged from the JSON alone. **Fixed:** rows now carry `errorText` and
 `failureClass`.
 
-### BUG-7 — All non-solo `debug` presets bail to `needs_user` — **MEDIUM**
+### BUG-12 — `debug` score of 0.43 was the DO-NOTHING BASELINE, not a defect — **HIGH** — TOOLING FIXED 2026-08-19
+Across **8 independent samples** (3 harness attempts + 2 salvaged `RUNS=3` runs) every
+`debug` preset scored exactly **3/7 = 0.43** with **zero variance** — `solo`, `auto`, `duo`,
+`trio` all identical. That looked like a rock-solid capability defect and was nearly filed
+as one.
+
+It is a **benchmark flaw**. Grading the untouched seed file proves it:
+```
+$ node --input-type=module -e "import {baselineFor} from './scripts/grade-task.mjs';
+                              console.log(baselineFor('debug'))"
+  { baselinePassed: 3, baselineTotal: 7, baselineRatio: 0.4285... }
+  failures: lastIndex basic (got 3), lastIndex single (got 1),
+            lastIndex empty (got 0), average empty (got NaN)
+```
+`stats.js` as seeded **already passes 3 of 7 assertions** (all four `average` non-empty
+cases pass; only `lastIndex` ×3 and the empty-array case fail). So **0.43 means the model
+changed nothing at all.**
+
+Corroborating evidence that was in the logs the whole time: **`diskW=0` on nearly every
+`debug` row** — `write_file` was never called. Combined with `disk.target=true valid=1
+ran=1` (the seed is present and loads), the rows were reporting "the untouched seed file".
+
+**Consequence:** every objective score is meaningless without its baseline. A raw ratio
+cannot distinguish "fixed half the bugs" from "did nothing".
+
+**Fix:** `baselineFor(mode)` in `grade-task.mjs` seeds a throwaway tmpdir, grades it, and
+returns the do-nothing ratio (offline, no API calls). `matrix-disk.mjs` computes all
+baselines at startup and records `grade.baselineRatio`, `grade.improvement`
+(`ratio - baselineRatio`) and `grade.noChange` on every graded row; a `done` row scoring at
+or below baseline is now pushed into `failures` as *"the artifact was likely never
+modified"*. The console line shows `grade=3/7 (base 3/7, impr +0.00 NO-CHANGE)`.
+Verified: baselines are `code 0/10`, `debug 3/7`, `code_multi 0/6`;
+`node scripts/test-grade-task.mjs` still **ALL PASS**.
+
+**Restates BUG-7:** the real `debug` finding is not "scores 0.43", it is **"never writes
+the file and bails to `needs_user`"**. The score was a symptom.
+
+### BUG-13 — Matrix `node` process dies silently at ~20–30 min — **HIGH** — MITIGATED 2026-08-19
+Five consecutive attempts on 2026-08-19 all died with **no `FATAL`, no stack trace, and no
+exit line**, at wildly different combos (37/37-then-nothing, 34, 10, **1**, 14 of 37):
+
+| attempt | reached | wall |
+|---|---|---|
+| `RUNS=3` run 1 | 37/37 but summary never written | 31 min |
+| `RUNS=3` run 2 | killed at combo 34 | 73 min |
+| pass 1 (`RUNS=1`) | 10/37 | 21 min |
+| pass 2 (`RUNS=1`) | **1/37** | <1 min |
+| pass 3 (`RUNS=1`) | 14/37 | 29 min |
+
+Ruled out: **not** heap exhaustion (node RSS 83 MB at death, nowhere near a limit);
+**not** the wrapper/owner (happened under `terminal(background)` AND under a
+scheduler-owned `cronjob`, so splitting `RUNS=3` into three resumable `RUNS=1` passes did
+**not** help — wrong layer); **not** a crash (zero diagnostic output).
+
+Prime suspect: **individual combos exceeding the harness's `timeoutMs: 120000`** by 3–5×.
+Measured worst offenders: **585 s, 535 s, 494 s, 469 s, 337 s, 327 s** — i.e. provider calls
+running ~5× past their configured timeout, so the timeout is not being enforced and
+something upstream eventually severs the process. Correlates with provider health at
+**20/117 (17.1%)**.
+
+**Structural aggravator:** the harness only writes its artifact and summary **at the very
+end of `main()`**, so a kill at combo 36 of 37 yields **zero** usable data. Run 1 completed
+all 37 combos and still produced nothing — the numbers had to be re-parsed out of the
+`.log`. **Fix needed: append each row to the artifact incrementally as it completes**, and
+make `results.json` recoverable from a partial run.
+
+**FIX (2026-08-19) — three parts, all verified live:**
+
+1. **`COMBO_TIMEOUT_MS` (default 300000) — a hard wall-clock ceiling per combo.**
+   Root cause identified: provider `timeoutMs` **is** enforced, but only per HTTP request
+   (`AbortController` + `setTimeout(() => controller.abort())` in every provider). An
+   agentic tool loop issues MANY sequential requests, each legitimately under 120 s, so the
+   *combo* had no ceiling at all. `runWithCeiling()` races `orchestrator.execute` against a
+   timer and returns a normal `error` row instead of drifting. A wall-clock timeout is
+   deliberately **not retried** (it would burn another full ceiling). Rows carry
+   `timedOut: true`, and the existing `/timed? ?out/i` pattern classifies them as **infra**,
+   so they are excluded from the quality average.
+   *Verified:* `COMBO_TIMEOUT_MS=30000 COMBO=code/trio` → `error (30016ms)`, correctly
+   bucketed infra. The same combo previously ran **326 s** unbounded.
+
+2. **Incremental persistence.** `flushArtifact()` writes the full artifact after **every**
+   completed row, tagged `partial: true` until the summary is reached (then `partial: false`).
+   *Verified:* killed a run mid-flight with `pkill` → artifact contained **2 usable rows**
+   plus baselines and `partial: true`. Before this change the same kill produced **nothing**.
+
+3. **`RESUME=1`.** Re-loads a partial artifact, keys recorded rows by
+   `mode/preset#run`, and skips them. *Verified:* `RESUME: loaded 2 row(s); 2 combo(s)
+   already complete, 35 remaining.`
+
+The startup banner now prints `[comboTimeout=…ms]` and the do-nothing baselines
+(`code=0/10 debug=3/7 code_multi=0/6`), so every log is self-documenting about how it was
+scored. `node scripts/test-grade-task.mjs` → **ALL PASS** (no regression).
+
+**Still open:** the *underlying* reason a long-lived `node` gets severed is not proven — the
+ceiling makes it survivable rather than explaining it. Provider health at **20/117 (17.1%)**
+remains the prime suspect and BUG-9/BUG-10 should be fixed before the next full pass.
+
+### BUG-7 — All non-solo `debug` presets bail to `needs_user` — **MEDIUM** — SHARPENED 2026-08-19
+See BUG-12: the accompanying 0.43 score is the do-nothing baseline, so this is the *whole*
+finding, not half of it. `diskW=0` on nearly every `debug` row confirms `write_file` is
+never called — the agent does not "do the work then fail to report it", it **never edits the
+file**. Note `debug/solo` also bails (`needs_user`, `diskW=0`) in 3 of 4 samples, so this is
+**not** limited to non-solo presets as originally recorded.
+
 `debug/auto`, `debug/duo`, `debug/trio`, `debug/fusion`, `debug/swarm` — 5/5 in the
 20:55 run. Consistent across runs, so structural rather than flaky. Each still wrote
 valid runnable files to disk (`debug/fusion` wrote 6), so the work happens but the

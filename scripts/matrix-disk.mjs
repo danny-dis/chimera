@@ -11,6 +11,12 @@
 //   COMBO=mode/preset   run a single combo (writes a SEPARATE smoke artifact)
 //   RUNS=n              repeat the whole list n times, report per-combo median
 //                       + spread and name every non-reproducible combo
+//   COMBO_TIMEOUT_MS    hard wall-clock ceiling per combo (default 300000).
+//                       BUG-13: provider `timeoutMs` is per HTTP REQUEST, so an
+//                       agentic loop of many sequential calls ran 585s under a
+//                       120s setting and the process was eventually severed with
+//                       no diagnostics. This bounds the COMBO, not the request.
+//   RESUME=1            skip combos already present in the partial artifact
 //
 // Verifies the truncation-hardened write_file: code/debug must land a
 // syntactically-valid file OR route to needs_user — never broken-and-done.
@@ -43,7 +49,16 @@ const { ProviderFactory, SimpleModelRegistry, RateLimiter } = require('@chimera/
 const { ToolRegistry, ToolExecutor, allTools } = require('@chimera/tools');
 const { scoreCombo } = await import('./score-combo.mjs');
 const { promptFor, GRADEABLE, TASKS } = await import('./task-suite.mjs');
-const { gradeTask, seedTask, validateJsFiles } = await import('./grade-task.mjs');
+const { gradeTask, seedTask, validateJsFiles, baselineFor } = await import('./grade-task.mjs');
+
+// BUG-12: the do-nothing baseline. `debug`'s buggy seed ALREADY scores 3/7, so
+// a reported 0.43 means the model changed NOTHING — it is not a partial fix.
+// Computed once, offline, before any live call.
+const BASELINES = {};
+for (const m of GRADEABLE) {
+  const b = baselineFor(m);
+  if (b) BASELINES[m] = b;
+}
 
 function adaptProvider(provider) {
   return {
@@ -235,8 +250,37 @@ function classifyFailure(text) {
   return INFRA_PATTERNS.some((re) => re.test(text)) ? 'infra' : 'capability';
 }
 
+// BUG-13 knobs. COMBO_TIMEOUT_MS bounds a whole combo's wall clock (provider
+// timeoutMs only bounds one HTTP request). RESUME reuses a partial artifact.
+const COMBO_TIMEOUT_MS = Math.max(30_000, Number(process.env.COMBO_TIMEOUT_MS || 300_000));
+const RESUME = process.env.RESUME === '1';
+// Declared here (not below runCombo) because flushArtifact() closes over it and
+// is invoked after the first combo completes — a TDZ error otherwise.
+const RUNS = Math.max(1, Number(process.env.RUNS || 1));
+
 const results = [];
 const failures = [];
+
+// BUG-13: PERSIST INCREMENTALLY. The harness used to write results.json only at
+// the very end of main(), so a process killed at combo 36/37 produced ZERO
+// usable data — one run completed all 37 combos and still yielded nothing
+// because the summary was never reached; the numbers had to be re-parsed out of
+// the .log. Every completed row is now flushed to disk immediately, so a kill
+// costs one combo instead of the whole measurement.
+let ARTIFACT_PATH = null;
+function flushArtifact(extra = {}) {
+  if (!ARTIFACT_PATH) return;
+  try {
+    writeFileSync(ARTIFACT_PATH, JSON.stringify({
+      writer: writerModel, reviewer: reviewerModel, challenger: challengerEntry.model,
+      ranAt: new Date().toISOString(), runs: RUNS, comboTimeoutMs: COMBO_TIMEOUT_MS,
+      baselines: BASELINES, comboCount: results.length,
+      partial: true, ...extra, results,
+    }, null, 2));
+  } catch (e) {
+    console.error(`  [warn] could not flush artifact: ${String(e?.message).slice(0, 120)}`);
+  }
+}
 
 async function runCombo(mode, preset, runIndex = 1) {
   const workdir = join(tmpdir(), `chimera-matrix-${mode}-${preset}-${Date.now()}`);
@@ -265,6 +309,25 @@ async function runCombo(mode, preset, runIndex = 1) {
 
   const start = Date.now();
   let result;
+  // BUG-13: hard wall-clock ceiling per combo. Provider `timeoutMs` bounds a
+  // single HTTP request; an agentic tool loop makes MANY sequential requests, so
+  // a 120s per-request timeout still permitted 585s combos. Unbounded combos are
+  // what let the process drift for ~25min and get severed with zero diagnostics.
+  // Racing against a timer converts that into a recorded, classified row.
+  const runWithCeiling = async (fn) => {
+    let timer;
+    const ceiling = new Promise((resolve) => {
+      timer = setTimeout(
+        () => resolve({ status: 'error', error: `[harness] combo exceeded COMBO_TIMEOUT_MS=${COMBO_TIMEOUT_MS}ms wall clock (timed out)`, __timedOut: true }),
+        COMBO_TIMEOUT_MS,
+      );
+    });
+    try {
+      return await Promise.race([fn(), ceiling]);
+    } finally {
+      clearTimeout(timer);
+    }
+  };
   const runOnce = async () => {
     try {
       return await orchestrator.execute({ task: taskFor(mode), mode, providers: { writer, reviewer, challenger }, preset, costCap: 10 });
@@ -272,14 +335,15 @@ async function runCombo(mode, preset, runIndex = 1) {
       return { status: 'throw', error: e instanceof Error ? e.message : String(e) };
     }
   };
-  result = await runOnce();
+  result = await runWithCeiling(runOnce);
   // Retry once on transient failures (provider empty-content blips, throws)
   // so a one-off API hiccup doesn't poison the unattended audit. A genuine
-  // capability gap will still surface on the second attempt.
+  // capability gap will still surface on the second attempt. A wall-clock
+  // timeout is NOT retried — it would just burn another full ceiling.
   const s0 = result?.status;
-  if (s0 === 'throw' || s0 === 'error') {
+  if ((s0 === 'throw' || s0 === 'error') && !result?.__timedOut) {
     await new Promise((r) => setTimeout(r, 5000));
-    result = await runOnce();
+    result = await runWithCeiling(runOnce);
   }
   const ms = Date.now() - start;
   const status = result?.status || 'unknown';
@@ -321,6 +385,20 @@ async function runCombo(mode, preset, runIndex = 1) {
     failures.push({ mode, preset, status, reason: `done but only ${grade.passed}/${grade.total} hidden tests pass: ${(grade.failures || []).slice(0, 3).join('; ')}` });
   }
 
+  // BUG-12: score NET OF THE DO-NOTHING BASELINE. `debug`'s seed already
+  // passes 3/7, so a raw 0.43 is zero work done. `improvement` is the number
+  // that actually measures the agent; `noChange` flags a run that scored at or
+  // below what an empty run scores.
+  const baseline = BASELINES[mode] || null;
+  if (grade && baseline && typeof grade.ratio === 'number') {
+    grade.baselineRatio = baseline.baselineRatio;
+    grade.improvement = grade.ratio - baseline.baselineRatio;
+    grade.noChange = grade.ratio <= baseline.baselineRatio;
+    if (grade.noChange && (status === 'done' || status === 'complete')) {
+      failures.push({ mode, preset, status, reason: `done but scored AT/BELOW the do-nothing baseline (${grade.passed}/${grade.total} vs baseline ${baseline.baselinePassed}/${baseline.baselineTotal}) — the artifact was likely never modified` });
+    }
+  }
+
   const rubricScore = scoreCombo({ mode, preset, status, disk, diskWrites, toolCalls, evErrors });
   const useObjective = grade && typeof grade.ratio === 'number';
   const score = useObjective ? grade.ratio : rubricScore;
@@ -332,10 +410,14 @@ async function runCombo(mode, preset, runIndex = 1) {
     ? (result?.error || result?.output || '').toString()
     : '';
   const failureClass = classifyFailure(errorText);
-  const rec = { run: runIndex, mode, preset, status, ms, toolCalls, diskWrites, writeErrors, evErrors: [...new Set(evErrors)], disk, quality: score, scoreKind, rubricScore, grade, failureClass, errorText: errorText.slice(0, 400), output: (result?.output || result?.result || result?.error || '').toString().slice(0, 160) };
+  const rec = { run: runIndex, mode, preset, status, ms, toolCalls, diskWrites, writeErrors, evErrors: [...new Set(evErrors)], disk, quality: score, scoreKind, rubricScore, grade, failureClass, timedOut: !!result?.__timedOut, errorText: errorText.slice(0, 400), output: (result?.output || result?.result || result?.error || '').toString().slice(0, 160) };
   results.push(rec);
+  // BUG-13: flush after EVERY combo so a kill costs one row, not the whole run.
+  flushArtifact();
   const diskStr = disk ? ` disk.target=${disk.targetExists} valid=${disk.valid} broken=${disk.broken} ran=${disk.ran}` : '';
-  const gradeStr = grade && grade.total ? ` grade=${grade.passed}/${grade.total}` : '';
+  const gradeStr = grade && grade.total
+    ? ` grade=${grade.passed}/${grade.total}${typeof grade.improvement === 'number' ? ` (base ${(grade.baselineRatio * grade.total).toFixed(0)}/${grade.total}, impr ${grade.improvement >= 0 ? '+' : ''}${grade.improvement.toFixed(2)}${grade.noChange ? ' NO-CHANGE' : ''})` : ''}`
+    : '';
   console.log(`  ${mode}/${preset} -> ${status} (${ms}ms tools=${toolCalls} diskW=${diskWrites}${diskStr}${gradeStr}${evErrors.length ? ' EV:' + [...new Set(evErrors)].join(',') : ''})${status === 'throw' || status === 'error' ? ' ERR:' + ((result?.error || result?.output || '').toString().slice(0, 300)) : ''}`);
 
   // cleanup
@@ -347,7 +429,6 @@ async function runCombo(mode, preset, runIndex = 1) {
 }
 
 // Quality stand-in imported from score-combo.mjs (pure, unit-tested).
-const RUNS = Math.max(1, Number(process.env.RUNS || 1));
 
 function median(xs) {
   if (!xs.length) return 0;
@@ -385,17 +466,48 @@ function buildAggregates(rows) {
 async function main() {
   // Optional: COMBO=mode/preset runs a single combo (smoke test).
   const comboFilter = process.env.COMBO;
-  const combos = comboFilter ? VALID.filter(([m, p]) => `${m}/${p}` === comboFilter) : VALID;
+  let combos = comboFilter ? VALID.filter(([m, p]) => `${m}/${p}` === comboFilter) : VALID;
   if (comboFilter && combos.length === 0) {
     console.error(`COMBO '${comboFilter}' not found in VALID list.`);
     process.exit(2);
   }
-  console.log(`Matrix (disk+validity+grade): writer=${writerModel} reviewer=${reviewerModel} challenger=${challengerEntry.model}${comboFilter ? ` [smoke: ${comboFilter}]` : ''}${RUNS > 1 ? ` [RUNS=${RUNS}]` : ''}`);
+  // BUG-13: set the artifact path BEFORE the first combo so incremental flushes
+  // have a destination. Smoke runs still use a separate file.
+  ARTIFACT_PATH = join(repoRoot, 'scripts', comboFilter ? 'matrix-disk-results-smoke.json' : 'matrix-disk-results.json');
+
+  // RESUME=1: re-load a partial artifact and skip combos already recorded, so a
+  // killed run continues instead of restarting from combo 1.
+  if (RESUME && existsSync(ARTIFACT_PATH)) {
+    try {
+      const prev = JSON.parse(readFileSync(ARTIFACT_PATH, 'utf-8'));
+      const prevRows = Array.isArray(prev?.results) ? prev.results : [];
+      if (prevRows.length) {
+        results.push(...prevRows);
+        const seen = new Set(prevRows.map((r) => `${r.mode}/${r.preset}#${r.run ?? 1}`));
+        const before = combos.length;
+        // With RUNS>1 a combo is only skipped once every run has recorded it.
+        combos = combos.filter(([m, p]) => {
+          for (let run = 1; run <= RUNS; run++) if (!seen.has(`${m}/${p}#${run}`)) return true;
+          return false;
+        });
+        console.log(`RESUME: loaded ${prevRows.length} row(s); ${before - combos.length} combo(s) already complete, ${combos.length} remaining.`);
+      }
+    } catch (e) {
+      console.error(`RESUME: could not read partial artifact (${String(e?.message).slice(0, 100)}) — starting fresh.`);
+    }
+  }
+  console.log(`Matrix (disk+validity+grade): writer=${writerModel} reviewer=${reviewerModel} challenger=${challengerEntry.model}${comboFilter ? ` [smoke: ${comboFilter}]` : ''}${RUNS > 1 ? ` [RUNS=${RUNS}]` : ''} [comboTimeout=${COMBO_TIMEOUT_MS}ms]`);
+  console.log(`Do-nothing baselines: ${Object.entries(BASELINES).map(([m, b]) => `${m}=${b.baselinePassed}/${b.baselineTotal}`).join(' ')}`);
   for (let run = 1; run <= RUNS; run++) {
     if (RUNS > 1) console.log(`\n########## RUN ${run}/${RUNS} ##########`);
     let i = 0;
     for (const [mode, preset] of combos) {
       i++;
+      // RESUME: a row for this combo+run may already exist from a killed pass.
+      if (RESUME && results.some((r) => r.mode === mode && r.preset === preset && (r.run ?? 1) === run)) {
+        console.log(`[${i}/${combos.length}]${RUNS > 1 ? ` (run ${run})` : ''} ${mode}/${preset} -> SKIPPED (already recorded)`);
+        continue;
+      }
       console.log(`[${i}/${combos.length}]${RUNS > 1 ? ` (run ${run})` : ''}`);
       await runCombo(mode, preset, run);
     }
@@ -476,8 +588,8 @@ async function main() {
   console.log(`  separately above.${RUNS > 1 ? '' : ' RUNS=1: treat this as ONE sample, not a finding.'}`);
   if (multiQ <= soloQ && multiAgg.length) console.log('  NOTE: multi-agent did NOT beat solo on the objective tasks.');
 
-  const outPath = join(repoRoot, 'scripts', comboFilter ? 'matrix-disk-results-smoke.json' : 'matrix-disk-results.json');
-  writeFileSync(outPath, JSON.stringify({ writer: writerModel, reviewer: reviewerModel, challenger: challengerEntry.model, ranAt: new Date().toISOString(), smoke: comboFilter || undefined, runs: RUNS, comboCount: results.length, aggregates, results }, null, 2));
+  const outPath = ARTIFACT_PATH;
+  writeFileSync(outPath, JSON.stringify({ writer: writerModel, reviewer: reviewerModel, challenger: challengerEntry.model, ranAt: new Date().toISOString(), smoke: comboFilter || undefined, runs: RUNS, comboTimeoutMs: COMBO_TIMEOUT_MS, baselines: BASELINES, comboCount: results.length, partial: false, aggregates, results }, null, 2));
   console.log(`Wrote ${outPath}`);
   if (comboFilter) console.log('(smoke run — full-run artifact matrix-disk-results.json left untouched)');
   process.exit(0);

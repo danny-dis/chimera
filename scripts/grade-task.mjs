@@ -10,8 +10,9 @@
 // load, hangs, or calls process.exit cannot take the harness down with it.
 
 import { execFileSync } from 'child_process';
-import { existsSync, writeFileSync, readdirSync } from 'fs';
+import { existsSync, writeFileSync, readdirSync, mkdtempSync, rmSync } from 'fs';
 import { join } from 'path';
+import { tmpdir } from 'os';
 import { TASKS } from './task-suite.mjs';
 
 // Build a runner script that loads the artifact and prints one JSON line per
@@ -98,6 +99,40 @@ export function seedTask(mode, workdir) {
   if (!task || !task.seed) return;
   for (const [name, content] of Object.entries(task.seed)) {
     writeFileSync(join(workdir, name), content);
+  }
+}
+
+/**
+ * Grade of the UNTOUCHED seed — the score a run gets for doing NOTHING.
+ *
+ * BUG-12: `debug` was reported as 0.43 (3/7) on every preset across 8 samples
+ * with zero variance, which looked like a stable capability defect. It is not:
+ * the buggy seed file ITSELF scores exactly 3/7, and nearly every debug row
+ * had `diskW=0` (write_file never called). So 0.43 is the DO-NOTHING BASELINE,
+ * not a partial fix. An objective score is meaningless without it.
+ *
+ * Callers should report `improvement = ratio - baselineRatio` alongside the raw
+ * ratio, and treat `ratio <= baselineRatio` as "the model changed nothing".
+ */
+export function baselineFor(mode) {
+  const task = TASKS[mode];
+  if (!task) return null;
+  // Tasks with no seed start from an empty dir: doing nothing scores 0.
+  if (!task.seed) return { baselinePassed: 0, baselineTotal: task.tests.length, baselineRatio: 0 };
+  let tmp;
+  try {
+    tmp = mkdtempSync(join(tmpdir(), 'chimera-baseline-'));
+    seedTask(mode, tmp);
+    const g = gradeTask(mode, tmp);
+    return {
+      baselinePassed: g.passed,
+      baselineTotal: g.total,
+      baselineRatio: g.ratio,
+    };
+  } catch {
+    return null;
+  } finally {
+    if (tmp) { try { rmSync(tmp, { recursive: true, force: true }); } catch {} }
   }
 }
 

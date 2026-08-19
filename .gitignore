@@ -28,3 +28,4 @@ smoke-tmp/
 
 # Transient single-combo smoke output (COMBO=mode/preset node scripts/matrix-disk.mjs)
 scripts/matrix-disk-results-smoke.json
+matrix-disk-results-STALE-backup.json
