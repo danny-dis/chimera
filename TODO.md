@@ -280,6 +280,19 @@ scored. `node scripts/test-grade-task.mjs` → **ALL PASS** (no regression).
 ceiling makes it survivable rather than explaining it. Provider health at **20/117 (17.1%)**
 remains the prime suspect and BUG-9/BUG-10 should be fixed before the next full pass.
 
+**STRONG LEAD (found 2026-08-19 after the fix):** commit `4795aa4`
+*"fix(dmrx): add keep-alive agent to prevent TIME_WAIT accumulation"* landed at **13:01**,
+i.e. during this very investigation, and describes exactly the failure shape observed:
+without HTTP keep-alive every provider call opens a fresh socket, and Windows' ephemeral
+port range is **49152–65535 (16384 ports)** with a 4-minute `TIME_WAIT`. A 37-combo agentic
+matrix issues thousands of requests, exhausts the range, and then **socket allocation starts
+failing — which matches the ~20–30 min time-to-death, the total absence of a JS-level
+exception, and the slowdown from 49 s/combo to 147 s/combo across runs.** Measured now
+(idle): 0 TIME_WAIT to :47113, 38 system-wide, so the pool is clean at rest — the leak only
+manifests under sustained load. **Next step: re-run a full pass on a gateway that includes
+`4795aa4` and check `netstat -an | grep -c TIME_WAIT` periodically during the run.** If that
+is the cause, `COMBO_TIMEOUT_MS` is a seatbelt and the keep-alive agent is the actual fix.
+
 ### BUG-7 — All non-solo `debug` presets bail to `needs_user` — **MEDIUM** — SHARPENED 2026-08-19
 See BUG-12: the accompanying 0.43 score is the do-nothing baseline, so this is the *whole*
 finding, not half of it. `diskW=0` on nearly every `debug` row confirms `write_file` is
