@@ -20,7 +20,7 @@
  */
 
 import { existsSync, readdirSync, readFileSync, statSync } from 'fs';
-import { isAbsolute, resolve } from 'path';
+import { isAbsolute, join, resolve } from 'path';
 import type { EventStream } from '../event-stream.js';
 import type {
   LLMProvider,
@@ -420,12 +420,15 @@ export async function runAgentToolLoop(
     realFiles = countSourceFiles(workspaceRoot!);
     const MAX_FORCE = forceMinFiles ?? 3;
     let forceAttempts = 0;
+    const targetExists = !!workspaceRoot && !!targetPath && existsSync(join(workspaceRoot, targetPath));
     while ((!fileLandedOnDisk(task ?? '', workspaceRoot!) || !targetChanged(task ?? '', workspaceRoot!, targetBefore) || wroteFileCount === 0) && forceAttempts < MAX_FORCE) {
       forceAttempts++;
       const forceMessages: LoopChatMessage[] = [];
       if (systemPrompt) forceMessages.push({ role: 'system', content: systemPrompt });
       const targetLine = targetPath
-        ? `You MUST call write_file (to create a new file) or edit_file (to modify an existing file) to apply the fix to \`${targetPath}\`; do not merely narrate the change. `
+        ? targetExists
+          ? `You MUST call write_file with \`overwrite: true\` to MODIFY the EXISTING file \`${targetPath}\` — it already exists and must be overwritten. Do not merely narrate the change. `
+          : `You MUST call write_file to CREATE the new file \`${targetPath}\`; do not merely narrate the change. `
         : 'You MUST call write_file or edit_file to apply the fix to the file the task names; do not merely narrate the change. ';
       forceMessages.push({
         role: 'user',
