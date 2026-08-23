@@ -360,8 +360,27 @@ completion path gives up.
 ### BUG-11 — Mistral and nvidia-nim responding in Chinese to English prompt — **LOW**
 `mistral/codestral-2508` and `nvidia-nim/llama-3.1-8b-instruct` both replied "你好！我是DeepSe" to an English "ping". The gateway is routing to Chinese-optimized variants of these models. Either the upstream model selector is auto-detecting Chinese from the model name, or the gateway's model→upstream mapping is wrong.
 
-### BUG-8 — Harness is outside typecheck and CI — **MEDIUM**
+### BUG-8 — Harness is outside typecheck and CI — **MEDIUM** — FIXED 2026-08-23
 `matrix-disk.mjs` is a standalone `.mjs` against built `dist/`, so core refactors break
 it invisibly (`72b668d` did exactly that, and the stale `18/30` score survived for weeks
 because nobody could run it). Needs a CI smoke step — `COMBO=code/solo` is now safe to
 run in CI since it no longer clobbers the artifact.
+
+<details><summary>Fix (commit c5beda6)</summary>
+
+New `scripts/harness-smoke.mjs` (also `pnpm smoke:harness`), wired into `ci.yml`
+after Test on both OS matrix legs. Runs the **real** matrix-disk pipeline
+end-to-end against a scripted narrator mock provider — no network, no API keys,
+~2s. Asserts exactly what rotted before:
+
+1. All workspace requires in `matrix-disk.mjs` resolve (via chimera-cli dep
+   context — pnpm workspace layout, not resolvable from `scripts/` itself).
+2. `SessionOrchestrator` accepts positional tools; `toolExecutor` non-null.
+3. Narrator-style prose output lands an actual file fix on disk through the
+   prose-fallback chain (doubles as the BUG-7 regression guard).
+4. `grade-task.mjs` scores a perfect artifact 7/7 and honestly reports a
+   missing target.
+
+Local: 6/6 assertions pass. CI will run it on every push/PR to main.
+
+</details>
