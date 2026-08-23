@@ -1205,9 +1205,8 @@ export class CliRouter {
      */
     const collectDiffFiles = (files?: string[]): DiffFile[] => {
       try {
-        const { execSync } = require('node:child_process') as typeof import('node:child_process');
-        const targets = files && files.length > 0 ? files.join(' ') : '.';
-        const raw = execSync(`git diff --no-color ${targets}`, { cwd: workspaceRoot, encoding: 'utf8' });
+        const { execFileSync } = require('node:child_process') as typeof import('node:child_process');
+        const raw = execFileSync('git', ['diff', '--no-color', ...(files && files.length > 0 ? files : ['.'])], { cwd: workspaceRoot, encoding: 'utf8' });
         if (!raw.trim()) return [];
         return parseGitDiff(raw);
       } catch {

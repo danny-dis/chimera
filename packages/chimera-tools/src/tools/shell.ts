@@ -39,9 +39,24 @@ const DANGEROUS_PATTERNS = [
   /\b(curl|wget)\b.*\|\s*(?:ba)?sh/,
 ];
 
-function isDangerous(command: string): boolean {
-  for (const pattern of DANGEROUS_PATTERNS) {
-    if (pattern.test(command)) return true;
+/**
+ * Split a command string on shell separators (`;`, `&&`, `||`, `|`) and return
+ * non-empty trimmed segments. Simple split — quoting-awareness is not handled.
+ */
+export function splitShellSegments(command: string): string[] {
+  return command
+    .split(/&&|\|\||;|\|/)
+    .map((segment) => segment.trim())
+    .filter((segment) => segment.length > 0);
+}
+
+export function isDangerous(command: string): boolean {
+  const segments = splitShellSegments(command);
+  const targets = [command, ...segments];
+  for (const target of targets) {
+    for (const pattern of DANGEROUS_PATTERNS) {
+      if (pattern.test(target)) return true;
+    }
   }
   return false;
 }
