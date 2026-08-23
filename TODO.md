@@ -314,7 +314,31 @@ executions (would explain why a `cronjob` died at combo 1 of pass 2), or (b) a s
 resource leak inside long agentic combos (the 326 s / 534 s / 585 s combos) that only
 surfaces cumulatively. The `COMBO_TIMEOUT_MS` seatbelt makes either survivable.
 
-### BUG-7 — All non-solo `debug` presets bail to `needs_user` — **MEDIUM** — SHARPENED 2026-08-19
+### BUG-7 — All non-solo `debug` presets bail to `needs_user` — **MEDIUM** — FIXED 2026-08-23
+**RESOLVED** in commit `16c2542`. Root-cause chain (each link verified by deterministic
+mock repro + instrumented live gateway trace):
+1. Narrator models emit the fix as fenced prose instead of a `write_file` tool call.
+2. `parseProseActions` recovered the write WITHOUT `overwrite:true`, so every write to
+   a pre-existing (buggy seed) file failed with "overwrite is false" and retried into
+   the same wall.
+3. `executeProseActions` counted *attempted* writes, masking that nothing landed.
+4. The gateway ignores OpenAI's nested `tool_choice` shape, so forced write_file turns
+   free-formed `read_file` calls instead.
+5. The final synthesized output carried the complete fixed code, but no safety net
+   ran after synthesis to land it.
+
+Fixes: prose writes now carry `overwrite:true`; `executeProseActions` counts only
+disk-verified mtime/size mutations; `mapToolChoice` sends both canonical and shorthand
+shapes; a last-resort prose-persistence net in `deliberationToOrchestratorResult` lands
+parsed file ops before the completion gate resolves; the filesystem tool refuses
+malformed JS via a syntax oracle (balanced braces alone missed `{ a, b; }`).
+
+Live verification (`COMBO=debug/solo matrix-disk.mjs`): `done`, diskW=1, valid=1,
+broken=0, hidden tests 6/7 vs 3/7 do-nothing baseline. Was: `needs_user`, diskW=0,
+0/7 with "artifact did not load". Residual 1/7 miss is model quality (empty-array
+guard in average()), not infrastructure.
+
+<details><summary>Original finding (2026-08-19)</summary>
 See BUG-12: the accompanying 0.43 score is the do-nothing baseline, so this is the *whole*
 finding, not half of it. `diskW=0` on nearly every `debug` row confirms `write_file` is
 never called — the agent does not "do the work then fail to report it", it **never edits the
@@ -325,6 +349,7 @@ file**. Note `debug/solo` also bails (`needs_user`, `diskW=0`) in 3 of 4 samples
 20:55 run. Consistent across runs, so structural rather than flaky. Each still wrote
 valid runnable files to disk (`debug/fusion` wrote 6), so the work happens but the
 completion path gives up.
+</details>
 
 ### BUG-9 — Google dual-adapter fully down (503) — **HIGH**
 `google/gemini-2.0-flash` returned `503 All providers currently unavailable` via the DMR-X gateway. This is the primary chimera inference provider. Both the OpenAI-compatible adapter (`/v1beta/openai/chat/completions`) and the native streaming adapter (`streamGenerateContent?alt=sse`) are failing — the dual-adapter redundancy is not providing failover. Needs investigation: token expiry, upstream Google API outage, or gateway adapter bug.
