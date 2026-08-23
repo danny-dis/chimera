@@ -2,6 +2,7 @@ import { defineConfig } from 'vitest/config';
 
 export default defineConfig({
   test: {
+    setupFiles: ['./vitest.setup.ts'],
     include: ['src/__tests__/**/*.test.ts'],
     // Many suites here (sandbox, pty-executor, git-tools, search-tools) spawn
     // real subprocesses. On Windows a single spawn costs 1.5-3.5s, so vitest's
