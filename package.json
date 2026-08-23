@@ -12,6 +12,7 @@
     "test": "turbo test",
     "lint": "turbo lint",
     "typecheck": "node scripts/check-build-integrity.mjs && turbo typecheck",
+    "smoke:harness": "node scripts/harness-smoke.mjs",
     "check:build": "node scripts/check-build-integrity.mjs",
     "fix:build": "node scripts/check-build-integrity.mjs --fix",
     "chimera": "node packages/chimera-cli/dist/index.js"
