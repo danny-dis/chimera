@@ -94,7 +94,14 @@ function mapToolChoice(choice: NonNullable<CompletionOptions['toolChoice']>) {
   if (choice === 'auto' || choice === 'required' || choice === 'none') {
     return choice;
   }
-  return { type: 'function' as const, function: { name: choice.name } };
+  // OpenAI's canonical forced-function shape is
+  // {"type":"function","function":{"name":...}}. The DMR-X gateway (and some
+  // aggregators) only understand the shorthand {"type":"function","name":...}
+  // — the nested form is silently IGNORED and the model free-forms instead,
+  // which is exactly how a forced write_file turn ended up emitting read_file.
+  // Send both fields so either parser finds what it needs.
+  const name = choice.function?.name ?? choice.name;
+  return { type: 'function' as const, function: { name }, name };
 }
 
 /**

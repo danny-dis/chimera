@@ -35,6 +35,7 @@ import { ContextEngine, RelayRacing, HandoffProtocol, ToolContextRelay } from '@
 import { runCompactionPipeline, runMicroCompactOnly, MICROCOMPACT_TOKEN_THRESHOLD } from '@chimera/context';
 
 import { RateLimiter, type ModelRegistry } from '@chimera/providers';
+import { executeProseActions, parseProseActions } from './coordinator/file-write-fallback.js';
 
 import type { UserSkillModel } from '@chimera/learning';
 import type { OutputStyle } from './output-styles/index.js';
@@ -1671,12 +1672,12 @@ export class SessionOrchestrator {
     }
   }
 
-  private deliberationToOrchestratorResult(
+  private async deliberationToOrchestratorResult(
     delib: DeliberationResult,
     task: string,
     mode: Mode,
     targetBefore: { mtime: number; size: number } | null,
-  ): OrchestratorResult {
+  ): Promise<OrchestratorResult> {
     // ── Status resolution ───────────────────────────────────────────
     // `delib.degraded` is the ONLY source of an `error` status. But an
     // `error` MUST always carry a human-readable message (never a bare
@@ -1690,7 +1691,7 @@ export class SessionOrchestrator {
     // a pre-existing file always exists, so existence alone is a false
     // `done`. `targetChanged` is the ground-truth gate for both new-file and
     // edit tasks.
-    const fileChanged = this._workspaceRoot
+    let fileChanged = this._workspaceRoot
       ? (mode === 'code' || mode === 'debug') && targetChanged(task, this._workspaceRoot, targetBefore)
       : false;
     // Only file-producing modes (code/debug) escalate a degraded no-file
@@ -1767,6 +1768,51 @@ export class SessionOrchestrator {
     // the caller knows no file was produced. This is mode-agnostic: it
     // covers duo/hive/swarm (which have no native tool loop) as well as
     // solo/trio (whose prose-fallback already emits real tool calls).
+
+    // ── Last-resort prose persistence (BUG-7) ──────────────────────────
+    // Before escalating to needs_user: if a file-producing task's target is
+    // STILL unchanged and the final synthesized output contains parseable
+    // file operations (fenced code with write-intent), execute them now.
+    // This catches the failure mode where every upstream safety net was
+    // bypassed — e.g. the gateway ignores forced tool_choice, the model
+    // ends its last turn with empty content, but the SYNTHESIZER's final
+    // answer carries the complete fixed code in a fence. The deliverable
+    // exists in the output; landing it is strictly better than needs_user.
+    if ((mode === 'code' || mode === 'debug') && !fileChanged && this.toolExecutor && this._workspaceRoot && output.trim()) {
+      try {
+        const prosePath = expectedPathFromTask(task);
+        const proseCalls = parseProseActions(output, prosePath);
+        // Only fire when extraction actually found a plausible target —
+        // never blind-write prose that names no file.
+        if (proseCalls.length > 0) {
+          const landed = await executeProseActions(output, {
+            eventStream: this.eventStream,
+            toolExecutor: this.toolExecutor,
+            ...(this.toolRegistry ? { toolRegistry: this.toolRegistry } : {}),
+            workspaceRoot: this._workspaceRoot,
+            sessionId: `final-net-${Date.now().toString(36)}`,
+            ...(prosePath ? { expectedPath: prosePath } : {}),
+          });
+          if (landed > 0) {
+            fileChanged = this._workspaceRoot
+              ? targetChanged(task, this._workspaceRoot, targetBefore)
+              : false;
+            if (fileChanged) {
+              this.eventStream.append({
+                type: 'prose_fallback_landed',
+                files: landed,
+                path: prosePath ?? '(parsed)',
+              } as any);
+              status = 'done';
+              output = `${output}\n\n[chimera] ${landed} file(s) recovered from model narration and written to disk by the final prose fallback.`;
+            }
+          }
+        }
+      } catch {
+        /* best-effort; the completion gate below still reports honestly */
+      }
+    }
+
     if ((mode === 'code' || mode === 'debug') && status === 'done') {
       if (!fileChanged) {
         return {

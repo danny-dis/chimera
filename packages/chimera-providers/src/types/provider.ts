@@ -38,7 +38,7 @@ export interface CompletionOptions {
   maxTokens?: number;
   stopSequences?: string[];
   tools?: ToolDefinition[];
-  toolChoice?: 'auto' | 'required' | 'none' | { type: 'function'; name: string };
+  toolChoice?: 'auto' | 'required' | 'none' | { type: 'function'; name: string; function?: { name: string } };
   responseFormat?: ResponseFormat;
   cacheControl?: CacheControlOptions;
 }

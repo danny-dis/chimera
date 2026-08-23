@@ -14,6 +14,8 @@ import { EventStream } from '../event-stream.js';
 import { runToolCalls } from './tool-execution-helper.js';
 import type { ToolCall } from '../types/agent.js';
 import type { ToolExecutorInterface, ToolRegistryInterface } from '../session-orchestrator.js';
+import { statSync } from 'fs';
+import { isAbsolute, resolve } from 'path';
 
 /** Known source-file extensions used by the path-matching patterns. */
 const EXT_LIST = 'rs|ts|js|jsx|tsx|mjs|cjs|py|toml|json|jsonc|md|ya?ml|go|java|cpp|c|rb|php|txt|html|css|sh|ini|cfg|conf|svg';
@@ -71,7 +73,7 @@ export function parseProseActions(text: string, expectedPath?: string): ToolCall
     const path = m[2].trim();
     if (op === 'WRITE') {
       const content = extractFencedCode(m[3]);
-      if (content) calls.push({ id: mkId(), name: 'write_file', arguments: { path, content } });
+      if (content) calls.push({ id: mkId(), name: 'write_file', arguments: { path, content, overwrite: true } });
     } else {
       const { old_string, new_string } = splitEditBlock(m[3]);
       if (new_string) calls.push({ id: mkId(), name: 'edit_file', arguments: { path, old_string, new_string } });
@@ -83,7 +85,7 @@ export function parseProseActions(text: string, expectedPath?: string): ToolCall
   while ((m = deltaRe.exec(text))) {
     const path = m[1].trim().replace(/:[\d,\-]+$/, '');
     const content = extractFencedCode(m[2]);
-    if (path && content) calls.push({ id: mkId(), name: 'write_file', arguments: { path, content } });
+    if (path && content) calls.push({ id: mkId(), name: 'write_file', arguments: { path, content, overwrite: true } });
   }
 
   // 4) write_file("<path>") / File:|Path:|Filepath:|Source: <path> + fenced block
@@ -91,7 +93,7 @@ export function parseProseActions(text: string, expectedPath?: string): ToolCall
   while ((m = genRe.exec(text))) {
     const path = (m[1] || m[2]).trim();
     const content = m[3];
-    if (path && content) calls.push({ id: mkId(), name: 'write_file', arguments: { path, content } });
+    if (path && content) calls.push({ id: mkId(), name: 'write_file', arguments: { path, content, overwrite: true } });
   }
 
   // 4c) Inline-arg form: write_file('path', 'content') / write_file("path", "content")
@@ -104,7 +106,7 @@ export function parseProseActions(text: string, expectedPath?: string): ToolCall
     const path = m[1].trim();
     const content = m[2];
     if (path && content && !hasPath(calls, path)) {
-      calls.push({ id: mkId(), name: 'write_file', arguments: { path, content } });
+      calls.push({ id: mkId(), name: 'write_file', arguments: { path, content, overwrite: true } });
     }
   }
 
@@ -128,7 +130,7 @@ export function parseProseActions(text: string, expectedPath?: string): ToolCall
     const path = m[1].trim();
     const content = m[2].replace(/\s+$/, '');
     if (path && content && !hasPath(calls, path)) {
-      calls.push({ id: mkId(), name: 'write_file', arguments: { path, content } });
+      calls.push({ id: mkId(), name: 'write_file', arguments: { path, content, overwrite: true } });
     }
   }
 
@@ -144,7 +146,7 @@ export function parseProseActions(text: string, expectedPath?: string): ToolCall
     while ((h = heredocRe.exec(body))) {
       const path = h[1].trim();
       const content = h[3];
-      if (path && content) calls.push({ id: mkId(), name: 'write_file', arguments: { path, content } });
+      if (path && content) calls.push({ id: mkId(), name: 'write_file', arguments: { path, content, overwrite: true } });
     }
   }
 
@@ -161,7 +163,7 @@ export function parseProseActions(text: string, expectedPath?: string): ToolCall
     const path = m[2].trim();
     const content = m[3].replace(/\s+$/, '');
     if (path && content && !hasPath(calls, path)) {
-      calls.push({ id: mkId(), name: 'write_file', arguments: { path, content } });
+      calls.push({ id: mkId(), name: 'write_file', arguments: { path, content, overwrite: true } });
     }
   }
 
@@ -178,7 +180,7 @@ export function parseProseActions(text: string, expectedPath?: string): ToolCall
     const path = m[1].trim();
     const content = m[2].replace(/\s+$/, '');
     if (path && content && !hasPath(calls, path)) {
-      calls.push({ id: mkId(), name: 'write_file', arguments: { path, content } });
+      calls.push({ id: mkId(), name: 'write_file', arguments: { path, content, overwrite: true } });
     }
   }
 
@@ -190,7 +192,7 @@ export function parseProseActions(text: string, expectedPath?: string): ToolCall
     const fence = text.match(/```(?:[a-zA-Z0-9_-]*)\n([\s\S]*?)```/);
     const content = fence ? fence[1].replace(/\s+$/, '') : '';
     if (content && content.trim().length > 0) {
-      calls.push({ id: mkId(), name: 'write_file', arguments: { path: expectedPath, content } });
+      calls.push({ id: mkId(), name: 'write_file', arguments: { path: expectedPath, content, overwrite: true } });
     }
   }
 
@@ -206,14 +208,37 @@ export interface ExecuteProseDeps {
   expectedPath?: string;
 }
 
+/** Disk state of a file: mtime+size, or null if missing. */
+function statTarget(root: string, rel: string): { mtime: number; size: number } | null {
+  try {
+    const abs = isAbsolute(rel) ? rel : resolve(root, rel);
+    const s = statSync(abs);
+    return { mtime: s.mtimeMs, size: s.size };
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Parse narration in `text` and execute any extracted file writes. Returns the
- * number of files actually written. No-ops (returns 0) when there is no
- * executor or no parseable actions.
+ * number of files that ACTUALLY changed on disk (mtime/size verified against a
+ * pre-execution snapshot) — not the number of calls attempted. Counting
+ * attempts masked the exact BUG-7 failure: every prose-recovered write to a
+ * pre-existing file failed with "overwrite is false" (now fixed via
+ * overwrite:true), yet this function still reported success, so callers never
+ * re-tried and the run ended needs_user with zero disk writes. No-ops
+ * (returns 0) when there is no executor or no parseable actions.
  */
 export async function executeProseActions(text: string, deps: ExecuteProseDeps): Promise<number> {
   const calls = parseProseActions(text, deps.expectedPath);
   if (calls.length === 0 || !deps.toolExecutor) return 0;
+  const pre = new Map<string, { mtime: number; size: number } | null>();
+  for (const c of calls) {
+    if (c.name === 'write_file' || c.name === 'edit_file') {
+      const p = String((c.arguments as { path?: unknown }).path ?? '');
+      if (p) pre.set(p.toLowerCase(), statTarget(deps.workspaceRoot, p));
+    }
+  }
   try {
     await runToolCalls({
       toolCalls: calls,
@@ -223,7 +248,14 @@ export async function executeProseActions(text: string, deps: ExecuteProseDeps):
       workspaceRoot: deps.workspaceRoot,
       sessionId: deps.sessionId,
     });
-    return calls.filter((c) => c.name === 'write_file').length;
+    let landed = 0;
+    for (const [key, before] of pre) {
+      const after = statTarget(deps.workspaceRoot, key);
+      if (after && (!before || before.mtime !== after.mtime || before.size !== after.size)) {
+        landed++;
+      }
+    }
+    return landed;
   } catch {
     return 0;
   }

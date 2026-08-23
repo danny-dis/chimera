@@ -306,6 +306,9 @@ async function runCombo(mode, preset, runIndex = 1) {
     undefined,
     { registry: buildRegistry([writer, reviewer, challenger]), budgetEnforcer, rateLimiter, providerFactory, availableProviders: ['writer', 'reviewer', 'challenger'] },
   );
+  if (!orchestrator.toolExecutor) {
+    throw new Error('harness wiring bug: orchestrator.toolExecutor is null — tools not passed');
+  }
 
   const start = Date.now();
   let result;

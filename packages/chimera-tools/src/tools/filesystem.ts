@@ -258,7 +258,7 @@ export const writeFileTool: ToolDefinition<typeof WriteFileParamsSchema, typeof 
         existingBuf = null;
       }
       const contentText = (params.content as string | undefined) ?? (params.contents as string | undefined) ?? '';
-      if (contentText.length === 0 || contentLooksTruncated(contentText)) return null;
+      if (contentText.length === 0 || contentLooksTruncated(contentText, params.path as string | undefined)) return null;
       return [computeFileDiff(existingBuf, Buffer.from(contentText, 'utf-8'), params.path as string)];
     } catch {
       return null;
@@ -304,7 +304,7 @@ export const writeFileTool: ToolDefinition<typeof WriteFileParamsSchema, typeof 
     if (contentText.length === 0) {
       throw new Error('Refusing empty write: content must be non-empty.');
     }
-    const truncated = contentLooksTruncated(contentText);
+    const truncated = contentLooksTruncated(contentText, params.path);
     if (truncated) {
       throw new Error(
         'Refusing truncated write: content appears incomplete ' +
@@ -330,7 +330,7 @@ export const writeFileTool: ToolDefinition<typeof WriteFileParamsSchema, typeof 
  * (a classic mid-token cut). Whitespace-only trailing content is normal and
  * allowed.
  */
-function contentLooksTruncated(s: string): boolean {
+function contentLooksTruncated(s: string, filePath?: string): boolean {
   const trimmed = s.replace(/\s+$/, '');
   if (trimmed.length === 0) return true;
 
@@ -382,6 +382,30 @@ function contentLooksTruncated(s: string): boolean {
   // keyword followed by nothing closing it.
   if (/(?:^|[^A-Za-z0-9_$])(return|function|const|let|var|export|import|await|async|if|for|while|class|else|public|private|interface|type|enum)\s*[A-Za-z0-9_$.({[]*$/.test(trimmed)) {
     return true;
+  }
+
+  // Syntax oracle (cheap, deterministic): for JS/TS-shaped content the model
+  // just wrote, ask Node's own parser. The heuristic checks above catch
+  // truncation but not malformation — e.g. `module.exports = { a, b; }` has
+  // balanced braces yet is a hard SyntaxError that makes every downstream
+  // hidden test fail with "artifact did not load". new Function throws on
+  // exactly that class of broken output, so refuse it and let the writer
+  // retry with corrected content. Non-JS target files skip this check.
+  // `export`/`import` are module syntax that new Function (a non-module
+  // context) always rejects — strip those keywords before parsing so valid
+  // module code isn't refused.
+  const ext = (filePath ?? s).split('.').pop()?.toLowerCase() ?? '';
+  if (ext === 'js' || ext === 'mjs' || ext === 'cjs' || ext === 'jsx' || ext === 'ts') {
+    const parseable = trimmed
+      .replace(/^\s*export\s+\{[^}]*\}\s*;?/gm, '')
+      .replace(/^(\s*)export\s+(default\s+)?/gm, '$1')
+      .replace(/^\s*import\s+[^;]*;?\s*$/gm, '');
+    try {
+      // eslint-disable-next-line no-new-func
+      new Function(parseable);
+    } catch {
+      return true;
+    }
   }
 
   return false;
