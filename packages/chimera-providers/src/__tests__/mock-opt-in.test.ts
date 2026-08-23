@@ -8,6 +8,12 @@ import { OpenAICompatibleProvider } from '../providers/openai-compatible.js';
 import { AnthropicProvider } from '../providers/anthropic.js';
 import { clearProviderEnv } from './test-env.js';
 
+// Capture the real tmpdir ONCE at module load, before any test replaces
+// process.env with a plain copy. os.tmpdir() reads process.env.TEMP/TMP on
+// Windows; after the wholesale env swap in beforeEach() it can resolve to
+// the literal string "undefined" in shells that don't export TEMP.
+const realTmpDir = os.tmpdir();
+
 /**
  * MockProvider is used when:
  * - No real API keys are configured (automatic fallback)
@@ -26,7 +32,7 @@ describe('ProviderFactory — mock provider behavior', () => {
     // real credentials exported in the developer's shell (e.g. a personal
     // MISTRAL_API_KEY / MISTRAL_MODEL) can't leak into these assertions.
     clearProviderEnv();
-    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'chimera-mock-optin-'));
+    tmpDir = fs.mkdtempSync(path.join(realTmpDir, 'chimera-mock-optin-'));
     vi.spyOn(process, 'cwd').mockReturnValue(tmpDir);
   });
 

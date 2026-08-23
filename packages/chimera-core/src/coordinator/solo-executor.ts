@@ -69,16 +69,9 @@ interface SoloExecutorDeps {
  *   2. Self-Correction (selfVerify=true): Two sequential LLM calls
  *      (Writer -> Reviewer) using the same model.
  *
- * All 9 fusion patterns are applied:
- *   1. Defensive `safeEmit` — never throws on schema mismatches
- *   2. Factory pattern — `(modelId) => LLMProvider`
- *   3. Config knobs (temperature, maxCompletionTokens, budget, depth)
- *   4. `CostTracker.recordSpend` per call
- *   5. Recursion guard via `SoloContext.depth` + `maxDepth`
- *   6. Degraded fallback — never throws, returns `degraded: true` with reason
- *   7. 5-field analysis output
- *   8. Defensive `result.usage?.x ?? 0` access
- *   9. Test coverage — smoke tests live in `__tests__/`
+ * Single-model execution with degraded-fallback semantics — never throws,
+ * returns degraded:true on failure. Safety nets: recursion guard, defensive
+ * emit, cost tracking, and defensive usage access.
  */
 
 /**

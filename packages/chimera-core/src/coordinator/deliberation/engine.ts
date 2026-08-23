@@ -40,11 +40,11 @@ import { FusionExecutor } from '../fusion-executor.js';
 import type {
   FusionConfig,
 } from '../fusion-types.js';
+import { CoordinatorEngine } from '../coordinator-engine.js';
 import { withRetry } from '@chimera/providers';
 
 import { ResultAggregator } from '../result-aggregator.js';
 import { TaskDecomposer } from '../task-decomposer.js';
-import { SubAgentSpawner } from '../sub-agent-spawner.js';
 import { LlmRouter } from '../llm-router.js';
 import type { SubTaskResult, ModelPool, SubTask } from '../types.js';
 
@@ -470,17 +470,17 @@ export class DeliberationEngine {
       subTasks = subTasks.map((st) => ({ ...st, tools: fileTools }));
     }
 
-    // 4. Execute subtasks in parallel (wire tool executor so sub-agents can write)
-    const spawner = new SubAgentSpawner(this.deps.eventStream, undefined, undefined, undefined, {
-      toolExecutor: this.deps.toolExecutor,
-      toolRegistry: this.deps.toolRegistry,
-      workspaceRoot: this.deps.workspaceRoot,
+    // 4. Execute subtasks via CoordinatorEngine (decomposition already done above)
+    const coordinator = new CoordinatorEngine({
+      provider: mergeProvider,
+      eventStream: this.deps.eventStream,
+      toolDeps: {
+        toolExecutor: this.deps.toolExecutor,
+        toolRegistry: this.deps.toolRegistry,
+        workspaceRoot: this.deps.workspaceRoot,
+      },
     });
-    const subResults: SubTaskResult[] = await spawner.executeAll(subTasks);
-
-    // 5. Aggregate results
-    const aggregator = new ResultAggregator(mergeProvider);
-    const aggregated = await aggregator.aggregate(subResults);
+    const aggregated = await coordinator.execute(cfg.task, cfg.context, subTasks);
 
     const analysis: DeliberationAnalysis = {
       thought: `Decomposed into ${subTasks.length} subtasks (${decomposition.strategy}): ${decomposition.rationale}`,
@@ -500,7 +500,7 @@ export class DeliberationEngine {
       mode: 'hive',
       output: aggregated.output,
       analysis,
-      totalTokens: aggregated.totalTokens + subResults.reduce((s, r) => s + r.tokensUsed, 0),
+      totalTokens: aggregated.totalTokens + aggregated.subTaskResults.reduce((s, r) => s + r.tokensUsed, 0),
       totalCostUsd: this.deps.costTracker?.getTotalCost() ?? 0,
       durationMs: Date.now() - startTime,
       degraded: !aggregated.resolved,

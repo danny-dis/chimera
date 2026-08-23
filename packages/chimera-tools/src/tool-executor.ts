@@ -112,7 +112,12 @@ async function runPreHooks(
  * defaults to 'deny'.
  */
 function isAutoApproveEnabled(): boolean {
-  return process.env.NONINTERACTIVE === '1' || autoApprove;
+  // Headless/auto-approval: NONINTERACTIVE=1, --yolo (autoApprove flag), or
+  // explicit CHIMERA_AUTOAPPROVE=1 all enable auto-approval. The check is
+  // deliberately permissive so background/CI runs never stall on a prompt.
+  return process.env.NONINTERACTIVE === '1' 
+    || process.env.CHIMERA_AUTOAPPROVE === '1'
+    || autoApprove;
 }
 
 let autoApprove = false;

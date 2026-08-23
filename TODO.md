@@ -280,18 +280,39 @@ scored. `node scripts/test-grade-task.mjs` → **ALL PASS** (no regression).
 ceiling makes it survivable rather than explaining it. Provider health at **20/117 (17.1%)**
 remains the prime suspect and BUG-9/BUG-10 should be fixed before the next full pass.
 
-**STRONG LEAD (found 2026-08-19 after the fix):** commit `4795aa4`
-*"fix(dmrx): add keep-alive agent to prevent TIME_WAIT accumulation"* landed at **13:01**,
-i.e. during this very investigation, and describes exactly the failure shape observed:
-without HTTP keep-alive every provider call opens a fresh socket, and Windows' ephemeral
-port range is **49152–65535 (16384 ports)** with a 4-minute `TIME_WAIT`. A 37-combo agentic
-matrix issues thousands of requests, exhausts the range, and then **socket allocation starts
-failing — which matches the ~20–30 min time-to-death, the total absence of a JS-level
-exception, and the slowdown from 49 s/combo to 147 s/combo across runs.** Measured now
-(idle): 0 TIME_WAIT to :47113, 38 system-wide, so the pool is clean at rest — the leak only
-manifests under sustained load. **Next step: re-run a full pass on a gateway that includes
-`4795aa4` and check `netstat -an | grep -c TIME_WAIT` periodically during the run.** If that
-is the cause, `COMBO_TIMEOUT_MS` is a seatbelt and the keep-alive agent is the actual fix.
+**TIME_WAIT theory — DISPROVEN (2026-08-19), port exhaustion is NOT the cause.**
+
+Commit `4795aa4` *"fix(dmrx): add keep-alive agent to prevent TIME_WAIT accumulation"*
+landed during this investigation and matched the failure shape, so it was the lead
+hypothesis: no keep-alive → a fresh socket per provider call → Windows' 16384-port
+ephemeral range (49152–65535, 4-min TIME_WAIT) exhausts under a 37-combo agentic load
+(~20–30 min to death, no JS exception). Tested live with `scripts/socket-load-probe.mjs`
+and `scripts/gw-concurrency-probe.mjs`:
+
+| probe | n | leaked to TIME_WAIT | result |
+|---|---|---|---|
+| sequential bare `fetch()` | 60 | **0** (total even dropped -2) | Node 24 global `fetch` already pools |
+| concurrent batches (8×5) | 40 | **0** (delta 0) | gateway handles concurrency cleanly |
+| 20 serial `auto-coding` | 20 | 0 | ok=20 fail=0 |
+| 10 `auto-fast` + 10 `auto-agentic` | 20 | 0 | ok=20 fail=0 |
+
+**Verdict:** port exhaustion does not happen on this Node build. `COMBO_TIMEOUT_MS` is
+still a seatbelt (it bounds the 585 s combos), but the root cause of BUG-13 lies
+elsewhere.
+
+**The "17% healthy pool" was also a red herring.** All 105 "unhealthy" providers have
+`consecutive_failures=0`, `last_health_check=null`, AND `hasKey=false` — they are
+never-probed, credential-less catalogue entries the router never selects. The routing
+pool the aliases actually use is healthy and fast (`gemini-3.1-flash-lite`, measured
+6 ms/req). The pool-health slowdown I reported between run 1 and run 2 was therefore
+not a dead-gateway effect — its cause is also unexplained.
+
+**BUG-13 genuinely unexplained.** Ruled out: heap (83 MB RSS at death), the gateway
+(proven healthy + concurrency-safe), and port exhaustion (proven not leaking). Best
+remaining hypotheses: (a) a wall-clock limit imposed on scheduler-owned script
+executions (would explain why a `cronjob` died at combo 1 of pass 2), or (b) a slow
+resource leak inside long agentic combos (the 326 s / 534 s / 585 s combos) that only
+surfaces cumulatively. The `COMBO_TIMEOUT_MS` seatbelt makes either survivable.
 
 ### BUG-7 — All non-solo `debug` presets bail to `needs_user` — **MEDIUM** — SHARPENED 2026-08-19
 See BUG-12: the accompanying 0.43 score is the do-nothing baseline, so this is the *whole*

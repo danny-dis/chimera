@@ -117,6 +117,25 @@ function metaModelFallbacks(model: string): string[] {
   return META_MODEL_FALLBACK_CHAIN.filter((m) => m !== model);
 }
 
+/**
+ * Fallback chain for concrete models that return empty/truncated content.
+ * When nvidia-nim times out or google returns 400, we can try these
+ * alternatives before giving up.
+ */
+const MODEL_FALLBACK_CHAIN: Record<string, string[]> = {
+  'meta/llama-3.3-70b-instruct': ['google/gemini-2.5-flash', 'meta/llama-3.1-70b-instruct'],
+  'meta/llama-3.1-70b-instruct': ['google/gemini-2.5-flash', 'meta/llama-3.3-70b-instruct'],
+  'google/gemini-2.5-flash': ['meta/llama-3.3-70b-instruct', 'google/gemini-2.5-flash-preview-05-20'],
+  'google/gemini-2.5-flash-preview-05-20': ['google/gemini-2.5-flash', 'meta/llama-3.3-70b-instruct'],
+};
+
+function modelFallbacks(model: string): string[] {
+  // Only explicit concrete-model chains here. Meta-model fallbacks are
+  // already tried separately above; falling through to them would run the
+  // same auto-* chain twice before giving up.
+  return MODEL_FALLBACK_CHAIN[model] ?? [];
+}
+
 interface ContentBlock {
   type?: string;
   text?: unknown;
@@ -459,13 +478,43 @@ export class OpenAICompatibleProvider implements ModelProvider {
     const result = parseCompletionResult(json);
     const hasOutput = result.content || (result.toolCalls && result.toolCalls.length > 0) || result.reasoning;
     if (!hasOutput) {
-      // A successful (200) response with no content and no tool calls. For a
-      // meta-model gateway (DMR-X `auto-*`), the routed upstream sometimes
-      // returns an empty completion (e.g. the `multi-model` route on large
-      // prompts). Transparently retry through the remaining meta-models
-      // before giving up — this keeps a task alive when one routing path duds.
+      // A successful (200) response with no content and no tool calls. This
+      // happens when the upstream provider times out on large prompts and the
+      // gateway returns an empty completion after fallbacks are on cooldown.
+      // Retry with the same model (may route to a different provider) before
+      // trying meta-model fallbacks.
+      for (let attempt = 0; attempt < 2; attempt++) {
+        const retryResponse = await this.fetchJson('/v1/chat/completions', {
+          method: 'POST',
+          headers: this.headers,
+          body: JSON.stringify(body),
+        });
+        if (!retryResponse.ok) continue;
+        const retryJson = (await retryResponse.json()) as Record<string, unknown>;
+        const retryResult = parseCompletionResult(retryJson);
+        if (retryResult.content || retryResult.toolCalls?.length || retryResult.reasoning) {
+          return { ...retryResult, rawContent: retryResult.content };
+        }
+      }
+      // Meta-model fallbacks (only for auto-* aliases).
       const fallbacks = metaModelFallbacks(this.model);
       for (const fallbackModel of fallbacks) {
+        const retryBody: Record<string, unknown> = { ...body, model: fallbackModel };
+        const retryResponse = await this.fetchJson('/v1/chat/completions', {
+          method: 'POST',
+          headers: this.headers,
+          body: JSON.stringify(retryBody),
+        });
+        if (!retryResponse.ok) continue;
+        const retryJson = (await retryResponse.json()) as Record<string, unknown>;
+        const retryResult = parseCompletionResult(retryJson);
+        if (retryResult.content || retryResult.toolCalls?.length || retryResult.reasoning) {
+          return { ...retryResult, rawContent: retryResult.content };
+        }
+      }
+      // Concrete-model fallbacks (for nvidia-nim timeouts, google 400s, etc.).
+      const modelFalls = modelFallbacks(this.model);
+      for (const fallbackModel of modelFalls) {
         const retryBody: Record<string, unknown> = { ...body, model: fallbackModel };
         const retryResponse = await this.fetchJson('/v1/chat/completions', {
           method: 'POST',

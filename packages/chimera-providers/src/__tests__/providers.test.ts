@@ -157,9 +157,13 @@ describe('OpenAICompatibleProvider', () => {
         choices: [{ message: { content } }],
         usage: { prompt_tokens: 1, completion_tokens: 1 },
       });
+      // New contract (NIM-timeout hardening): same-model retry x2 first, then
       // auto-coding(empty) -> auto-smart(empty) -> auto-fast(empty) -> auto-agentic(ok)
       const mockFetch = vi
         .fn()
+        .mockResolvedValue({ ok: true, status: 200, json: () => Promise.resolve(emptyBody) })
+        .mockResolvedValueOnce({ ok: true, status: 200, json: () => Promise.resolve(emptyBody) })
+        .mockResolvedValueOnce({ ok: true, status: 200, json: () => Promise.resolve(emptyBody) })
         .mockResolvedValueOnce({ ok: true, status: 200, json: () => Promise.resolve(emptyBody) })
         .mockResolvedValueOnce({ ok: true, status: 200, json: () => Promise.resolve(emptyBody) })
         .mockResolvedValueOnce({ ok: true, status: 200, json: () => Promise.resolve(emptyBody) })
@@ -168,18 +172,22 @@ describe('OpenAICompatibleProvider', () => {
 
       const res = await metaProvider.complete(TEST_MESSAGES);
       expect(res.content).toBe('real answer');
-      expect(mockFetch).toHaveBeenCalledTimes(4);
+      expect(mockFetch).toHaveBeenCalledTimes(6);
       const modelsTried = mockFetch.mock.calls.map((c) => JSON.parse(c[1].body as string).model);
-      expect(modelsTried).toEqual(['auto-coding', 'auto-smart', 'auto-fast', 'auto-agentic']);
+      expect(modelsTried).toEqual([
+        'auto-coding', 'auto-coding', 'auto-coding', // initial + 2 same-model retries
+        'auto-smart', 'auto-fast', 'auto-agentic',   // meta-model fallback chain
+      ]);
       vi.unstubAllGlobals();
     });
 
-    it('throws a clear ProviderError (no retry) for a non-meta model returning empty content', async () => {
+    it('throws a clear ProviderError after same-model retries for a non-meta model returning empty content', async () => {
       const mockFetch = vi.fn().mockResolvedValue({ ok: true, status: 200, json: () => Promise.resolve(emptyBody) });
       vi.stubGlobal('fetch', mockFetch);
 
       await expect(provider.complete(TEST_MESSAGES)).rejects.toThrow(/returned empty content/);
-      expect(mockFetch).toHaveBeenCalledTimes(1);
+      // gpt-4o is not in any fallback chain: initial call + 2 same-model retries = 3.
+      expect(mockFetch).toHaveBeenCalledTimes(3);
       vi.unstubAllGlobals();
     });
 
@@ -199,8 +207,8 @@ describe('OpenAICompatibleProvider', () => {
       vi.stubGlobal('fetch', mockFetch);
 
       await expect(metaProvider.complete(TEST_MESSAGES)).rejects.toThrow(/returned empty content/);
-      // auto-coding + auto-smart + auto-fast + auto-agentic = 4 attempts.
-      expect(mockFetch).toHaveBeenCalledTimes(4);
+      // auto-coding: initial + 2 same-model retries + 3 meta fallbacks = 6.
+      expect(mockFetch).toHaveBeenCalledTimes(6);
       vi.unstubAllGlobals();
     });
 

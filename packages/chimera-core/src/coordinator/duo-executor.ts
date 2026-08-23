@@ -52,16 +52,9 @@ interface DuoExecutorDeps {
  *   - role assignment: modelA → 'writer' (confidence 0.8), modelB →
  *     'reviewer' (confidence 0.7).
  *
- * All 9 fusion patterns are applied:
- *   1. Defensive `safeEmit` — never throws on schema mismatches
- *   2. Factory pattern — `(modelId) => LLMProvider`
- *   3. Config knobs (temperature, maxCompletionTokens, budget, depth)
- *   4. `CostTracker.recordSpend` per call
- *   5. Recursion guard via `DuoContext.depth` + `maxDepth`
- *   6. Degraded fallback — never throws, returns `degraded: true` with reason
- *   7. 5-field analysis output
- *   8. Defensive `result.usage?.x ?? 0` access
- *   9. Test coverage — smoke tests live in `__tests__/duo-executor.test.ts`
+ * Sequential writer→reviewer pipeline with deterministic Jaccard synthesis.
+ * Degraded fallback on provider error. Safety nets: recursion guard, cost
+ * tracking, defensive usage access.
  */
 export class DuoExecutor {
   private eventStream: EventStream;

@@ -1,5 +1,5 @@
 import { EventStream } from '../event-stream.js';
-import type { LLMProvider } from '../session-orchestrator.js';
+import type { LLMProvider, ToolExecutorInterface, ToolRegistryInterface } from '../session-orchestrator.js';
 import { TaskDecomposer } from './task-decomposer.js';
 import { SubAgentSpawner } from './sub-agent-spawner.js';
 import { ResultAggregator } from './result-aggregator.js';
@@ -26,9 +26,18 @@ export class CoordinatorEngine {
     provider: LLMProvider;
     eventStream: EventStream;
     config?: Partial<CoordinatorConfig>;
+    toolDeps?: {
+      toolExecutor?: ToolExecutorInterface;
+      toolRegistry?: ToolRegistryInterface;
+      workspaceRoot?: string;
+    };
   }) {
     this.decomposer = new TaskDecomposer(params.provider);
-    this.spawner = new SubAgentSpawner(params.config);
+    this.spawner = new SubAgentSpawner(params.config, undefined, undefined, undefined, {
+      toolExecutor: params.toolDeps?.toolExecutor,
+      toolRegistry: params.toolDeps?.toolRegistry,
+      workspaceRoot: params.toolDeps?.workspaceRoot,
+    });
     this.aggregator = new ResultAggregator(params.provider);
     this.eventStream = params.eventStream;
     this.config = { ...DEFAULT_CONFIG, ...params.config };
@@ -40,16 +49,25 @@ export class CoordinatorEngine {
 
   /**
    * Execute a task using parallel sub-agents.
+   *
+   * @param task       The task description (used only when `preDecomposed` is not supplied).
+   * @param context    Optional context forwarded to the decomposer.
+   * @param preDecomposed  When the caller has already decomposed the task into
+   *                       SubTasks (e.g. DeliberationEngine.runHive with model
+   *                       routing + tools injection), the decomposer is skipped
+   *                       and these SubTasks are executed directly.
    */
-  async execute(task: string, context?: string): Promise<AggregatedResult> {
-    // Step 1: Decompose
+  async execute(task: string, context?: string, preDecomposed?: SubTask[]): Promise<AggregatedResult> {
+    // Step 1: Decompose (or use pre-decomposed subtasks from caller)
     this.safeEmit({
       type: 'task_classified',
       complexity: { score: 0.8, dimensions: { decomposability: 0.9 } },
       estimatedCost: 0,
     });
 
-    const decomposition = await this.decomposer.decompose(task, context);
+    const decomposition = preDecomposed
+      ? { subTasks: preDecomposed, strategy: 'parallel' as const, rationale: 'pre-decomposed by caller' }
+      : await this.decomposer.decompose(task, context);
 
     this.safeEmit({
       type: 'agent_spawned',
