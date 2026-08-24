@@ -2854,8 +2854,11 @@ export class SessionOrchestrator {
       role: 'user',
       content:
         '[!] #TOOL RESULTS RECEIVED# [!]\n' +
-        'The tools above have returned their results. Now you MUST synthesize a final response.\n\n' +
-        'RULES:\n' +
+        'The tools above have returned their results.\n\n' +
+        'DECIDE NEXT STEP:\n' +
+        '- If the task needs MORE tool work (e.g. the file edit/write has not landed on disk yet, or you have only read files so far), CALL THE NEXT TOOL NOW — do not stop to narrate. Reading a file is NOT completing the task; the task is only done when the required changes exist on disk.\n' +
+        '- Only when ALL required file changes are already on disk, synthesize your final response.\n\n' +
+        'FINAL RESPONSE FORMAT (only when synthesizing):\n' +
         '1. DO NOT echo or repeat the raw tool output.\n' +
         '2. Summarize the key findings in natural language.\n' +
         '3. Return your answer as JSON: {"thought": "...", "response": "...", "confidence": 0.0-1.0}\n' +

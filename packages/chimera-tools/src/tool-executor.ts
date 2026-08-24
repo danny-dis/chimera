@@ -261,7 +261,31 @@ export class ToolExecutor {
     }
 
     // Execute
-    const result = await this.registry.execute(toolName, coerced, context);
+    let result = await this.registry.execute(toolName, coerced, context);
+
+    // ── Self-healing overwrite retry (edit-path reliability) ─────────────
+    // Models routinely emit `write_file` WITHOUT `overwrite` when their intent
+    // is clearly to modify an existing file (they just produced the complete
+    // new content). The tool's default of `overwrite:false` then refuses the
+    // write ("File already exists..."), the generic retry replays identical
+    // args into the same wall, and the run ends needs_user while claiming
+    // success in prose. When the ONLY failure reason is that missing flag,
+    // retry once with `overwrite:true` injected — the model's full-content
+    // rewrite IS the user-visible intent; all other guards (truncation check,
+    // sandbox, lint) still run inside the tool.
+    if (
+      !result.success &&
+      toolName === 'write_file' &&
+      typeof (result.error ?? '') === 'string' &&
+      /File already exists and overwrite is false/i.test(result.error ?? '')
+    ) {
+      context.eventStream.append({
+        type: 'tool_call_retry',
+        tool: toolName,
+        error: 'missing overwrite flag — retrying with overwrite:true',
+      } as any);
+      result = await this.registry.execute(toolName, { ...coerced, overwrite: true }, context);
+    }
 
     // Emit result event. Mutating file tools attach a unified diff of what
     // they wrote; lift it onto the event so the UI can show the user the
