@@ -30,6 +30,18 @@ importers:
         specifier: ^2.0.0
         version: 2.1.9(@types/node@22.19.19)
 
+  packages/agents:
+    devDependencies:
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.19.19
+      typescript:
+        specifier: ^5.5.0
+        version: 5.9.3
+      vitest:
+        specifier: ^1.2.0
+        version: 1.6.1(@types/node@22.19.19)
+
   packages/chimera-cli:
     dependencies:
       '@chimera/core':
@@ -133,6 +145,19 @@ importers:
       vitest:
         specifier: ^1.2.0
         version: 1.6.1(@types/node@22.19.19)
+
+  packages/chimera-domain:
+    dependencies:
+      zod:
+        specifier: ^3.23.0
+        version: 3.25.76
+    devDependencies:
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.19.19
+      vitest:
+        specifier: ^2.0.0
+        version: 2.1.9(@types/node@22.19.19)
 
   packages/chimera-eval:
     dependencies:
