@@ -61,3 +61,19 @@ export type { CheckpointReason, Checkpoint } from './types.js';
 // Domain Events
 export { DomainEventTypeSchema } from './types.js';
 export type { DomainEventType, DomainEvent } from './types.js';
+
+// Service interfaces
+export type {
+  EventBus,
+  SessionStateStore,
+  RunController,
+  BudgetController,
+  AgentRegistry,
+  ModelSelector,
+  ContextController,
+  ToolController,
+  VerificationController,
+  CheckpointManager,
+  PolicyController,
+  ArtifactManager,
+} from './interfaces.js';
