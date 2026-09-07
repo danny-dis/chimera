@@ -98,6 +98,9 @@ importers:
       '@chimera/context':
         specifier: workspace:*
         version: link:../chimera-context
+      '@chimera/domain':
+        specifier: workspace:*
+        version: link:../chimera-domain
       '@chimera/providers':
         specifier: workspace:*
         version: link:../chimera-providers

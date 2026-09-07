@@ -13,6 +13,7 @@
   },
   "dependencies": {
     "@chimera/context": "workspace:*",
+    "@chimera/domain": "workspace:*",
     "@chimera/providers": "workspace:*",
     "yaml": "^2.4.0",
     "zod": "^3.23.0"
