@@ -1,0 +1,21 @@
+{
+  "files_created": [
+    "services/dev-worker/package.json",
+    "services/dev-worker/tsconfig.json",
+    "services/dev-worker/src/index.ts",
+    "services/dev-worker/src/types.ts",
+    "services/dev-worker/Dockerfile"
+  ],
+  "typecheck_passed": false,
+  "errors": [
+    "src/index.ts(1,21): error TS2307: Cannot find module 'express' or its corresponding type declarations.",
+    "src/index.ts(2,18): error TS2307: Cannot find module 'pino' or its corresponding type declarations.",
+    "src/index.ts(3,34): error TS2307: Cannot find module './proposalListener.js' or its corresponding type declarations.",
+    "src/index.ts(4,29): error TS2307: Cannot find module './implementer.js' or its corresponding type declarations.",
+    "src/index.ts(5,31): error TS2307: Cannot find module './gateSubmitter.js' or its corresponding type declarations.",
+    "src/index.ts(60,21): error TS7006: Parameter '_req' implicitly has an 'any' type.",
+    "src/index.ts(60,27): error TS7006: Parameter 'res' implicitly has an 'any' type.",
+    "src/index.ts(70,20): error TS7006: Parameter '_req' implicitly has an 'any' type.",
+    "src/index.ts(70,26): error TS7006: Parameter 'res' implicitly has an 'any' type."
+  ]
+}
