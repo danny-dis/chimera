@@ -26,9 +26,14 @@ export class VerificationController {
   private agentMesh: AgentMesh;
   private eventStream: EventStream;
 
-  constructor(eventStream?: EventStream) {
-    this.eventStream = eventStream ?? new EventStream();
-    this.agentMesh = new AgentMesh(this.eventStream);
+  constructor(eventStreamOrMesh?: EventStream | AgentMesh) {
+    if (eventStreamOrMesh instanceof AgentMesh) {
+      this.agentMesh = eventStreamOrMesh;
+      this.eventStream = eventStreamOrMesh.getEventStream();
+    } else {
+      this.eventStream = eventStreamOrMesh ?? new EventStream();
+      this.agentMesh = new AgentMesh(this.eventStream);
+    }
   }
 
   /**

@@ -30,8 +30,12 @@ export class AgentRegistry {
   private mesh: AgentMesh;
   private agents: Map<string, AgentRecord> = new Map();
 
-  constructor(eventStream?: EventStream) {
-    this.mesh = new AgentMesh(eventStream ?? new EventStream());
+  constructor(eventStreamOrMesh?: EventStream | AgentMesh) {
+    if (eventStreamOrMesh instanceof AgentMesh) {
+      this.mesh = eventStreamOrMesh;
+    } else {
+      this.mesh = new AgentMesh(eventStreamOrMesh ?? new EventStream());
+    }
   }
 
   /**

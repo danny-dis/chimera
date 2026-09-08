@@ -8,8 +8,8 @@ import { EventStream } from '../event-stream.js';
 export class BudgetController {
   private costTracker: CostTracker;
 
-  constructor(eventStream?: EventStream) {
-    this.costTracker = new CostTracker(eventStream ?? new EventStream());
+  constructor(eventStream?: EventStream, costTracker?: CostTracker) {
+    this.costTracker = costTracker ?? new CostTracker(eventStream ?? new EventStream());
   }
 
   recordSpend(provider: string, amount: number): void {
@@ -47,5 +47,9 @@ export class BudgetController {
 
   setBudget(provider: string, limits: { perTask: number; perSession: number; perDay: number }): void {
     this.costTracker.setBudget(provider, limits);
+  }
+
+  getCostTracker(): CostTracker {
+    return this.costTracker;
   }
 }

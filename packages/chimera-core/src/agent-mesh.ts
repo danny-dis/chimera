@@ -78,6 +78,10 @@ export class AgentMesh {
     this.eventStream = eventStream;
   }
 
+  getEventStream(): EventStream {
+    return this.eventStream;
+  }
+
   setQualityGateExecutor(executor: (params: { task: string; draftOutput?: string }) => Promise<QualityGateResult>): void {
     this.qualityGateExecutor = executor;
   }

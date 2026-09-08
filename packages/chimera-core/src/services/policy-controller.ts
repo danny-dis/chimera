@@ -96,4 +96,8 @@ export class PolicyController {
   getAuditLog(): AuditLog {
     return this.auditLog;
   }
+
+  getRateLimiter(): RateLimiter | null {
+    return this.rateLimiter;
+  }
 }

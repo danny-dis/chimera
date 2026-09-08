@@ -14,6 +14,17 @@ import { expectedPathFromTask, snapshotTarget, targetChanged } from './coordinat
 import type { LongTermMemory } from './memory/long-term-memory.js';
 import { Mode, type ToolCall, type ToolCallResult } from './types/agent.js';
 import { zodToJsonSchema } from './zod-json.js';
+import type { SessionStateStore } from './services/session-state-store.js';
+import type { BudgetController } from './services/budget-controller.js';
+import type { EventBus } from './services/event-bus.js';
+import type { PolicyController } from './services/policy-controller.js';
+import type { ToolController } from './services/tool-controller.js';
+import type { ContextController } from './services/context-controller.js';
+import type { AgentRegistry } from './services/agent-registry.js';
+import type { ModelSelector } from './services/model-selector.js';
+import type { VerificationController } from './services/verification-controller.js';
+import type { CheckpointManager } from './services/checkpoint-manager.js';
+import type { ServiceContainer } from './services/service-container.js';
 
 /**
  * Cross-mode validation: which presets are valid for each mode.
@@ -407,10 +418,6 @@ export class SessionOrchestrator {
   private toolExecutor: ToolExecutorInterface | null = null;
   private memory: LongTermMemory | null = null;
   private contextEngine: ContextEngine | null = null;
-  // ponytail: budgetEnforcer was from the dead @chimera/providers
-  // BudgetEnforcer. Kept as unknown so callers that still pass one don't
-  // break — but it's ignored. Delete when all callers stop passing it.
-  // Upgrade path: remove the field and its option.
   private budgetEnforcer: unknown | null = null;
   private rateLimiter: RateLimiter | null = null;
   private auditLog: AuditLog;
@@ -435,6 +442,9 @@ export class SessionOrchestrator {
   private _configBackendUrl?: string;
   private _configBackendKey?: string;
 
+  // Domain services (Phase 2 facade)
+  private _services: Partial<ServiceContainer> = {};
+
   constructor(
     eventStream?: EventStream,
     tools?: { registry: ToolRegistryInterface; executor: ToolExecutorInterface },
@@ -450,12 +460,11 @@ export class SessionOrchestrator {
       autoExtract?: AutoExtractService;
       recallService?: RecallService;
       autoDream?: AutoDreamService;
-      /** Optional LSP diagnostics hook (wired from the CLI via @chimera/tools). */
       lspDiagnostics?: (file: string) => Promise<Array<{ severity: string; message: string; line?: number; column?: number }>>;
-      /** Backend URL for alias resolution (e.g. DMR-X gateway). */
       configBackendUrl?: string;
-      /** Backend API key for alias resolution. */
       configBackendKey?: string;
+      /** Domain services for facade delegation (Phase 2) */
+      services?: Partial<ServiceContainer>;
     },
   ) {
     this.eventStream = eventStream ?? new EventStream();
@@ -473,9 +482,6 @@ export class SessionOrchestrator {
     this.toolRelay = new ToolContextRelay({ boxThreshold: 2000 });
     this.handoffProtocol = new HandoffProtocol();
     this.linter = new BiomeLinter({ configPath: this._workspaceRoot });
-    // ponytail: registry type is now the minimal interface from @chimera/providers.
-    // The dead ModelRegistry class is gone — SimpleModelRegistry (or anything with
-    // get/getAll/register) works. Cast stops TS from demanding the old class shape.
     this._registry = (options?.registry as ModelRegistry | undefined) ?? null;
     this.autoExtract = options?.autoExtract ?? null;
     this.recallService = options?.recallService ?? null;
@@ -487,6 +493,44 @@ export class SessionOrchestrator {
       this.toolRegistry = tools.registry;
       this.toolExecutor = tools.executor;
     }
+    // Wire domain services if provided
+    if (options?.services) {
+      this._services = options.services;
+      this.wireServices();
+    }
+  }
+
+  /**
+   * Wire domain services into the orchestrator's internal state.
+   * Called when services are provided via the constructor.
+   */
+  private wireServices(): void {
+    const svc = this._services;
+    if (svc.budget) {
+      this.costTracker = svc.budget.getCostTracker();
+    }
+    if (svc.events) {
+      this.eventStream = svc.events.getUnderlyingStream();
+    }
+    if (svc.agents) {
+      this.agentMesh = svc.agents.getMesh();
+    }
+    if (svc.context) {
+      this.relayRacing = svc.context.getRelayRacing();
+      this.handoffProtocol = svc.context.getHandoffProtocol();
+      this.toolRelay = svc.context.getToolRelay();
+    }
+    if (svc.policy) {
+      this.auditLog = svc.policy.getAuditLog();
+      this.rateLimiter = svc.policy.getRateLimiter();
+    }
+  }
+
+  /**
+   * Get the domain services (for testing/extension).
+   */
+  getServices(): Partial<ServiceContainer> {
+    return this._services;
   }
 
   /**

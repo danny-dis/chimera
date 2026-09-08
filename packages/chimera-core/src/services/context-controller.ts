@@ -13,13 +13,13 @@ export class ContextController {
   private toolRelay: ToolContextRelay;
   private workspaceRoot: string;
 
-  constructor(opts?: { workspaceRoot?: string; defaultContextWindow?: number }) {
+  constructor(opts?: { workspaceRoot?: string; defaultContextWindow?: number; relayRacing?: RelayRacing; handoffProtocol?: HandoffProtocol; toolRelay?: ToolContextRelay }) {
     this.workspaceRoot = opts?.workspaceRoot ?? process.cwd();
-    this.relayRacing = new RelayRacing({
+    this.relayRacing = opts?.relayRacing ?? new RelayRacing({
       defaultContextWindow: opts?.defaultContextWindow ?? 200_000,
     });
-    this.handoffProtocol = new HandoffProtocol();
-    this.toolRelay = new ToolContextRelay({ boxThreshold: 2000 });
+    this.handoffProtocol = opts?.handoffProtocol ?? new HandoffProtocol();
+    this.toolRelay = opts?.toolRelay ?? new ToolContextRelay({ boxThreshold: 2000 });
   }
 
   /**
@@ -186,6 +186,18 @@ export class ContextController {
       },
       clarifications: [],
     };
+  }
+
+  getRelayRacing(): RelayRacing {
+    return this.relayRacing;
+  }
+
+  getHandoffProtocol(): HandoffProtocol {
+    return this.handoffProtocol;
+  }
+
+  getToolRelay(): ToolContextRelay {
+    return this.toolRelay;
   }
 
   /**
