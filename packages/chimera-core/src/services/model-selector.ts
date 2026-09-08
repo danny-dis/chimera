@@ -1,27 +1,40 @@
 import { SimpleModelRegistry } from '@chimera/providers';
 import type { ModelRegistry, ModelEntry } from '@chimera/providers';
 import type { ModelCapability, ModelHealth, ModelTier } from '@chimera/domain';
+import type { MultiProviderHealthMonitor } from './provider-health-monitor.js';
 
 /**
  * ModelSelector — provider-neutral model selection.
- * Wraps SimpleModelRegistry with domain types and selection logic.
+ * Wraps SimpleModelRegistry with domain types, health-aware selection logic,
+ * and integration with the provider health monitor.
  */
 export class ModelSelector {
   private registry: ModelRegistry;
   private healthCache: Map<string, ModelHealth> = new Map();
+  private healthMonitor?: MultiProviderHealthMonitor;
 
-  constructor(registry?: ModelRegistry) {
+  constructor(registry?: ModelRegistry, healthMonitor?: MultiProviderHealthMonitor) {
     this.registry = registry ?? new SimpleModelRegistry();
+    this.healthMonitor = healthMonitor;
+  }
+
+  /**
+   * Set the health monitor for health-aware selection.
+   */
+  setHealthMonitor(monitor: MultiProviderHealthMonitor): void {
+    this.healthMonitor = monitor;
   }
 
   /**
    * Select the best model for a role given requirements.
+   * Considers health metrics when a health monitor is available.
    */
   selectForRole(role: string, requirements: {
     minTier?: string;
     requiredCapabilities?: string[];
     maxCostPerMillion?: number;
     preferLocal?: boolean;
+    preferHealthy?: boolean;
   }): ModelCapability | null {
     const models = this.registry.getAll();
     if (models.length === 0) return null;
@@ -40,6 +53,11 @@ export class ModelSelector {
           if (cap === 'structuredOutput' && !m.capabilities.structuredOutput) return false;
           if (cap === 'reasoning' && !m.capabilities.reasoning) return false;
         }
+      }
+      // Filter out unhealthy providers if preferHealthy is set
+      if (requirements.preferHealthy && this.healthMonitor) {
+        const metrics = this.healthMonitor.getAllMetrics().get(m.provider);
+        if (metrics && !metrics.available) return false;
       }
       return true;
     });
