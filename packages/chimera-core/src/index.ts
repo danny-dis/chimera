@@ -105,6 +105,22 @@ export type { SideQueryProvider, SideQueryOptions, SideQueryResult, SideQueryCha
 export { loadOutputStyles, getOutputStyle, buildStylePrompt } from './output-styles/index.js';
 export type { OutputStyle } from './output-styles/index.js';
 
+// Durable execution (Phase 13)
+export { DurableExecution } from './services/durable-execution.js';
+export type { DurableExecutionOptions, ExecutionContext } from './services/durable-execution.js';
+export { DurableEventLog } from './services/durable-event-log.js';
+export type { DurableEvent, DurableEventLogOptions } from './services/durable-event-log.js';
+export { RetryPolicy, RetryableErrors } from './services/retry-policy.js';
+export type { RetryPolicyOptions, RetryAttempt } from './services/retry-policy.js';
+export { LeaseManager } from './services/lease-manager.js';
+export type { Lease, LeaseManagerOptions } from './services/lease-manager.js';
+export { IdempotentExecutor } from './services/idempotent-executor.js';
+export type { IdempotentExecutorOptions } from './services/idempotent-executor.js';
+export { RecoveryManager } from './services/recovery-manager.js';
+export type { StaleRun, RecoveryResult, RecoveryManagerOptions } from './services/recovery-manager.js';
+export { DurableSessionState } from './services/durable-session-state.js';
+export type { SessionSnapshot, RunSnapshot, DurableSessionStateOptions } from './services/durable-session-state.js';
+
 // Types
 export type { PromptTemplate, OutputSchema, BuildMessagesParams } from './prompts.js';
 export type { LLMProvider, AgentOutput, OrchestratorResult, ToolExecutorInterface, ToolRegistryInterface } from './session-orchestrator.js';

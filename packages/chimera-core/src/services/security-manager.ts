@@ -115,7 +115,7 @@ export class SecurityManager {
   /**
    * Validate a shell command before execution.
    */
-  validateCommand(command: string): { valid: boolean; reason?: string } {
+  validateCommand(command: string): { valid: boolean; reason?: string; requiresApproval?: boolean } {
     const { allowed, requiresApproval, reason } = this.isCommandAllowed(command);
     if (!allowed) {
       return { valid: false, reason: reason || 'Command not allowed by policy' };
