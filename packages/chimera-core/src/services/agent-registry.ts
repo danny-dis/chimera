@@ -20,15 +20,35 @@ export interface AgentRecord {
   totalRuns: number;
   successRate: number;
   consecutiveFailures: number;
+  /** Current in-flight instances */
+  inFlight: number;
+  /** Last heartbeat timestamp */
+  lastHeartbeat: number;
+}
+
+export interface RegisterAgentConfig {
+  id: string;
+  name: string;
+  role: string;
+  model: string;
+  provider: string;
+  capabilities: string[];
+  maxTokensPerTurn: number;
+  costCapPerTask: number;
+  costCapPerSession: number;
+  costCapPerDay: number;
+  maxParallelInstances: number;
+  rateLimitRpm: number;
 }
 
 /**
  * AgentRegistry — wraps AgentMesh to provide the domain interface.
- * Manages agent lifecycle, capability queries, and health tracking.
+ * Manages agent lifecycle, capability queries, health tracking, and concurrency.
  */
 export class AgentRegistry {
   private mesh: AgentMesh;
   private agents: Map<string, AgentRecord> = new Map();
+  private agentCounter = 0;
 
   constructor(eventStreamOrMesh?: EventStream | AgentMesh) {
     if (eventStreamOrMesh instanceof AgentMesh) {
@@ -39,22 +59,16 @@ export class AgentRegistry {
   }
 
   /**
+   * Generate a unique agent ID.
+   */
+  generateAgentId(): string {
+    return `agent-${++this.agentCounter}`;
+  }
+
+  /**
    * Register an agent with capabilities and constraints.
    */
-  registerAgent(config: {
-    id: string;
-    name: string;
-    role: string;
-    model: string;
-    provider: string;
-    capabilities: string[];
-    maxTokensPerTurn: number;
-    costCapPerTask: number;
-    costCapPerSession: number;
-    costCapPerDay: number;
-    maxParallelInstances: number;
-    rateLimitRpm: number;
-  }): void {
+  registerAgent(config: RegisterAgentConfig): void {
     const record: AgentRecord = {
       id: config.id,
       name: config.name,
@@ -72,6 +86,8 @@ export class AgentRegistry {
       totalRuns: 0,
       successRate: 1.0,
       consecutiveFailures: 0,
+      inFlight: 0,
+      lastHeartbeat: Date.now(),
     };
     this.agents.set(config.id, record);
     // Also register with AgentMesh for backward compatibility
@@ -98,7 +114,46 @@ export class AgentRegistry {
     const agent = this.agents.get(agentId);
     if (agent) {
       agent.status = status;
+      agent.lastHeartbeat = Date.now();
     }
+  }
+
+  /**
+   * Start an agent (transition to 'running').
+   */
+  startAgent(agentId: string): boolean {
+    const agent = this.agents.get(agentId);
+    if (!agent || agent.status === 'failed' || agent.status === 'stopped') {
+      return false;
+    }
+    agent.status = 'running';
+    agent.inFlight++;
+    agent.lastHeartbeat = Date.now();
+    return true;
+  }
+
+  /**
+   * Stop an agent (decrement in-flight, transition to 'ready').
+   */
+  stopAgent(agentId: string): void {
+    const agent = this.agents.get(agentId);
+    if (agent) {
+      agent.inFlight = Math.max(0, agent.inFlight - 1);
+      if (agent.inFlight === 0 && agent.status === 'running') {
+        agent.status = 'ready';
+      }
+      agent.lastHeartbeat = Date.now();
+    }
+  }
+
+  /**
+   * Check if an agent can accept more work.
+   */
+  canAcceptWork(agentId: string): boolean {
+    const agent = this.agents.get(agentId);
+    if (!agent) return false;
+    if (agent.status === 'failed' || agent.status === 'stopped') return false;
+    return agent.inFlight < agent.maxParallelInstances;
   }
 
   /**
@@ -143,6 +198,15 @@ export class AgentRegistry {
   }
 
   /**
+   * Get agents eligible for a role (healthy, can accept work).
+   */
+  getEligibleAgents(role: string): string[] {
+    return [...this.agents.values()]
+      .filter((a) => a.role === role && this.canAcceptWork(a.id))
+      .map((a) => a.id);
+  }
+
+  /**
    * Record an outcome for an agent (success or failure).
    */
   recordOutcome(agentId: string, success: boolean): void {
@@ -153,9 +217,15 @@ export class AgentRegistry {
       agent.consecutiveFailures = 0;
     } else {
       agent.consecutiveFailures++;
+      // Auto-fail agent after 5 consecutive failures
+      if (agent.consecutiveFailures >= 5) {
+        agent.status = 'failed';
+      }
     }
-    // Simple success rate: assume prior runs were 100% success
     agent.successRate = Math.max(0, (agent.totalRuns - agent.consecutiveFailures) / agent.totalRuns);
+    agent.lastHeartbeat = Date.now();
+    // Stop the agent (decrement in-flight)
+    this.stopAgent(agentId);
   }
 
   /**
@@ -163,5 +233,29 @@ export class AgentRegistry {
    */
   getMesh(): AgentMesh {
     return this.mesh;
+  }
+
+  /**
+   * Get registry statistics.
+   */
+  getStats(): {
+    total: number;
+    healthy: number;
+    failed: number;
+    inFlight: number;
+    byRole: Record<string, number>;
+  } {
+    const agents = [...this.agents.values()];
+    const byRole: Record<string, number> = {};
+    for (const a of agents) {
+      byRole[a.role] = (byRole[a.role] ?? 0) + 1;
+    }
+    return {
+      total: agents.length,
+      healthy: agents.filter((a) => a.status !== 'failed' && a.status !== 'stopped').length,
+      failed: agents.filter((a) => a.status === 'failed').length,
+      inFlight: agents.reduce((sum, a) => sum + a.inFlight, 0),
+      byRole,
+    };
   }
 }

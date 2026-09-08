@@ -223,6 +223,134 @@ describe('AgentRegistry', () => {
     const agent = registry.getAgent('agent-1');
     expect(agent?.totalRuns).toBe(2);
   });
+
+  it('generates unique agent IDs', () => {
+    const id1 = registry.generateAgentId();
+    const id2 = registry.generateAgentId();
+    expect(id1).not.toBe(id2);
+    expect(id1).toContain('agent-');
+  });
+
+  it('tracks agent lifecycle (start/stop)', () => {
+    registry.registerAgent({
+      id: 'agent-1',
+      name: 'Writer',
+      role: 'writer',
+      model: 'claude',
+      provider: 'anthropic',
+      capabilities: [],
+      maxTokensPerTurn: 4096,
+      costCapPerTask: 10,
+      costCapPerSession: 20,
+      costCapPerDay: 50,
+      maxParallelInstances: 2,
+      rateLimitRpm: 60,
+    });
+    expect(registry.canAcceptWork('agent-1')).toBe(true);
+    registry.startAgent('agent-1');
+    expect(registry.getAgent('agent-1')?.inFlight).toBe(1);
+    registry.startAgent('agent-1');
+    expect(registry.getAgent('agent-1')?.inFlight).toBe(2);
+    expect(registry.canAcceptWork('agent-1')).toBe(false);
+    registry.stopAgent('agent-1');
+    expect(registry.getAgent('agent-1')?.inFlight).toBe(1);
+    expect(registry.canAcceptWork('agent-1')).toBe(true);
+  });
+
+  it('auto-fails agent after 5 consecutive failures', () => {
+    registry.registerAgent({
+      id: 'agent-1',
+      name: 'Writer',
+      role: 'writer',
+      model: 'claude',
+      provider: 'anthropic',
+      capabilities: [],
+      maxTokensPerTurn: 4096,
+      costCapPerTask: 10,
+      costCapPerSession: 20,
+      costCapPerDay: 50,
+      maxParallelInstances: 1,
+      rateLimitRpm: 60,
+    });
+    for (let i = 0; i < 5; i++) {
+      registry.recordOutcome('agent-1', false);
+    }
+    expect(registry.getAgent('agent-1')?.status).toBe('failed');
+    expect(registry.canAcceptWork('agent-1')).toBe(false);
+  });
+
+  it('gets eligible agents for a role', () => {
+    registry.registerAgent({
+      id: 'writer-1',
+      name: 'Writer',
+      role: 'writer',
+      model: 'claude',
+      provider: 'anthropic',
+      capabilities: [],
+      maxTokensPerTurn: 4096,
+      costCapPerTask: 10,
+      costCapPerSession: 20,
+      costCapPerDay: 50,
+      maxParallelInstances: 1,
+      rateLimitRpm: 60,
+    });
+    registry.registerAgent({
+      id: 'writer-2',
+      name: 'Writer2',
+      role: 'writer',
+      model: 'gpt',
+      provider: 'openai',
+      capabilities: [],
+      maxTokensPerTurn: 4096,
+      costCapPerTask: 10,
+      costCapPerSession: 20,
+      costCapPerDay: 50,
+      maxParallelInstances: 1,
+      rateLimitRpm: 60,
+    });
+    expect(registry.getEligibleAgents('writer')).toContain('writer-1');
+    expect(registry.getEligibleAgents('writer')).toContain('writer-2');
+    registry.startAgent('writer-1');
+    // writer-1 is now at max concurrency (1), so only writer-2 is eligible
+    expect(registry.getEligibleAgents('writer')).not.toContain('writer-1');
+    expect(registry.getEligibleAgents('writer')).toContain('writer-2');
+  });
+
+  it('provides registry statistics', () => {
+    registry.registerAgent({
+      id: 'writer-1',
+      name: 'Writer',
+      role: 'writer',
+      model: 'claude',
+      provider: 'anthropic',
+      capabilities: [],
+      maxTokensPerTurn: 4096,
+      costCapPerTask: 10,
+      costCapPerSession: 20,
+      costCapPerDay: 50,
+      maxParallelInstances: 1,
+      rateLimitRpm: 60,
+    });
+    registry.registerAgent({
+      id: 'reviewer-1',
+      name: 'Reviewer',
+      role: 'reviewer',
+      model: 'gpt',
+      provider: 'openai',
+      capabilities: [],
+      maxTokensPerTurn: 4096,
+      costCapPerTask: 10,
+      costCapPerSession: 20,
+      costCapPerDay: 50,
+      maxParallelInstances: 1,
+      rateLimitRpm: 60,
+    });
+    const stats = registry.getStats();
+    expect(stats.total).toBe(2);
+    expect(stats.healthy).toBe(2);
+    expect(stats.byRole.writer).toBe(1);
+    expect(stats.byRole.reviewer).toBe(1);
+  });
 });
 
 describe('ModelSelector', () => {
