@@ -14,6 +14,8 @@ import type { AgentRegistry } from './agent-registry.js';
 import type { ModelSelector } from './model-selector.js';
 import type { VerificationController } from './verification-controller.js';
 import type { CheckpointManager } from './checkpoint-manager.js';
+import type { RoleComposer } from './role-composition.js';
+import type { MultiProviderHealthMonitor } from './provider-health-monitor.js';
 
 export interface ServiceContainer {
   readonly sessionState: SessionStateStore;
@@ -26,4 +28,6 @@ export interface ServiceContainer {
   readonly models: ModelSelector;
   readonly verification: VerificationController;
   readonly checkpoints: CheckpointManager;
+  readonly roles: RoleComposer;
+  readonly health: MultiProviderHealthMonitor;
 }

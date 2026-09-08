@@ -25,6 +25,8 @@ import type { ModelSelector } from './services/model-selector.js';
 import type { VerificationController } from './services/verification-controller.js';
 import type { CheckpointManager } from './services/checkpoint-manager.js';
 import type { ServiceContainer } from './services/service-container.js';
+import type { RoleComposer } from './services/role-composition.js';
+import type { MultiProviderHealthMonitor } from './services/provider-health-monitor.js';
 
 /**
  * Cross-mode validation: which presets are valid for each mode.
@@ -521,6 +523,38 @@ export class SessionOrchestrator {
       this.auditLog = svc.policy.getAuditLog();
       this.rateLimiter = svc.policy.getRateLimiter();
     }
+    if (svc.models) {
+      if (svc.health) {
+        svc.models.setHealthMonitor(svc.health);
+      }
+    }
+  }
+
+  /**
+   * Record provider health from an LLM call.
+   */
+  private recordProviderHealth(provider: string, latencyMs: number, success: boolean, errorType?: 'timeout' | 'rate_limit' | 'server_error' | 'auth_error'): void {
+    if (this._services.health) {
+      if (success) {
+        this._services.health.recordSuccess(provider, latencyMs);
+      } else {
+        this._services.health.recordFailure(provider, latencyMs, errorType);
+      }
+    }
+  }
+
+  /**
+   * Get the role composer.
+   */
+  getRoleComposer(): RoleComposer | undefined {
+    return this._services.roles;
+  }
+
+  /**
+   * Get the health monitor.
+   */
+  getHealthMonitor(): MultiProviderHealthMonitor | undefined {
+    return this._services.health;
   }
 
   /**
