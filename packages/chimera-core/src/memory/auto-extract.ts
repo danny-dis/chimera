@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { sideQuery } from '../side-query.js';
 import type { LongTermMemory } from './long-term-memory.js';
+import type { MemoryItem } from './types.js';
 
 export const ExtractionConfigSchema = z.object({
   enabled: z.boolean().default(true),
@@ -8,6 +9,11 @@ export const ExtractionConfigSchema = z.object({
   minImportance: z.number().min(0).max(1).default(0.3),
   maxTokens: z.number().positive().default(512),
   timeoutMs: z.number().positive().default(15_000),
+  // Write gate: novelty detection threshold (cosine similarity)
+  // If an incoming fact is above this threshold to an existing memory, it's considered duplicate
+  noveltyThreshold: z.number().min(0).max(1).default(0.85),
+  // Enable write gate (novelty check before writing)
+  enableWriteGate: z.boolean().default(true),
 });
 export type ExtractionConfig = z.infer<typeof ExtractionConfigSchema>;
 
@@ -41,9 +47,27 @@ function buildExtractionPrompt(messages: string): string {
 }
 
 /**
+ * Cosine similarity between two embedding vectors.
+ */
+function cosineSimilarity(a: number[], b: number[]): number {
+  if (a.length !== b.length) return 0;
+  let dot = 0, normA = 0, normB = 0;
+  for (let i = 0; i < a.length; i++) {
+    dot += a[i] * b[i];
+    normA += a[i] * a[i];
+    normB += b[i] * b[i];
+  }
+  const denom = Math.sqrt(normA) * Math.sqrt(normB);
+  return denom === 0 ? 0 : dot / denom;
+}
+
+/**
  * Turn-level extraction of durable facts from conversation messages.
  * Uses sideQuery (cheap LLM) to classify and score facts, then writes
  * qualifying facts to LongTermMemory.
+ * 
+ * Write gate: before writing, checks novelty against existing memories.
+ * If a similar fact already exists (above noveltyThreshold), skips the write.
  */
 export class AutoExtractService {
   private memory: LongTermMemory;
@@ -85,18 +109,44 @@ export class AutoExtractService {
     if (!result.ok) return input.messages.length;
 
     for (const fact of result.data.facts) {
-      if (fact.importance >= this.config.minImportance) {
-        await this.memory.write({
-          content: fact.content,
-          topic: fact.type,
-          importance: fact.importance,
-          source: 'agent',
-          sessionId: input.sessionId,
-          tags: fact.tags ?? [],
-        });
+      if (fact.importance < this.config.minImportance) continue;
+
+      // Write gate: novelty detection
+      if (this.config.enableWriteGate) {
+        const isNovel = await this.isNovel(fact.content);
+        if (!isNovel) continue; // Skip duplicate/redundant facts
       }
+
+      await this.memory.write({
+        content: fact.content,
+        topic: fact.type,
+        importance: fact.importance,
+        source: 'agent',
+        sessionId: input.sessionId,
+        tags: fact.tags ?? [],
+      });
     }
 
     return input.messages.length;
+  }
+
+  /**
+   * Check if a fact is novel (not already in memory).
+   * Returns true if no existing memory is above the novelty threshold.
+   */
+  private async isNovel(content: string): Promise<boolean> {
+    const provider = this.memory.getEmbeddingProvider();
+    if (!provider) return true; // Can't check, assume novel
+
+    const embedding = await provider.embed(content);
+    const existing = this.memory.getAll();
+
+    for (const item of existing) {
+      const sim = cosineSimilarity(embedding, item.embedding);
+      if (sim >= this.config.noveltyThreshold) {
+        return false; // Too similar to existing memory
+      }
+    }
+    return true;
   }
 }

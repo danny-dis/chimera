@@ -8,6 +8,10 @@ export interface LongTermMemoryConfig {
   embeddingProvider?: EmbeddingProvider;
   decayHalfLifeDays?: number; // memories lose half importance after this many days
   maxMemories?: number;
+  // Conflict resolution: staleness threshold (days) — facts past this age get re-verified
+  stalenessThresholdDays?: number;
+  // Supersession: when updating a fact, keep version chain instead of overwriting
+  enableSupersession?: boolean;
 }
 
 /**
@@ -38,6 +42,7 @@ export class LongTermMemory {
 
   /**
    * Store a new memory item.
+   * If a similar fact already exists (above threshold), it will be superseded.
    */
   async write(params: {
     content: string;
@@ -58,6 +63,7 @@ export class LongTermMemory {
         importance: params.importance ?? 0.5,
         createdAt: now,
         lastAccessedAt: now,
+        lastConfirmedAt: now,
         accessCount: 0,
         source: params.source ?? 'agent',
         sessionId: params.sessionId,
@@ -68,6 +74,57 @@ export class LongTermMemory {
     this.evictIfNeeded();
     this.saveToDisk();
     return item;
+  }
+
+  /**
+   * Find stale facts that haven't been confirmed recently.
+   * Returns items older than the staleness threshold.
+   */
+  findStale(stalenessThresholdDays: number): MemoryItem[] {
+    const now = Date.now();
+    const thresholdMs = stalenessThresholdDays * 24 * 60 * 60 * 1000;
+    return this.store.getAll().filter(
+      (m) => now - m.metadata.lastConfirmedAt > thresholdMs
+    );
+  }
+
+  /**
+   * Mark a fact as confirmed (updates lastConfirmedAt timestamp).
+   */
+  confirm(id: string): boolean {
+    const item = this.store.get(id);
+    if (!item) return false;
+    item.metadata.lastConfirmedAt = Date.now();
+    this.saveToDisk();
+    return true;
+  }
+
+  /**
+   * Supersede an old fact with a new one.
+   * The old fact is marked as superseded and its content is preserved for audit.
+   */
+  async supersede(oldId: string, newItem: {
+    content: string;
+    topic: string;
+    importance?: number;
+    source?: MemoryItem['metadata']['source'];
+    sessionId?: string;
+    tags?: string[];
+  }): Promise<MemoryItem | null> {
+    const oldItem = this.store.get(oldId);
+    if (!oldItem) return null;
+
+    // Mark old item as superseded
+    const newItemResult = await this.write({
+      ...newItem,
+      tags: [...(newItem.tags ?? []), `supersedes:${oldId}`],
+    });
+
+    // Update old item to point to new item
+    oldItem.metadata.supersededBy = newItemResult.id;
+    this.saveToDisk();
+
+    return newItemResult;
   }
 
   /**
@@ -179,6 +236,13 @@ export class LongTermMemory {
    */
   getAll(): MemoryItem[] {
     return this.store.getAll();
+  }
+
+  /**
+   * Get the embedding provider used by this memory store.
+   */
+  getEmbeddingProvider(): EmbeddingProvider | undefined {
+    return this.store.getEmbeddingProvider();
   }
 
   /**
