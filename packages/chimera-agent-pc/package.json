@@ -1,0 +1,27 @@
+{
+  "name": "@chimera/agent-pc",
+  "version": "0.5.7",
+  "description": "Per-agent personal computer — isolated workspace, browser, and process for DMR-X agents",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "bin": {
+    "agent-pc": "dist/cli.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "zod": "^3.23.0",
+    "playwright": "^1.49.0",
+    "@chimera/paths": "workspace:*",
+    "@chimera/isolation": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "vitest": "^1.2.0",
+    "typescript": "^5.5.0"
+  }
+}

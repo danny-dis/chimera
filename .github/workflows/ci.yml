@@ -43,3 +43,10 @@ jobs:
 
       - name: Test
         run: pnpm test
+
+      # BUG-8: the matrix harness is plain .mjs against built dist/, so a core
+      # refactor could break it invisibly (72b668d did; a stale score survived
+      # for weeks). This smoke runs the real orchestrator + prose-fallback +
+      # grader pipeline against a scripted mock provider — no network, no keys.
+      - name: Harness smoke
+        run: node scripts/harness-smoke.mjs

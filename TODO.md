@@ -360,8 +360,56 @@ completion path gives up.
 ### BUG-11 — Mistral and nvidia-nim responding in Chinese to English prompt — **LOW**
 `mistral/codestral-2508` and `nvidia-nim/llama-3.1-8b-instruct` both replied "你好！我是DeepSe" to an English "ping". The gateway is routing to Chinese-optimized variants of these models. Either the upstream model selector is auto-detecting Chinese from the model name, or the gateway's model→upstream mapping is wrong.
 
-### BUG-8 — Harness is outside typecheck and CI — **MEDIUM**
+### BUG-14 — Solo `code` edits of pre-existing files fail ~60–70% via live CLI — **HIGH** — FIXED 2026-08-24
+Live smoke (`code` "edit calc.js: a-b → a+b", pre-existing seed): **3/8 → 4/8 → 8/8**
+across three build iterations. Root causes, layered:
+
+1. **Adapter dropped solo-mode tool-call history.** `agent-tool-loop` solo mode
+   re-emits assistant turns under camelCase `toolCalls`, but cli-router's
+   `adaptProvider` only mapped snake_case `tool_calls` — from turn 2 the upstream
+   saw orphaned tool results, abandoned the protocol, and narrated pseudo-XML
+   (the exact 2-turn death pattern). Adapter now accepts both shapes.
+2. **Post-tool nudge forced premature synthesis.** The injected "#TOOL RESULTS
+   RECEIVED# … you MUST synthesize" message killed the loop right after
+   `read_file`. It now instructs: call more tools until changes are on disk;
+   synthesize only then.
+3. **Missing-flag write refusals were terminal.** `write_file` without
+   `overwrite:true` on an existing file was refused and identically retried into
+   the same wall; executor now self-heals that one case with one
+   `overwrite:true` retry.
+4. **Pathless writes had no target.** Weak models emit `write_file` with only
+   `content`; when the task's target is extractable, the loop now injects
+   `path` (+`overwrite`) deterministically before execution (also on forced
+   tool_choice turns), emitting a `tool_call_repaired` event.
+5. **Failure events were invisible in CLI output** — `tool_call_failed`,
+   `tool_call_retry`, `tool_call_repaired`, `prose_fallback_landed` are now
+   printed, so silent needs_user runs are debuggable.
+
+Verified: direct orchestrator probe (`scripts/dd-edit-probe.mjs`) FIXED first
+try; full batch 8/8 on disk; @chimera/core 710 tests + @chimera/tools 300
+tests pass.
+
+### BUG-8 — Harness is outside typecheck and CI — **MEDIUM** — FIXED 2026-08-23
 `matrix-disk.mjs` is a standalone `.mjs` against built `dist/`, so core refactors break
 it invisibly (`72b668d` did exactly that, and the stale `18/30` score survived for weeks
 because nobody could run it). Needs a CI smoke step — `COMBO=code/solo` is now safe to
 run in CI since it no longer clobbers the artifact.
+
+<details><summary>Fix (commit c5beda6)</summary>
+
+New `scripts/harness-smoke.mjs` (also `pnpm smoke:harness`), wired into `ci.yml`
+after Test on both OS matrix legs. Runs the **real** matrix-disk pipeline
+end-to-end against a scripted narrator mock provider — no network, no API keys,
+~2s. Asserts exactly what rotted before:
+
+1. All workspace requires in `matrix-disk.mjs` resolve (via chimera-cli dep
+   context — pnpm workspace layout, not resolvable from `scripts/` itself).
+2. `SessionOrchestrator` accepts positional tools; `toolExecutor` non-null.
+3. Narrator-style prose output lands an actual file fix on disk through the
+   prose-fallback chain (doubles as the BUG-7 regression guard).
+4. `grade-task.mjs` scores a perfect artifact 7/7 and honestly reports a
+   missing target.
+
+Local: 6/6 assertions pass. CI will run it on every push/PR to main.
+
+</details>

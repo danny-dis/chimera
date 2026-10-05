@@ -77,12 +77,36 @@ function adaptProvider(provider: ModelProvider): LLMProvider {
             } catch { /* content is not JSON — leave toolResultId undefined */ }
           }
         }
-        if (m.role === 'assistant' && Array.isArray(extra.tool_calls)) {
-          msg.toolCalls = (extra.tool_calls as Array<{ id: string; type: string; function: { name: string; arguments: string } }>).map((tc) => ({
-            id: tc.id,
-            name: tc.function.name,
-            arguments: tc.function.arguments,
-          }));
+        if (m.role === 'assistant') {
+          // Accept BOTH history shapes: snake_case `tool_calls` with nested
+          // `function` (session-orchestrator.buildToolResultMessages, trio
+          // mode) and camelCase `toolCalls` with flat name/arguments
+          // (agent-tool-loop solo/spawner modes). Missing this mapping drops
+          // the assistant's prior tool calls out of the request entirely, so
+          // from turn 2 onward the upstream sees orphaned tool results,
+          // abandons the tool protocol, and narrates pseudo-XML instead of
+          // emitting native calls — the solo code-edit false-success class.
+          const raw = Array.isArray(extra.tool_calls)
+            ? extra.tool_calls
+            : Array.isArray(extra.toolCalls)
+              ? extra.toolCalls
+              : undefined;
+          if (raw) {
+            msg.toolCalls = (raw as Array<Record<string, unknown>>)
+              .filter((tc) => tc && typeof tc === 'object')
+              .map((tc) => {
+                const fn = tc.function as { name?: unknown; arguments?: unknown } | undefined;
+                const name = typeof fn?.name === 'string' ? fn.name : typeof tc.name === 'string' ? tc.name : '';
+                const args =
+                  typeof fn?.arguments === 'string'
+                    ? fn.arguments
+                    : typeof tc.arguments === 'string'
+                      ? tc.arguments
+                      : JSON.stringify(tc.arguments ?? {});
+                return { id: String(tc.id ?? ''), name, arguments: args };
+              })
+              .filter((tc) => tc.name.length > 0);
+          }
         }
         return msg;
       });
@@ -627,6 +651,16 @@ export class CliRouter {
           : '\u2713 ok';
         console.log(`  \u25c0 [tool] ${result?.tool ?? 'unknown'} ${status}`);
         this.printDiffs(result?.diffs);
+      } else if (
+        (event as any).type === 'tool_call_failed' ||
+        (event as any).type === 'tool_call_retry' ||
+        (event as any).type === 'tool_call_repaired' ||
+        (event as any).type === 'prose_fallback_landed'
+      ) {
+        // Loop-safety observability: these events mean the tool layer had to
+        // heal or reject a call — without them a silent needs_user is undebuggable.
+        const e = event as any;
+        console.log(`  \u26a0 [${e.type}] ${e.tool ?? e.path ?? ''} ${String(e.error ?? e.files ?? '').slice(0, 140)}`);
       } else if ((event as any).type === 'compaction_triggered') {
         const e = event as any;
         console.log(`  \u2a5d [compaction] freed ~${e.tokensSaved ?? '?'} tokens`);

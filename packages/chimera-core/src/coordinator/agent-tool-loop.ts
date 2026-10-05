@@ -323,10 +323,37 @@ export async function runAgentToolLoop(
   // Snapshot the task's target at entry so we can detect an edit that was
   // narrated but never applied (mtime/size unchanged after the run).
   const targetBefore = workspaceRoot ? snapshotTarget(task ?? '', workspaceRoot) : null;
+  const targetPath = task ? expectedPathFromTask(task) : undefined;
+
+  // Repair arg-shape defects deterministically BEFORE execution: weak models
+  // frequently emit write_file with ONLY `content` (path implied by the task)
+  // or omit `overwrite` on an existing-file rewrite. Every layer below then
+  // refuses the write ("path required" / "File already exists") and the run
+  // ends needs_user despite the full fixed content being present. When the
+  // task's target is extractable, inject it; all other guards (truncation
+  // check, sandbox, syntax oracle) still run inside the tool itself.
+  const repairWriteTargets = (calls: ToolCall[]): void => {
+    if (!targetPath || !workspaceRoot) return;
+    for (const tc of calls) {
+      if (tc.name !== 'write_file') continue;
+      const args = tc.arguments as { path?: unknown; content?: unknown; overwrite?: unknown };
+      const absLike = typeof args.path === 'string' && args.path.length > 0;
+      if (!absLike && typeof args.content === 'string' && args.content.length > 0) {
+        args.path = targetPath;
+        args.overwrite = true;
+        eventStream.append({
+          type: 'tool_call_repaired',
+          tool: tc.name,
+          error: `missing path — injected task target ${targetPath}`,
+        } as any);
+      }
+    }
+  };
 
   while (canLoop && currentToolCalls.length > 0 && round < maxRounds) {
     round++;
 
+    repairWriteTargets(currentToolCalls);
     // Snapshot write/edit targets BEFORE execution. We count only REAL disk
     // mutations (below, after runToolCalls), not tool-call sightings — a model
     // can emit write_file/edit_file that fails or is a no-op (identical
@@ -406,7 +433,6 @@ export async function runAgentToolLoop(
   // `forceMinFiles` being supplied — any `wantsFiles` task that landed zero
   // files gets the guarantee.
   let realFiles = 0;
-  const targetPath = task ? expectedPathFromTask(task) : undefined;
   // Fire when the task wants files but NONE landed (new-file case) OR the
   // target exists yet was NOT modified on disk (edit narrated, not applied).
   // The pre-existing file is the trap: fileLandedOnDisk is true for an edit,
@@ -465,6 +491,7 @@ export async function runAgentToolLoop(
         outputTokens += (forced as any).usage?.outputTokens ?? 0;
         lastContent = forcedContent;
         if (forced.toolCalls && forced.toolCalls.length > 0) {
+          repairWriteTargets(forced.toolCalls);
           // Disk-verify forced writes too: snapshot targets, count only real
           // mutations (a no-op/failed forced write must NOT count as landed).
           const forcedPre = new Map<string, { mtime: number; size: number } | null>();
