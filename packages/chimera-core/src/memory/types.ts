@@ -10,10 +10,12 @@ export interface MemoryMetadata {
   importance: number; // 0.0 - 1.0
   createdAt: number;
   lastAccessedAt: number;
+  lastConfirmedAt: number; // when this fact was last verified/updated
   accessCount: number;
   source: 'user' | 'agent' | 'system';
   sessionId?: string;
   tags: string[];
+  supersededBy?: string; // id of the memory that replaced this one
 }
 
 export interface MemoryQuery {
@@ -31,6 +33,7 @@ export interface MemoryResult {
 }
 
 export interface EmbeddingProvider {
-  embed(text: string): Promise<number[]>;
+  embed(text: string): Promise<Array<number>>;
+  embedBatch?(texts: string[]): Promise<Array<Array<number>>>;
   dimension(): number;
 }

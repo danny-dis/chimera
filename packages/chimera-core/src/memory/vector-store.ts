@@ -16,7 +16,7 @@ export class LocalEmbeddingProvider implements EmbeddingProvider {
     return this.dim;
   }
 
-  async embed(text: string): Promise<number[]> {
+  async embed(text: string): Promise<Array<number>> {
     const vec = new Float64Array(this.dim);
     const normalized = text.toLowerCase().replace(/\s+/g, ' ').trim();
     const tokens = this.tokenize(normalized);
@@ -165,7 +165,7 @@ export class VectorStore {
   }
 }
 
-function cosineSimilarity(a: number[], b: number[]): number {
+export function cosineSimilarity(a: number[], b: number[]): number {
   if (a.length !== b.length) return 0;
   let dot = 0;
   let normA = 0;

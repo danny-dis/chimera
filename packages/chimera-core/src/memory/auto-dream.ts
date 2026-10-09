@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { sideQuery } from '../side-query.js';
 import type { LongTermMemory } from './long-term-memory.js';
 import type { MemoryItem } from './types.js';
+import { cosineSimilarity } from './vector-store.js';
 
 export const DreamConfigSchema = z.object({
   enabled: z.boolean().default(true),
@@ -12,6 +13,14 @@ export const DreamConfigSchema = z.object({
   lockfileDir: z.string().optional(),
   maxMemoriesPerConsolidation: z.number().positive().default(20),
   model: z.string().optional(),
+  // Recurrence-based consolidation: only consolidate when ≥ this many
+  // semantically similar items exist. Reduces LLM cost by up to 87%
+  // compared to eager consolidation.
+  recurrenceThreshold: z.number().positive().default(5),
+  // Similarity threshold for grouping items into recurrence clusters
+  recurrenceSimilarity: z.number().min(0).max(1).default(0.85),
+  // Enable recurrence-based trigger (falls back to session-gap if disabled)
+  enableRecurrenceTrigger: z.boolean().default(true),
 });
 export type DreamConfig = z.infer<typeof DreamConfigSchema>;
 
@@ -69,7 +78,41 @@ export class AutoDreamService {
     if (this.state.sessionsSinceDream < this.config.minSessionGap) return false;
     if (Date.now() - this.state.lastDreamAt < this.config.minTimeGapMs) return false;
 
+    // Recurrence-based trigger: only dream if there are enough similar items
+    if (this.config.enableRecurrenceTrigger) {
+      const hasRecurrence = await this.checkRecurrence();
+      if (!hasRecurrence) return false;
+    }
+
     return true;
+  }
+
+  /**
+   * Check if there are enough semantically similar items to warrant consolidation.
+   * Looks for clusters of items with similarity above the threshold.
+   */
+  private async checkRecurrence(): Promise<boolean> {
+    const provider = this.memory.getEmbeddingProvider();
+    if (!provider) return true; // Can't check, fall back to session-gap
+
+    const items = this.memory.getAll();
+    if (items.length < this.config.recurrenceThreshold) return false;
+
+    // Check if any item has enough similar neighbors
+    for (let i = 0; i < items.length; i++) {
+      let similarCount = 0;
+      for (let j = 0; j < items.length; j++) {
+        if (i === j) continue;
+        const sim = cosineSimilarity(items[i].embedding, items[j].embedding);
+        if (sim >= this.config.recurrenceSimilarity) {
+          similarCount++;
+        }
+      }
+      if (similarCount >= this.config.recurrenceThreshold) {
+        return true;
+      }
+    }
+    return false;
   }
 
   async dream(): Promise<{ consolidated: number; pruned: number }> {

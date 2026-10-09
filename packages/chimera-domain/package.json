@@ -1,0 +1,21 @@
+{
+  "name": "@chimera/domain",
+  "version": "0.5.7",
+  "description": "Canonical domain types: Session, Run, Task, Mission, Agent, Model, Tool, Artifact, Evidence, Checkpoint",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "test": "vitest run",
+    "lint": "eslint src/",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "zod": "^3.23.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "vitest": "^2.0.0"
+  }
+}

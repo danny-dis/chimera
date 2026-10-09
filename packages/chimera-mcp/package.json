@@ -1,0 +1,23 @@
+{
+  "name": "@chimera/mcp",
+  "version": "0.5.7",
+  "description": "MCP (Model Context Protocol) adapter — tool/resource/prompt discovery and execution",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "test": "vitest run",
+    "lint": "eslint src/",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@chimera/core": "workspace:*",
+    "@chimera/domain": "workspace:*",
+    "zod": "^3.23.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "vitest": "^1.2.0"
+  }
+}

@@ -14,6 +14,19 @@ import { expectedPathFromTask, snapshotTarget, targetChanged } from './coordinat
 import type { LongTermMemory } from './memory/long-term-memory.js';
 import { Mode, type ToolCall, type ToolCallResult } from './types/agent.js';
 import { zodToJsonSchema } from './zod-json.js';
+import type { SessionStateStore } from './services/session-state-store.js';
+import type { BudgetController } from './services/budget-controller.js';
+import type { EventBus } from './services/event-bus.js';
+import type { PolicyController } from './services/policy-controller.js';
+import type { ToolController } from './services/tool-controller.js';
+import type { ContextController } from './services/context-controller.js';
+import type { AgentRegistry } from './services/agent-registry.js';
+import type { ModelSelector } from './services/model-selector.js';
+import type { VerificationController } from './services/verification-controller.js';
+import type { CheckpointManager } from './services/checkpoint-manager.js';
+import type { ServiceContainer } from './services/service-container.js';
+import type { RoleComposer } from './services/role-composition.js';
+import type { MultiProviderHealthMonitor } from './services/provider-health-monitor.js';
 
 /**
  * Cross-mode validation: which presets are valid for each mode.
@@ -229,9 +242,6 @@ interface ReviewVerdict {
 }
 
 let agentCounter = 0;
-function nextAgentId(): string {
-  return `agent-${++agentCounter}`;
-}
 
 const MAX_TOOL_ITERATIONS = 10;
 
@@ -407,10 +417,6 @@ export class SessionOrchestrator {
   private toolExecutor: ToolExecutorInterface | null = null;
   private memory: LongTermMemory | null = null;
   private contextEngine: ContextEngine | null = null;
-  // ponytail: budgetEnforcer was from the dead @chimera/providers
-  // BudgetEnforcer. Kept as unknown so callers that still pass one don't
-  // break — but it's ignored. Delete when all callers stop passing it.
-  // Upgrade path: remove the field and its option.
   private budgetEnforcer: unknown | null = null;
   private rateLimiter: RateLimiter | null = null;
   private auditLog: AuditLog;
@@ -435,6 +441,9 @@ export class SessionOrchestrator {
   private _configBackendUrl?: string;
   private _configBackendKey?: string;
 
+  // Domain services (Phase 2 facade)
+  private _services: Partial<ServiceContainer> = {};
+
   constructor(
     eventStream?: EventStream,
     tools?: { registry: ToolRegistryInterface; executor: ToolExecutorInterface },
@@ -450,12 +459,11 @@ export class SessionOrchestrator {
       autoExtract?: AutoExtractService;
       recallService?: RecallService;
       autoDream?: AutoDreamService;
-      /** Optional LSP diagnostics hook (wired from the CLI via @chimera/tools). */
       lspDiagnostics?: (file: string) => Promise<Array<{ severity: string; message: string; line?: number; column?: number }>>;
-      /** Backend URL for alias resolution (e.g. DMR-X gateway). */
       configBackendUrl?: string;
-      /** Backend API key for alias resolution. */
       configBackendKey?: string;
+      /** Domain services for facade delegation (Phase 2) */
+      services?: Partial<ServiceContainer>;
     },
   ) {
     this.eventStream = eventStream ?? new EventStream();
@@ -473,9 +481,6 @@ export class SessionOrchestrator {
     this.toolRelay = new ToolContextRelay({ boxThreshold: 2000 });
     this.handoffProtocol = new HandoffProtocol();
     this.linter = new BiomeLinter({ configPath: this._workspaceRoot });
-    // ponytail: registry type is now the minimal interface from @chimera/providers.
-    // The dead ModelRegistry class is gone — SimpleModelRegistry (or anything with
-    // get/getAll/register) works. Cast stops TS from demanding the old class shape.
     this._registry = (options?.registry as ModelRegistry | undefined) ?? null;
     this.autoExtract = options?.autoExtract ?? null;
     this.recallService = options?.recallService ?? null;
@@ -487,6 +492,76 @@ export class SessionOrchestrator {
       this.toolRegistry = tools.registry;
       this.toolExecutor = tools.executor;
     }
+    // Wire domain services if provided
+    if (options?.services) {
+      this._services = options.services;
+      this.wireServices();
+    }
+  }
+
+  /**
+   * Wire domain services into the orchestrator's internal state.
+   * Called when services are provided via the constructor.
+   */
+  private wireServices(): void {
+    const svc = this._services;
+    if (svc.budget) {
+      this.costTracker = svc.budget.getCostTracker();
+    }
+    if (svc.events) {
+      this.eventStream = svc.events.getUnderlyingStream();
+    }
+    if (svc.agents) {
+      this.agentMesh = svc.agents.getMesh();
+    }
+    if (svc.context) {
+      this.relayRacing = svc.context.getRelayRacing();
+      this.handoffProtocol = svc.context.getHandoffProtocol();
+      this.toolRelay = svc.context.getToolRelay();
+    }
+    if (svc.policy) {
+      this.auditLog = svc.policy.getAuditLog();
+      this.rateLimiter = svc.policy.getRateLimiter();
+    }
+    if (svc.models) {
+      if (svc.health) {
+        svc.models.setHealthMonitor(svc.health);
+      }
+    }
+  }
+
+  /**
+   * Record provider health from an LLM call.
+   */
+  private recordProviderHealth(provider: string, latencyMs: number, success: boolean, errorType?: 'timeout' | 'rate_limit' | 'server_error' | 'auth_error'): void {
+    if (this._services.health) {
+      if (success) {
+        this._services.health.recordSuccess(provider, latencyMs);
+      } else {
+        this._services.health.recordFailure(provider, latencyMs, errorType);
+      }
+    }
+  }
+
+  /**
+   * Get the role composer.
+   */
+  getRoleComposer(): RoleComposer | undefined {
+    return this._services.roles;
+  }
+
+  /**
+   * Get the health monitor.
+   */
+  getHealthMonitor(): MultiProviderHealthMonitor | undefined {
+    return this._services.health;
+  }
+
+  /**
+   * Get the domain services (for testing/extension).
+   */
+  getServices(): Partial<ServiceContainer> {
+    return this._services;
   }
 
   /**
@@ -608,6 +683,14 @@ export class SessionOrchestrator {
         rateLimitRpm: 60,
       },
     };
+  }
+
+  /**
+   * Register an agent with both the mesh and the registry.
+   */
+  private registerAgent(id: string, role: 'writer' | 'reviewer' | 'challenger', costCap: number): void {
+    this.agentMesh.registerAgent(this.buildAgentConfig(id, role, costCap));
+    this.registerAgentWithRegistry(id, role, costCap);
   }
 
   async execute(params: {
@@ -942,9 +1025,9 @@ export class SessionOrchestrator {
       this.transition({ status: 'planning', task, complexity });
       const needsVerification = this.shouldVerify(resolvedMode, complexity, task);
 
-      const writerId = nextAgentId();
+      const writerId = this.nextAgentId();
       this.transition({ status: 'drafting', task, agentId: writerId });
-      this.agentMesh.registerAgent(this.buildAgentConfig(writerId, 'writer', costCap));
+      this.registerAgent(writerId, 'writer', costCap);
       // Tier-aware runtime adaptation (Stream A). The writer model id is not
       // carried on LLMProvider, so we read it from the registry (first
       // available model is the configured writer). Unknown ids fall back to
@@ -1127,9 +1210,9 @@ export class SessionOrchestrator {
         return this.finalize('done', outputs, totalCost, task, resolvedMode);
       }
 
-      const reviewerId = nextAgentId();
+      const reviewerId = this.nextAgentId();
       this.transition({ status: 'verifying', task, draft: draftContent, agentId: reviewerId });
-      this.agentMesh.registerAgent(this.buildAgentConfig(reviewerId, 'reviewer', costCap));
+      this.registerAgent(reviewerId, 'reviewer', costCap);
 
       // ponytail: checkBudget is a no-op stub (BudgetEnforcer removed).
       void this.checkBudget(8192);
@@ -1179,7 +1262,7 @@ export class SessionOrchestrator {
       });
 
       if (providers.challenger && verdict !== 'PASS') {
-        const challengerId = nextAgentId();
+        const challengerId = this.nextAgentId();
         this.transition({
           status: 'challenging',
           task,
@@ -1187,7 +1270,7 @@ export class SessionOrchestrator {
           review: reviewResult.content,
           agentId: challengerId,
         });
-        this.agentMesh.registerAgent(this.buildAgentConfig(challengerId, 'challenger', costCap));
+        this.registerAgent(challengerId, 'challenger', costCap);
 
         // ponytail: checkBudget is a no-op stub (BudgetEnforcer removed).
         void this.checkBudget(8192);
@@ -1307,7 +1390,7 @@ export class SessionOrchestrator {
     signal?: AbortSignal,
   ): Promise<OrchestratorResult> {
     const startTime = Date.now();
-    const agentId = nextAgentId();
+    const agentId = this.nextAgentId();
 
     this.transition({ status: 'drafting', task, agentId });
 
@@ -2029,7 +2112,7 @@ export class SessionOrchestrator {
     reviewTokens: number;
   }> {
     this.transition({ status: 'verifying', task: args.task, draft: args.draft, agentId: args.reviewerId });
-    this.agentMesh.registerAgent(this.buildAgentConfig(args.reviewerId, 'reviewer', args.costCap));
+    this.registerAgent(args.reviewerId, 'reviewer', args.costCap);
 
     const reviewerMessages = this.buildReviewerPrompt(args.task, args.draft, args.mode, args.conversationHistory);
     const reviewResult = await args.reviewer.complete(reviewerMessages, {
@@ -2086,7 +2169,7 @@ export class SessionOrchestrator {
       review: args.review,
       agentId: args.challengerId,
     });
-    this.agentMesh.registerAgent(this.buildAgentConfig(args.challengerId, 'challenger', args.costCap));
+    this.registerAgent(args.challengerId, 'challenger', args.costCap);
 
     const challengerMessages = this.buildChallengerPrompt(args.task, args.draft, args.review, args.conversationHistory);
     const challengeResult = await args.challenger.complete(challengerMessages, {
@@ -2223,12 +2306,12 @@ export class SessionOrchestrator {
     const startTime = Date.now();
     const outputs: AgentOutput[] = [];
 
-    const reviewerId = nextAgentId();
-    const challengerId = nextAgentId();
+    const reviewerId = this.nextAgentId();
+    const challengerId = this.nextAgentId();
 
-    this.agentMesh.registerAgent(this.buildAgentConfig(reviewerId, 'reviewer', costCap));
+    this.registerAgent(reviewerId, 'reviewer', costCap);
     if (providers.challenger) {
-      this.agentMesh.registerAgent(this.buildAgentConfig(challengerId, 'challenger', costCap));
+      this.registerAgent(challengerId, 'challenger', costCap);
     }
 
     this.eventStream.append({
@@ -2428,6 +2511,43 @@ export class SessionOrchestrator {
     if (task && TaskRouter.isConversationalTask(task)) return false;
     if (mode === 'ask' && complexity.overall < 0.4) return false;
     return true;
+  }
+
+  /**
+   * Generate a unique agent ID.
+   * Delegates to AgentRegistry if available.
+   */
+  private nextAgentId(): string {
+    return this._services.agents?.generateAgentId() ?? `agent-${++agentCounter}`;
+  }
+
+  /**
+   * Register an agent with the registry.
+   */
+  private registerAgentWithRegistry(id: string, role: 'writer' | 'reviewer' | 'challenger', costCap: number): void {
+    if (this._services.agents) {
+      this._services.agents.registerAgent({
+        id,
+        name: `${role}-${id}`,
+        role,
+        model: 'default',
+        provider: 'llm',
+        capabilities: [],
+        maxTokensPerTurn: 4096,
+        costCapPerTask: costCap,
+        costCapPerSession: costCap * 2,
+        costCapPerDay: costCap * 5,
+        maxParallelInstances: 1,
+        rateLimitRpm: 60,
+      });
+    }
+  }
+
+  /**
+   * Record agent outcome with the registry.
+   */
+  private recordAgentOutcome(id: string, success: boolean): void {
+    this._services.agents?.recordOutcome(id, success);
   }
 
   buildWriterPrompt(task: string, mode: Mode, conversationHistory?: Array<{ role: string; content: string }>, context?: string, tier: 'cheap' | 'mid' | 'frontier' | 'reasoning' = 'mid', style?: OutputStyle): Array<{ role: string; content: string }> {

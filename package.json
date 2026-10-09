@@ -18,16 +18,19 @@
     "chimera": "node packages/chimera-cli/dist/index.js"
   },
   "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@typescript-eslint/eslint-plugin": "^8.0.0",
+    "@typescript-eslint/parser": "^8.0.0",
+    "eslint": "^9.0.0",
     "turbo": "^2.0.0",
     "typescript": "^5.5.0",
-    "@types/node": "^22.0.0",
-    "eslint": "^9.0.0",
-    "vitest": "^2.0.0",
-    "@typescript-eslint/eslint-plugin": "^8.0.0",
-    "@typescript-eslint/parser": "^8.0.0"
+    "vitest": "^2.0.0"
   },
   "engines": {
     "node": ">=20.0.0"
   },
-  "packageManager": "pnpm@11.0.8"
+  "packageManager": "pnpm@11.0.8",
+  "dependencies": {
+    "ts-morph": "^28.0.0"
+  }
 }
