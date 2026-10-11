@@ -1,4 +1,5 @@
 import { createInterface } from 'node:readline';
+import { isDeepStrictEqual } from 'node:util';
 import type { ToolRegistry } from './tool-registry.js';
 import type { ToolContext, ToolResult, PermissionDecision } from './tool-schema.js';
 import type { PermissionEngine } from './permission/policy.js';
@@ -62,6 +63,27 @@ function extractDiffs(data: unknown): { diffs?: EventFileDiff[] } {
   return {};
 }
 
+/**
+ * Deep-copy tool params at the trust boundary so a permission callback, a
+ * hook, or a concurrent caller still holding the original reference cannot
+ * change the values that were authorized before they reach execution.
+ */
+function cloneParams(params: Record<string, unknown>): Record<string, unknown> {
+  return structuredClone(params);
+}
+
+const cancelledResult = (): ToolResult => ({
+  success: false,
+  error: 'Execution cancelled',
+  duration: 0,
+});
+
+const deniedResult = (toolName: string): ToolResult => ({
+  success: false,
+  error: `Permission denied for tool "${toolName}"`,
+  duration: 0,
+});
+
 export type PermissionChecker = (
   tool: string,
   params: Record<string, unknown>,
@@ -71,6 +93,8 @@ export type PermissionChecker = (
  * Run pre-tool-use hooks. Returns the (possibly mutated) params and a block
  * decision. Hooks never throw into the tool path — failures are logged and
  * ignored so the agent keeps working (mirrors grok-build's suppressErrors).
+ * `canModify` gating lives inside HookExecutor: it only surfaces
+ * `modifiedParams` for hooks that are allowed to rewrite the call.
  */
 async function runPreHooks(
   hooks: HookExecutor | undefined,
@@ -166,6 +190,51 @@ export class ToolExecutor {
     this.permissionEngine = engine;
   }
 
+  /**
+   * Single authorization seam. Every decision routes through the same
+   * evaluator (a policy engine wins over the callback) and fails CLOSED if
+   * the evaluator throws — a policy exception must never be read as an allow.
+   */
+  private evaluate(toolName: string, params: Record<string, unknown>): PermissionDecision {
+    try {
+      return this.permissionEngine
+        ? this.permissionEngine.check(toolName, params)
+        : this.permissionCheck(toolName, params);
+    } catch {
+      return 'deny';
+    }
+  }
+
+  /**
+   * Coerce model-emitted string scalars and apply the schema's defaults using
+   * the registry's existing logic, so the values we authorize are exactly the
+   * values the tool will execute. Authorizing the RAW args let a coerced
+   * boolean (`'true'` -> `true`) or a schema default (`overwrite: true`) slip
+   * past the policy and reach execution. Returns the same validation-error
+   * shape callers already expect when the params cannot be parsed.
+   */
+  private normalize(
+    toolName: string,
+    params: Record<string, unknown>,
+  ): { ok: true; params: Record<string, unknown> } | { ok: false; error: string } {
+    const coerced = this.registry.coerceParams(toolName, params);
+    try {
+      // parseParams == tool.parameters.parse: applies defaults and is
+      // idempotent for these schemas (none use .transform()). The registry
+      // re-parses the same values at execution, so what we check here is
+      // exactly what runs — no second validation path is introduced.
+      return { ok: true, params: this.registry.parseParams(toolName, coerced) };
+    } catch (err: unknown) {
+      const zodErrors = (err as { errors?: Array<{ path: Array<string | number>; message: string }> }).errors;
+      const message = Array.isArray(zodErrors)
+        ? zodErrors.map((e) => `${e.path.join('.')}: ${e.message}`).join(', ')
+        : err instanceof Error
+          ? err.message
+          : String(err);
+      return { ok: false, error: `Parameter validation failed: ${message}` };
+    }
+  }
+
   async execute(
     toolName: string,
     params: Record<string, unknown>,
@@ -181,7 +250,38 @@ export class ToolExecutor {
       };
     }
 
-    // Pre-tool-use hooks — gate or mutate before validation/execution.
+    // Pre-aborted signal: refuse to execute
+    if (context.signal?.aborted) {
+      return cancelledResult();
+    }
+
+    // Normalize (coerce + schema defaults) BEFORE authorization. The policy
+    // must see the exact values the tool will execute — not the raw model
+    // args, which can differ once coerced or defaulted.
+    const normalized = this.normalize(toolName, params);
+    if (normalized.ok === false) {
+      return { success: false, error: normalized.error, duration: 0 };
+    }
+
+    // Snapshot the exact authorized values. A callback, a hook, or a caller
+    // holding the original object can no longer change what we execute.
+    let execParams: Record<string, unknown>;
+    try { execParams = cloneParams(normalized.params); }
+    catch { return deniedResult(toolName); }
+
+    // Authorize on the normalized values BEFORE hooks run, so a hook cannot
+    // downgrade a deny/ask into an allow.
+    const originalDecision = this.evaluate(toolName, cloneParams(execParams));
+    if (originalDecision === 'deny') return deniedResult(toolName);
+    if (context.signal?.aborted) return cancelledResult();
+
+    if (originalDecision === 'ask') {
+      const outcome = await this.promptForApproval(tool, toolName, execParams, context);
+      if (outcome === 'aborted') return cancelledResult();
+      if (outcome === 'deny') return deniedResult(toolName);
+    }
+
+    // Pre-tool-use hooks — gate or mutate before execution.
     // Lazily load workspace hooks on first call (no-op if none configured).
     if (this.hooks && context.workspaceRoot) {
       try {
@@ -189,7 +289,14 @@ export class ToolExecutor {
       } catch {
         // ignore load errors — no hooks is a valid state
       }
-      const pre = await runPreHooks(this.hooks, toolName, params, context);
+      if (context.signal?.aborted) {
+        return cancelledResult();
+      }
+
+      const pre = await runPreHooks(this.hooks, toolName, cloneParams(execParams), context);
+      if (context.signal?.aborted) {
+        return cancelledResult();
+      }
       if (pre.blocked) {
         return {
           success: false,
@@ -197,71 +304,38 @@ export class ToolExecutor {
           duration: 0,
         };
       }
-      params = pre.params;
-    }
 
-    // Coerce model-emitted string args into the types the schema expects
-    // (small models often send booleans/numbers as JSON strings).
-    const coerced = this.registry.coerceParams(toolName, params);
-
-    // Validate params
-    const validation = this.registry.validateParams(toolName, coerced);
-    if (!validation.valid) {
-      return {
-        success: false,
-        error: `Parameter validation failed: ${validation.errors?.join(', ')}`,
-        duration: 0,
-      };
-    }
-
-    // Check permission. A policy engine (if set) wins over the callback.
-    const decision: PermissionDecision = this.permissionEngine
-      ? this.permissionEngine.check(toolName, params)
-      : this.permissionCheck(toolName, params);
-    if (decision === 'deny') {
-      return {
-        success: false,
-        error: `Permission denied for tool "${toolName}"`,
-        duration: 0,
-      };
-    }
-
-    if (decision === 'ask') {
-      // Pre-write approval gate. For mutating write tools that expose a diff
-      // preview, compute what would change BEFORE the write lands and ride it
-      // on the event so the reviewer can block/allow against the real patch.
-      // Best-effort: a failed or unavailable preview degrades to no diffs and
-      // never to a blocked write.
-      let preview: EventFileDiff[] | undefined;
-      if (tool.previewDiff) {
-        try {
-          const diffs = await tool.previewDiff(coerced, context);
-          preview = diffs && diffs.length > 0 ? diffs.map(toEventDiff) : undefined;
-        } catch {
-          preview = undefined;
+      if (pre.params !== execParams) {
+        // A hook rewrote the args. Re-normalize and re-authorize ONLY if the
+        // normalized values actually changed (deep equality) — a legitimate
+        // rewrite must still pass policy, but an unchanged call must not ask
+        // twice. The re-check uses the same evaluator contract as the first.
+        const rewritten = this.normalize(toolName, pre.params);
+        if (rewritten.ok === false) {
+          return { success: false, error: rewritten.error, duration: 0 };
         }
-      }
-
-      // Emit event requesting permission, then block on a real prompt.
-      context.eventStream.append({
-        type: 'tool_call_requested',
-        call: { tool: toolName, args: params },
-        policy: 'ask',
-        ...(preview ? { diffs: preview } : {}),
-      } as Parameters<typeof context.eventStream.append>[0]);
-
-      const granted = await promptAsk(toolName);
-      if (granted !== 'allow') {
-        return {
-          success: false,
-          error: `Permission denied for tool "${toolName}"`,
-          duration: 0,
-        };
+        if (!isDeepStrictEqual(rewritten.params, execParams)) {
+          let rewrittenParams: Record<string, unknown>;
+          try { rewrittenParams = cloneParams(rewritten.params); }
+          catch { return deniedResult(toolName); }
+          const decision = this.evaluate(toolName, cloneParams(rewrittenParams));
+          if (decision === 'deny') return deniedResult(toolName);
+          if (context.signal?.aborted) return cancelledResult();
+          if (decision === 'ask') {
+            const outcome = await this.promptForApproval(tool, toolName, rewrittenParams, context);
+            if (outcome === 'aborted') return cancelledResult();
+            if (outcome === 'deny') return deniedResult(toolName);
+          }
+          execParams = rewrittenParams;
+        }
       }
     }
 
     // Execute
-    let result = await this.registry.execute(toolName, coerced, context);
+    if (context.signal?.aborted) {
+      return cancelledResult();
+    }
+    let result = await this.registry.execute(toolName, execParams, context);
 
     // ── Self-healing overwrite retry (edit-path reliability) ─────────────
     // Models routinely emit `write_file` WITHOUT `overwrite` when their intent
@@ -272,19 +346,37 @@ export class ToolExecutor {
     // success in prose. When the ONLY failure reason is that missing flag,
     // retry once with `overwrite:true` injected — the model's full-content
     // rewrite IS the user-visible intent; all other guards (truncation check,
-    // sandbox, lint) still run inside the tool.
+    // sandbox, lint) still run inside the tool. The changed args are routed
+    // through the same authorization boundary (deny/ask/allow) as the initial
+    // dispatch — never a direct registry bypass.
     if (
       !result.success &&
       toolName === 'write_file' &&
       typeof (result.error ?? '') === 'string' &&
       /File already exists and overwrite is false/i.test(result.error ?? '')
     ) {
+      if (context.signal?.aborted) {
+        return cancelledResult();
+      }
+      const retryParams = { ...execParams, overwrite: true };
+      const retryDecision = this.evaluate(toolName, cloneParams(retryParams));
+      // The evaluator (or its callback) may abort the owned signal as a side
+      // effect — honor it before dispatching the retry.
+      if (context.signal?.aborted) {
+        return cancelledResult();
+      }
+      if (retryDecision === 'deny') return result;
+      if (retryDecision === 'ask') {
+        const outcome = await this.promptForApproval(tool, toolName, retryParams, context);
+        if (outcome === 'aborted') return cancelledResult();
+        if (outcome === 'deny') return result;
+      }
       context.eventStream.append({
         type: 'tool_call_retry',
         tool: toolName,
         error: 'missing overwrite flag — retrying with overwrite:true',
       } as any);
-      result = await this.registry.execute(toolName, { ...coerced, overwrite: true }, context);
+      result = await this.registry.execute(toolName, retryParams, context);
     }
 
     // Emit result event. Mutating file tools attach a unified diff of what
@@ -303,5 +395,40 @@ export class ToolExecutor {
     });
 
     return result;
+  }
+
+  /**
+   * Shared approval gate for 'ask' decisions. Computes a pre-write diff
+   * preview (best-effort), emits the tool_call_requested event, then blocks
+   * on a real prompt. Returns 'allow', 'deny', or 'aborted'. Reused by the
+   * initial dispatch, the post-hook re-check, and the overwrite retry so all
+   * three route through the same boundary.
+   */
+  private async promptForApproval(
+    tool: { name: string; previewDiff?: (params: Record<string, unknown>, context: ToolContext) => Promise<FileDiff[] | null> },
+    toolName: string,
+    params: Record<string, unknown>,
+    context: ToolContext,
+  ): Promise<'allow' | 'deny' | 'aborted'> {
+    let preview: EventFileDiff[] | undefined;
+    if (tool.previewDiff) {
+      try {
+        const diffs = await tool.previewDiff(cloneParams(params), context);
+        preview = diffs && diffs.length > 0 ? diffs.map(toEventDiff) : undefined;
+      } catch {
+        preview = undefined;
+      }
+    }
+
+    context.eventStream.append({
+      type: 'tool_call_requested',
+      call: { tool: toolName, args: cloneParams(params) },
+      policy: 'ask',
+      ...(preview ? { diffs: preview } : {}),
+    } as Parameters<typeof context.eventStream.append>[0]);
+
+    const granted = await promptAsk(toolName);
+    if (context.signal?.aborted) return 'aborted';
+    return granted === 'allow' ? 'allow' : 'deny';
   }
 }

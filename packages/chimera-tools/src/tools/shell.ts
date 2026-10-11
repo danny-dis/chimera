@@ -1,8 +1,11 @@
 import { z } from 'zod';
 import { execa } from 'execa';
+import { spawnSync } from 'node:child_process';
 import path from 'path';
 import type { ToolDefinition, ToolContext } from '../tool-schema.js';
 import { MAX_OUTPUT_SIZE, DEFAULT_SHELL_TIMEOUT, MAX_SHELL_TIMEOUT } from '../tool-schema.js';
+import { PathRestrictionEngine } from '../permission/path-restrictions.js';
+import { EnvironmentFilter } from '../sandbox/env-filter.js';
 
 // ── Dangerous command patterns ───────────────────────────────────────────────
 
@@ -71,32 +74,55 @@ function truncateOutput(output: string, limit = MAX_OUTPUT_SIZE): { text: string
   return { text: output, truncated: false };
 }
 
-const SAFE_ENV_BLOCKLIST = [
-  'AWS_SECRET_ACCESS_KEY',
-  'AWS_ACCESS_KEY_ID',
-  'GITHUB_TOKEN',
-  'GH_TOKEN',
-  'NPM_TOKEN',
-  'PRIVATE_KEY',
-  'DATABASE_URL',
-  'API_KEY',
-  'SECRET',
-  'PASSWORD',
-];
+const SAFE_ENV_ALLOWLIST = new Set(
+  [
+    'PATH', 'PATHEXT', 'SYSTEMROOT', 'COMSPEC', 'TEMP', 'TMP',
+    'HOME', 'USERPROFILE', 'LOCALAPPDATA', 'APPDATA',
+    'LANG', 'LC_ALL', 'TERM', 'TZ', 'NUMBER_OF_PROCESSORS',
+    'OS', 'PROCESSOR_ARCHITECTURE', 'PROGRAMDATA', 'PROGRAMFILES',
+    'SYSTEMDRIVE', 'WINDIR',
+    'NODE_ENV', 'NODE_OPTIONS',
+    'CI',
+  ].map((v) => v.toUpperCase()),
+);
 
 function filterEnv(env: Record<string, string> = {}): Record<string, string> {
-  const filtered: Record<string, string> = {};
-  for (const [key, value] of Object.entries(env)) {
+  const filter = new EnvironmentFilter();
+  return filter.filter(env);
+}
+
+function buildChildEnv(explicit: Record<string, string>): Record<string, string> {
+  const childEnv: Record<string, string> = {};
+  for (const [key, value] of Object.entries(process.env)) {
     const upper = key.toUpperCase();
-    const blocked = SAFE_ENV_BLOCKLIST.some((blocked) => upper.includes(blocked));
-    if (!blocked) {
-      filtered[key] = value;
+    if (SAFE_ENV_ALLOWLIST.has(upper) && typeof value === 'string') {
+      childEnv[key] = value;
     }
   }
-  return filtered;
+  const filteredExplicit = filterEnv(explicit);
+  return { ...childEnv, ...filteredExplicit };
 }
 
 // ── run_shell_command ────────────────────────────────────────────────────────
+
+/**
+ * Reap a finished/timed-out/cancelled subprocess tree by exact owned PID.
+ * execa's cancelSignal/timeout only signals the direct child (cmd.exe on
+ * Windows), so grandchildren are reparented and survive. On Windows we run the
+ * child in its own process group (detached) and taskkill that group `/T`;
+ * elsewhere we kill the owned process group. Never a global name kill.
+ */
+function ownedTreeKill(subprocess: { pid?: number }): void {
+  const pid = subprocess.pid;
+  if (pid === undefined) return;
+  if (process.platform === 'win32') {
+    try { spawnSync('taskkill.exe', ['/PID', String(pid), '/T', '/F'], { windowsHide: true }); }
+    catch { /* best-effort reaping; the process may already be gone */ }
+    return;
+  }
+  try { process.kill(-pid, 'SIGKILL'); }
+  catch { try { process.kill(pid, 'SIGKILL'); } catch { /* already exited */ } }
+}
 
 const RunShellCommandParamsSchema = z.object({
   command: z.string().min(1, 'Command must not be empty'),
@@ -124,46 +150,106 @@ export const runShellCommandTool: ToolDefinition<typeof RunShellCommandParamsSch
       throw new Error(`Command rejected as dangerous: ${params.command}`);
     }
 
-    const timeout = Math.min(params.timeout, MAX_SHELL_TIMEOUT);
-    const workingDir = params.cwd
-      ? path.resolve(context.workspaceRoot, params.cwd)
-      : context.workspaceRoot;
+    if (context.signal?.aborted) {
+      throw new Error('Execution cancelled before start');
+    }
 
-    if (!workingDir.startsWith(path.resolve(context.workspaceRoot))) {
+    const timeout = Math.min(params.timeout, MAX_SHELL_TIMEOUT);
+    const pathEngine = new PathRestrictionEngine(context.workspaceRoot);
+    const canonicalRoot = pathEngine.getCanonicalRoot();
+    const workingDir = params.cwd
+      ? path.resolve(canonicalRoot, params.cwd)
+      : canonicalRoot;
+    if (!pathEngine.isPathAllowed(workingDir)) {
       throw new Error(`Working directory escapes workspace root: ${params.cwd}`);
     }
 
-    const filteredEnv = filterEnv(params.env);
+    const childEnv = buildChildEnv(params.env ?? {});
 
     const startTime = Date.now();
 
     let result: { stdout: string; stderr: string; exitCode: number };
+    let subprocess: ReturnType<typeof execa> | undefined;
 
     try {
       const isWindows = process.platform === 'win32';
       const shellBin = isWindows ? 'cmd.exe' : 'bash';
       const shellArgs = isWindows ? ['/c', params.command] : ['-c', params.command];
-      const execResult = await execa(shellBin, shellArgs, {
+      subprocess = execa(shellBin, shellArgs, {
         cwd: workingDir,
-        timeout,
         maxBuffer: MAX_OUTPUT_SIZE,
-        env: filteredEnv,
+        env: childEnv,
         reject: false,
         windowsHide: isWindows,
+        extendEnv: false,
+        detached: !isWindows,
       });
-      result = {
-        stdout: execResult.stdout,
-        stderr: execResult.stderr,
-        exitCode: execResult.exitCode ?? 0,
-      };
+      // execa only signals the direct child (cmd.exe); its descendants are
+      // reparented and survive. Reap the whole owned tree by exact PID the
+      // moment the shell is cancelled/timed out — before awaiting, or an
+      // orphaned grandchild holding the stdout pipe blocks the await.
+      // We do NOT pass execa's own `timeout` option: it would kill cmd.exe
+      // at `timeout` ms, before this timer fires at `timeout + 150`, losing
+      // the shell PID and leaving descendants unreapable. This timer is the
+      // single deadline owner.
+      let cancelled = context.signal?.aborted ?? false;
+      let timedOut = false;
+      const treeKill = () => ownedTreeKill(subprocess!);
+      const onAbort = () => { cancelled = true; treeKill(); };
+      if (context.signal && !cancelled) {
+        context.signal.addEventListener('abort', onAbort, { once: true });
+      }
+      const timer = setTimeout(() => { timedOut = true; treeKill(); }, timeout + 150);
+      try {
+        const execResult = (await subprocess) as {
+          stdout: string;
+          stderr: string;
+          exitCode?: number;
+          isCanceled?: boolean;
+        };
+        if (cancelled || execResult.isCanceled) {
+          treeKill();
+          return {
+            stdout: '',
+            stderr: 'Command cancelled',
+            exitCode: -1,
+            duration: Date.now() - startTime,
+          };
+        }
+        if (timedOut) {
+          return {
+            stdout: '',
+            stderr: `Command timed out after ${timeout}ms`,
+            exitCode: -1,
+            duration: timeout,
+          };
+        }
+        result = {
+          stdout: execResult.stdout,
+          stderr: execResult.stderr,
+          exitCode: execResult.exitCode ?? 0,
+        };
+      } finally {
+        clearTimeout(timer);
+        context.signal?.removeEventListener('abort', onAbort);
+      }
     } catch (err: unknown) {
-      const error = err as { stdout?: string; stderr?: string; exitCode?: number; timedOut?: boolean };
+      if (subprocess) ownedTreeKill(subprocess);
+      const error = err as { stdout?: string; stderr?: string; exitCode?: number; timedOut?: boolean; isCanceled?: boolean };
       if (error.timedOut) {
         return {
           stdout: '',
           stderr: `Command timed out after ${timeout}ms`,
           exitCode: -1,
           duration: timeout,
+        };
+      }
+      if (error.isCanceled) {
+        return {
+          stdout: '',
+          stderr: 'Command cancelled',
+          exitCode: -1,
+          duration: Date.now() - startTime,
         };
       }
       result = {
