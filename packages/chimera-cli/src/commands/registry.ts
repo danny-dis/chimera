@@ -7,7 +7,7 @@ import type {
   SessionOrchestrator,
   WorkflowDefinition,
 } from '@chimera/core';
-import { runWorkflow, SchedulerManager } from '@chimera/core';
+import { runWorkflow, SchedulerManager, parseGoalInput } from '@chimera/core';
 import type { ModelProvider } from '@chimera/providers';
 import type { CheckpointStore } from '@chimera/session';
 import type { UserSkillModel } from '@chimera/learning';
@@ -80,6 +80,8 @@ export interface ReplContext {
   printResult(r: OrchestratorResult): void;
   /** Build a fresh orchestrator (used by task processing). */
   initOrchestrator(): Promise<SessionOrchestrator>;
+  executeGoal?: (task: string, verificationCommands: string[]) => Promise<OrchestratorResult>;
+  executeWorkflow?: (name: string, args: string) => Promise<{ status: string; output: string } | null>;
 }
 
 export type ReplExitSignal = 'continue' | 'exit';
@@ -115,6 +117,7 @@ export async function runSlashCommand(
   cmd: string,
   args: string[],
   ctx: ReplContext,
+  rawArgs?: string,
 ): Promise<ReplExitSignal> {
   switch (cmd) {
     case 'mode': {
@@ -168,13 +171,13 @@ export async function runSlashCommand(
       return handleLoop(ctx, turns, task);
     }
     case 'goal': {
-      const goal = args.join(' ');
+      const { task: goal, verificationCommands } = parseGoalInput(rawArgs ?? args.join(' '));
       if (!goal) {
         console.log('  Usage: /goal <description>');
         console.log('  Example: /goal all tests pass and no lint errors');
         return 'continue';
       }
-      return handleGoal(ctx, goal);
+      return handleGoal(ctx, goal, verificationCommands);
     }
     case 'schedule': {
       return handleSchedule(ctx, args);
@@ -240,7 +243,7 @@ export async function runSlashCommand(
       await printHelp(ctx);
       return 'continue';
     default:
-      return handleUnknown(ctx, cmd, args);
+      return handleUnknown(ctx, cmd, args, rawArgs ?? args.join(' '));
   }
 }
 
@@ -299,8 +302,14 @@ async function handleLoop(
 async function handleGoal(
   ctx: ReplContext,
   goal: string,
+  verificationCommands: string[] = [],
 ): Promise<ReplExitSignal> {
-  console.log(`\n◎ Goal: "${goal}" — running until achieved...\n`);
+  if (!ctx.executeGoal) {
+    console.error('  Goal execution is unavailable in this session.');
+    ctx.setLoopState({ kind: 'goal', task: goal, maxIterations: 20, currentIteration: 0, status: 'failed', startedAt: Date.now() });
+    return 'continue';
+  }
+  console.log(`\n◎ Goal: "${goal}" — bounded run; verification checks: ${verificationCommands.length}.\n`);
 
   ctx.setLoopState({
     kind: 'goal',
@@ -311,38 +320,14 @@ async function handleGoal(
     startedAt: Date.now(),
   });
 
-  const providers = await ctx.getProviders();
-  const writer = ctx.adaptProvider(providers[0]);
-  const reviewer = ctx.adaptProvider(providers[1] ?? providers[0]);
-
-  const goalWf: WorkflowDefinition = {
-    name: 'user-goal',
-    steps: [{
-      id: 'goal',
-      kind: 'loop',
-      config: {
-        prompt: `Work on this goal: ${goal}\n\nWhen the goal is fully achieved, end your response with the word COMPLETE.`,
-        until: 'COMPLETE',
-        max_iterations: 20,
-        fresh_context: true,
-        role: 'writer',
-      },
-    }],
-  };
-
-  const result = await runWorkflow(goalWf, {
-    handlers: { providers: { writer, reviewer } },
-  });
-
-  if (result.status === 'success') {
-    const out = result.outputs.goal as { content: string; iterations: number };
-    ctx.setLoopState({ ...ctx.getLoopState()!, currentIteration: out.iterations, status: 'completed' });
-    console.log(`  ✓ Goal achieved after ${out.iterations} iteration(s)`);
-    ctx.printResult({ status: 'done', output: out.content, cost: 0, agentCount: 1, events: [] });
-  } else {
-    const state = ctx.getLoopState();
-    ctx.setLoopState({ ...state!, status: 'failed' });
-    console.log(`  ✗ Goal not achieved: ${result.error}`);
+  try {
+    const result = await ctx.executeGoal(goal, verificationCommands);
+    ctx.setLoopState({ ...ctx.getLoopState()!, currentIteration: 1, status: result.status === 'done' ? 'completed' : 'failed' });
+    ctx.printResult(result);
+    if (result.status === 'done' && verificationCommands.length === 0) console.log('  Note: completed without caller-supplied verification; not independently verified.');
+  } catch (error) {
+    ctx.setLoopState({ ...ctx.getLoopState()!, status: 'failed' });
+    console.error(`  ✗ Goal failed: ${error instanceof Error ? error.message : String(error)}`);
   }
   return 'continue';
 }
@@ -1296,6 +1281,7 @@ async function handleUnknown(
   ctx: ReplContext,
   cmd: string,
   args: string[],
+  rawArgs: string,
 ): Promise<ReplExitSignal> {
   // Try custom commands from .chimera/commands/ and ~/.chimera/commands/
   // before falling back to the "Unknown command" message.
@@ -1321,6 +1307,18 @@ async function handleUnknown(
       : null;
     await runCustomCommand(cmd, args, customOrch);
     return 'continue';
+  }
+  if (ctx.executeWorkflow) {
+    try {
+      const result = await ctx.executeWorkflow(cmd, rawArgs);
+      if (result) {
+        console.log(`  Workflow: ${result.status}\n${result.output}`);
+        return 'continue';
+      }
+    } catch (error) {
+      console.error(`  Workflow failed: ${error instanceof Error ? error.message : String(error)}`);
+      return 'continue';
+    }
   }
   console.log(`  Unknown command: /${cmd}. Type /help for commands.`);
   return 'continue';

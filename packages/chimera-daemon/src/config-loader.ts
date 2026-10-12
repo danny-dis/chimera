@@ -129,7 +129,7 @@ export function resolveProviders(config: ChimeraConfig): ResolvedProvider[] {
     provider: p.provider,
     model: p.model,
     apiKey: resolveEnvRef(p.api_key),
-    baseUrl: p.base_url,
+    baseUrl: resolveEnvRef(p.base_url),
     role: p.role,
   }));
 }
@@ -147,7 +147,7 @@ export function getProvidersByRole(
     provider: p.provider,
     model: p.model,
     apiKey: resolveEnvRef(p.api_key),
-    baseUrl: p.base_url,
+    baseUrl: resolveEnvRef(p.base_url),
     role: p.role,
   }));
   const byRole: { writer?: ResolvedProvider; reviewer?: ResolvedProvider; challenger?: ResolvedProvider } = {};

@@ -73,7 +73,7 @@ export class AutoExtractService {
   private memory: LongTermMemory;
   private config: ExtractionConfig;
 
-  constructor(memory: LongTermMemory, config?: Partial<ExtractionConfig>) {
+  constructor(memory: LongTermMemory, config?: Partial<ExtractionConfig>, private readonly query: typeof sideQuery = sideQuery) {
     this.memory = memory;
     this.config = ExtractionConfigSchema.parse(config ?? {});
   }
@@ -98,7 +98,7 @@ export class AutoExtractService {
       .map((m) => `[${m.role}]: ${m.content.slice(0, 2000)}`)
       .join('\n');
 
-    const result = await sideQuery<ExtractedFacts>({
+    const result = await this.query<ExtractedFacts>({
       prompt: buildExtractionPrompt(formatted),
       schema: ExtractedFactSchema,
       model: this.config.model,

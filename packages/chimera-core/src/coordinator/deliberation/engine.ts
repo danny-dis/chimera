@@ -125,6 +125,7 @@ export class DeliberationEngine {
       ...(this.deps.workspaceRoot ? { workspaceRoot: this.deps.workspaceRoot } : {}),
       ...(this.deps.toolExecutor ? { toolExecutor: this.deps.toolExecutor } : {}),
       ...(this.deps.toolRegistry ? { toolRegistry: this.deps.toolRegistry } : {}),
+      ...(this.deps.signal ? { signal: this.deps.signal } : {}),
     });
 
     const isConversational = TaskRouter.isConversationalTask(cfg.task);
@@ -230,6 +231,7 @@ export class DeliberationEngine {
       ...(this.deps.workspaceRoot ? { workspaceRoot: this.deps.workspaceRoot } : {}),
       ...(this.deps.toolExecutor ? { toolExecutor: this.deps.toolExecutor } : {}),
       ...(this.deps.toolRegistry ? { toolRegistry: this.deps.toolRegistry } : {}),
+      ...(this.deps.signal ? { signal: this.deps.signal } : {}),
     });
 
     const duoConfig: DuoConfig = {
@@ -272,6 +274,7 @@ export class DeliberationEngine {
       ...(this.deps.toolExecutor ? { toolExecutor: this.deps.toolExecutor } : {}),
       ...(this.deps.toolRegistry ? { toolRegistry: this.deps.toolRegistry } : {}),
       ...(this.deps.style ? { style: this.deps.style } : {}),
+      ...(this.deps.signal ? { signal: this.deps.signal } : {}),
     });
 
     const trioConfig: TrioConfig = {
@@ -319,6 +322,7 @@ export class DeliberationEngine {
       ...(this.deps.workspaceRoot ? { workspaceRoot: this.deps.workspaceRoot } : {}),
       ...(this.deps.toolExecutor ? { toolExecutor: this.deps.toolExecutor } : {}),
       ...(this.deps.toolRegistry ? { toolRegistry: this.deps.toolRegistry } : {}),
+      ...(this.deps.signal ? { signal: this.deps.signal } : {}),
     });
 
     const fusionConfig: FusionConfig = {
@@ -365,7 +369,7 @@ export class DeliberationEngine {
     const provider = this.deps.providerFactory(cfg.mergeModel);
     const aggregator = new ResultAggregator(provider);
 
-    const aggregated = await aggregator.aggregate(cfg.subTaskResults);
+    const aggregated = await aggregator.aggregate(cfg.subTaskResults, this.deps.signal);
 
     // Map the merge output back into the unified 5-field analysis.
     const analysis: DeliberationAnalysis = {
@@ -478,6 +482,7 @@ export class DeliberationEngine {
         toolExecutor: this.deps.toolExecutor,
         toolRegistry: this.deps.toolRegistry,
         workspaceRoot: this.deps.workspaceRoot,
+        signal: this.deps.signal,
       },
     });
     const aggregated = await coordinator.execute(cfg.task, cfg.context, subTasks);
@@ -878,6 +883,8 @@ export class DeliberationEngine {
       durationMs: inner.durationMs ?? Date.now() - startTime,
       degraded: inner.degraded,
       ...(inner.degradationReason ? { degradationReason: inner.degradationReason } : {}),
+      ...(inner.needsUserEscalation ? { needsUserEscalation: inner.needsUserEscalation } : {}),
+      ...(inner.escalationReason ? { escalationReason: inner.escalationReason } : {}),
     };
   }
 }

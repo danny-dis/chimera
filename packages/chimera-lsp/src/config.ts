@@ -12,6 +12,7 @@ export const LspServerConfigSchema = z.object({
   filePatterns: z.array(z.string()).default([]),
   rootFiles: z.array(z.string()).default([]),
   env: z.record(z.string()).optional(),
+  initializationOptions: z.record(z.unknown()).optional(),
   enabled: z.boolean().default(true),
   diagnosticsLimit: z.number().int().positive().optional(),
 });

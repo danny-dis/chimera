@@ -33,6 +33,7 @@ export interface CacheControlOptions {
 }
 
 export interface CompletionOptions {
+  signal?: AbortSignal;
   temperature?: number;
   topP?: number;
   maxTokens?: number;

@@ -152,6 +152,7 @@ export interface RunAgentToolLoopParams {
   toolDefs?: Array<{ name: string; description: string; parameters: Record<string, unknown> }>;
   /** Optional content sanitizer applied to follow-up / force content (solo: sanitizeWriterOutput). */
   sanitize?: (s: string) => string;
+  signal?: AbortSignal;
 }
 
 export interface RunAgentToolLoopResult {
@@ -234,8 +235,7 @@ const FILE_NUDGE =
 // task with no recovery. `completeWithRetry` wraps `provider.complete` with a
 // bounded exponential backoff so one transient error can't kill a task.
 // ponytail: one global retry budget; if per-model 429 budgets ever matter,
-// move the cap into provider config. NOT retried on AbortSignal — out of
-// scope here; add a signal passthrough only if the loop gains cancellation.
+// move the cap into provider config.
 const LLM_MAX_RETRIES = 3;
 const LLM_BASE_BACKOFF_MS = 800;
 const LLM_MAX_BACKOFF_MS = 8000;
@@ -246,12 +246,17 @@ async function completeWithRetry(
   options: Record<string, unknown>,
   eventStream: EventStream,
   label: string,
+  signal?: AbortSignal,
 ): Promise<any> {
   let attempt = 0;
   for (;;) {
+    if (signal?.aborted) throw new Error('Aborted');
     try {
-      return await provider.complete(messages as any, options as any);
+      // Forward the owned run signal so the provider adapter can abort an
+      // in-flight request (not only the retry loop below).
+      return await provider.complete(messages as any, { ...options, ...(signal ? { signal } : {}) } as any);
     } catch (err) {
+      if (signal?.aborted || (err as Error)?.name === 'AbortError') throw err;
       if (attempt >= LLM_MAX_RETRIES) throw err;
       const backoff = Math.min(LLM_BASE_BACKOFF_MS * 2 ** attempt, LLM_MAX_BACKOFF_MS);
       eventStream.append({
@@ -262,7 +267,18 @@ async function completeWithRetry(
         error: String((err as Error)?.message ?? err),
         backoffMs: backoff,
       } as any);
-      await new Promise((r) => setTimeout(r, backoff));
+      await new Promise<void>((resolve, reject) => {
+        const onAbort = () => {
+          clearTimeout(timer);
+          reject(new Error('Aborted'));
+        };
+        const timer = setTimeout(() => {
+          signal?.removeEventListener('abort', onAbort);
+          resolve();
+        }, backoff);
+        signal?.addEventListener('abort', onAbort, { once: true });
+        if (signal?.aborted) onAbort();
+      });
       attempt++;
     }
   }
@@ -310,6 +326,11 @@ export async function runAgentToolLoop(
 
   const sanitizeFn = sanitize ?? ((s: string) => s);
   const messages: LoopChatMessage[] = seedMessages.map((m) => ({ ...m }));
+
+  // A pre-aborted run must not execute the initial tool call (or any other
+  // side effect). The loop entry guard below only stops the *provider*
+  // follow-up; this catches cancellation before the first tool batch runs.
+  if (params.signal?.aborted) throw new Error('Aborted');
 
   let currentToolCalls: ToolCall[] = initialToolCalls ?? [];
   let assistantContent = initialContent;
@@ -376,6 +397,7 @@ export async function runAgentToolLoop(
       eventStream,
       workspaceRoot: workspaceRoot!,
       sessionId,
+      signal: params.signal,
     });
 
     for (const tr of toolResults) messages.push(toolResultMessage(mode, tr));
@@ -410,10 +432,10 @@ export async function runAgentToolLoop(
 
     const nudge = mode === 'trio'
       ? CONTINUE_NUDGE
-      : (wroteFileCount === 0 ? FILE_NUDGE : CONTINUE_NUDGE);
+      : (wantsFiles && wroteFileCount === 0 ? FILE_NUDGE : CONTINUE_NUDGE);
     messages.push({ role: 'user', content: nudge });
 
-    const r = await completeWithRetry(provider, messages, options, eventStream, 'loop');
+    const r = await completeWithRetry(provider, messages, options, eventStream, 'loop', params.signal);
     const nextContent = sanitizeFn(r.content ?? '');
     inputTokens += (r as any).usage?.inputTokens ?? 0;
     outputTokens += (r as any).usage?.outputTokens ?? 0;
@@ -485,6 +507,7 @@ export async function runAgentToolLoop(
           },
           eventStream,
           'force',
+          params.signal,
         );
         const forcedContent = sanitizeFn(forced.content ?? '');
         inputTokens += (forced as any).usage?.inputTokens ?? 0;
@@ -508,6 +531,7 @@ export async function runAgentToolLoop(
             eventStream,
             workspaceRoot: workspaceRoot!,
             sessionId,
+            signal: params.signal,
           });
           for (const tc of forced.toolCalls) {
             if (tc.name === 'write_file' || tc.name === 'edit_file') {
@@ -523,7 +547,8 @@ export async function runAgentToolLoop(
           }
         }
         realFiles = countSourceFiles(workspaceRoot!);
-      } catch {
+      } catch (err) {
+        if (params.signal?.aborted || (err as Error)?.name === 'AbortError') throw err;
         /* best-effort; do not crash the run */
       }
     }
@@ -549,9 +574,11 @@ export async function runAgentToolLoop(
             eventStream,
             workspaceRoot: workspaceRoot!,
             sessionId,
+            signal: params.signal,
           });
           if (fileLandedOnDisk(targetPath, workspaceRoot!)) wroteFileCount++;
-        } catch {
+        } catch (err) {
+          if (params.signal?.aborted || (err as Error)?.name === 'AbortError') throw err;
           /* best-effort; do not crash the run */
         }
       }
@@ -590,6 +617,7 @@ export async function runAgentToolLoop(
           { ...options, tools: toolDefs, toolChoice: { type: 'function', function: { name: 'write_file' } } },
           eventStream,
           'path-fix',
+          params.signal,
         );
         if (correction.toolCalls && correction.toolCalls.length > 0) {
           await runToolCalls({
@@ -599,11 +627,13 @@ export async function runAgentToolLoop(
             eventStream,
             workspaceRoot: workspaceRoot!,
             sessionId,
+            signal: params.signal,
           });
           eventStream.append({ type: 'hallucinated_paths_corrected', file: targetPath, removed: missing } as any);
         }
       }
-    } catch {
+    } catch (err) {
+      if (params.signal?.aborted || (err as Error)?.name === 'AbortError') throw err;
       /* best-effort; do not crash the run */
     }
   }

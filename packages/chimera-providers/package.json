@@ -2,6 +2,10 @@
   "name": "@chimera/providers",
   "version": "0.5.7",
   "description": "Provider abstraction layer with LiteLLM integration and fallback chains",
+  "license": "MIT",
+  "engines": { "node": ">=22.13.0" },
+  "publishConfig": { "access": "public" },
+  "files": ["dist", "!dist/**/__tests__/**", "!dist/**/*.test.*", "!dist/**/*.spec.*", "README.md", "LICENSE"],
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "scripts": {

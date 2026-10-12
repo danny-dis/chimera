@@ -176,6 +176,10 @@ export interface DeliberationResult {
   durationMs: number;
   degraded: boolean;
   degradationReason?: string;
+  /** True when the deliberation flagged a result that needs human review. */
+  needsUserEscalation?: boolean;
+  /** Human-readable reason for escalation, if any. */
+  escalationReason?: string;
   /** Present when mode === 'auto'. Records which preset was selected and why. */
   autoSelection?: {
     selectedPreset: DeliberationMode;
@@ -207,4 +211,6 @@ export interface DeliberationEngineDeps {
   toolRegistry?: import('../../session-orchestrator.js').ToolRegistryInterface;
   /** Resolved output style, injected by the caller (which owns `learning`). */
   style?: import('../../output-styles/index.js').OutputStyle;
+  /** Per-run abort signal, threaded to every executor's writer tool loop. */
+  signal?: AbortSignal;
 }

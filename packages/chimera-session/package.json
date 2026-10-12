@@ -2,11 +2,14 @@
   "name": "@chimera/session",
   "version": "0.5.7",
   "type": "module",
+  "license": "MIT",
+  "engines": { "node": ">=22.13.0" },
+  "publishConfig": { "access": "public" },
   "main": "./dist/index.js",
   "exports": {
     ".": "./dist/index.js"
   },
-  "files": ["dist"],
+  "files": ["dist", "!dist/**/__tests__/**", "!dist/**/*.test.*", "!dist/**/*.spec.*", "README.md", "LICENSE"],
   "scripts": {
     "build": "tsc",
     "dev": "tsc --build --watch",
@@ -16,7 +19,7 @@
   "dependencies": {
     "@chimera/core": "workspace:*",
     "yaml": "^2.4.0",
-    "js-yaml": "^4.1.0"
+    "js-yaml": "^4.3.2"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

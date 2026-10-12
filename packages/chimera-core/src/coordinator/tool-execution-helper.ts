@@ -102,6 +102,7 @@ export async function runToolCalls(
   const results: Array<{ toolName: string; args: Record<string, unknown>; result: ToolCallResult }> = [];
 
   for (const tc of toolCalls) {
+    if (signal?.aborted) throw new Error('Aborted');
     if (!tc || typeof tc.name !== 'string') continue;
     eventStream.append({
       type: 'tool_call_requested',
@@ -115,10 +116,12 @@ export async function runToolCalls(
       eventStream,
       signal,
     });
+    if (signal?.aborted) throw new Error('Aborted');
 
     // ── Single bounded retry on write failure ──────────────────────────
     // Only retry write-side tools, only once, and only when not aborted.
-    if (!result.success && WRITE_TOOLS.has(tc.name) && !signal?.aborted) {
+    if (!result.success && WRITE_TOOLS.has(tc.name) && !signal?.aborted
+      && /\b(?:EBUSY|EAGAIN|ETIMEDOUT|EMFILE|ENFILE)\b|temporarily unavailable|resource busy/i.test(result.error ?? '')) {
       eventStream.append({
         type: 'tool_call_retry',
         tool: tc.name,

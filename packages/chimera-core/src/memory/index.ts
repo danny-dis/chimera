@@ -17,6 +17,7 @@ export type {
 } from './agent-memory.js';
 export { MemoryPersistence } from './memory-persistence.js';
 export type { MemoryPersistenceConfig } from './memory-persistence.js';
+export { createRuntimeMemory } from './runtime-memory.js';
 export { AutoExtractService } from './auto-extract.js';
 export type { ExtractionConfig, ExtractedFacts } from './auto-extract.js';
 export { RecallService } from './recall-service.js';

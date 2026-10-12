@@ -3,6 +3,10 @@
   "version": "0.5.7",
   "type": "module",
   "description": "Terminal UI: setup wizard, chat, agent dashboard, cost tracker, session browser, diff viewer",
+  "license": "MIT",
+  "engines": { "node": ">=22.13.0" },
+  "publishConfig": { "access": "public" },
+  "files": ["dist", "!dist/**/__tests__/**", "!dist/**/*.test.*", "!dist/**/*.spec.*", "README.md", "LICENSE"],
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "scripts": {

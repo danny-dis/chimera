@@ -13,6 +13,7 @@
     "lint": "turbo lint",
     "typecheck": "node scripts/check-build-integrity.mjs && turbo typecheck",
     "smoke:harness": "node scripts/harness-smoke.mjs",
+    "smoke:package": "node scripts/package-smoke.mjs",
     "check:build": "node scripts/check-build-integrity.mjs",
     "fix:build": "node scripts/check-build-integrity.mjs --fix",
     "chimera": "node packages/chimera-cli/dist/index.js"
@@ -27,7 +28,7 @@
     "vitest": "^2.0.0"
   },
   "engines": {
-    "node": ">=20.0.0"
+    "node": ">=22.13.0"
   },
   "packageManager": "pnpm@11.0.8",
   "dependencies": {

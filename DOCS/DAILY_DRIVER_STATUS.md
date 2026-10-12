@@ -4,6 +4,99 @@ This is a partial-delivery checkpoint, not a declaration that Chimera is ready
 for unattended daily use. Completed code and unfinished local work are kept
 separate. The original implementation baseline is `0624d6b`.
 
+## Harness checkpoint — 2026-10-12
+
+This checkpoint captures the integrated harness, provider, memory, CLI, daemon,
+LSP, workflow, and packaging work after `78246a2`. It is a development checkpoint,
+not a release or unattended-use certification. Local research logs, worktrees,
+temporary worker files, and unfinished native Windows Job Object drafts are
+excluded from the commit.
+
+Latest executed checks before preparing this checkpoint:
+- Provider suite: **147 passed**, including five real HTTP cancellation checks.
+- CLI suite: **82 passed**; provider and CLI project builds exited 0.
+- Focused core integrity, output-scope, security/memory, and diagnostic checks:
+  **16 passed**.
+- Built CLI verbose/offline JSON acceptance passed for ask, plan, and review.
+- Real configured-provider debug acceptance exited 0 in 60,458 ms: the target
+  changed, independent artifact verification passed, and the verifier was untouched.
+- Frozen dependency installation with scripts disabled exited 0; Koffi's Windows
+  x64 prebuild loaded and its native PID call matched the owning process.
+- Fresh uncached workspace build: **20/20 tasks passed**; build integrity checked
+  1,495 artifacts across 20 packages without corruption.
+- Staged-file ESLint exited 0 with warnings; scoped independent harness-boundary
+  and packaging/CI reviews reported no security or logic blockers.
+- Clean packed-consumer smoke passed for all 14 runtime packages: version/help,
+  sessions, and built-in workflow discovery ran without provider calls.
+- Full core suite: **1,142 passed, 1 failed**. The failing completion-seam assertion
+  expects changed secret-config inputs to bypass verification; the strengthened
+  integrity check correctly refuses that change. The test contract remains unreconciled.
+
+Remaining blockers: Windows ownership-safe cleanup exceeded the existing
+1.5-second bound under full-suite load; native Job Object integration is unfinished;
+parallel coding acceptance failed its independent artifact check; final full
+workspace tests/static gates and whole-system acceptance remain outstanding.
+
+The records below describe earlier integration and publication snapshots.
+They are historical evidence, not fresh approval of this checkpoint.
+
+Delayed reviews were reconciled against current source, not accepted as current
+line-by-line findings. Regression failures were reproduced before production fixes:
+- Coordinator/goal waits and every synthesis retry now check or race cancellation;
+  direct merge forwards its signal, and cancelled aggregation preserves child evidence.
+- Real Git dirty detection includes staged, unstaged, and untracked artifacts.
+- TUI custom workflows dispatch the real runner; goal uses a shared writer/reviewer
+  call ceiling, rejects hung/late completion, and forwards explicit `--yolo` while
+  retaining default-deny and read-only mode protections.
+- Daemon pending initialization is discoverable and cancellable before awaits;
+  completed/rejected spend is retained, exact RPC IDs remain distinct, and shutdown
+  cannot resurrect event subscriptions. Async RPC rejection is serialized.
+- LSP transport ownership survives failed listen/disposal and late factories;
+  retained transports remain deadline-wrapped. Notification promises are awaited
+  before document bookkeeping; concurrent opens share synchronization. Failed
+  registry ownership is associated with its workspace and blocks replacement.
+
+Observed current-source checks (logs under `research/oct11/`):
+- Core: **1,099 passed** (`reconcile-core-full.log`).
+- CLI: **67 passed** (`reconcile-final-cli.log`).
+- Daemon: **74 passed**, own project compiler exit 0 (`reconcile-daemon-final-green.log`).
+- LSP: **91 passed**, own project compiler exit 0 (`reconcile-sync-chokepoint-green.log`).
+  Public document updates now reuse the same serialized query synchronization path.
+  Final LSP/tools/daemon/CLI consumer rebuild and integrity check exited 0
+  (`reconcile-last-build.log`).
+- TUI: **142 passed, 3 skipped** (`reconcile-latest-tui.log`).
+- Uncached workspace build: **20/20 passed, 0 cached**, integrity check passed
+  (`reconcile-latest-build.log`), before the last private LSP/registry refinements.
+  The final LSP/tools/daemon/CLI consumer rebuild also passed, exit 0.
+- Built CLI real coding acceptance passed repeatedly: exit 0, status `done`,
+  independently executed artifact, untouched caller verifier. Last completed
+  post-refinement records: `reconcile-shipped-live.log` and `reconcile-last-offline.log`.
+  Final live run: exit 0, no timeout, status `done`, artifact verified, verifier
+  untouched. This is one small task, not all-mode or unattended-use certification.
+- Six built offline checks passed: real shell execution, exact owned-process
+  cancellation, permission denial, failed verification, pre-aborted execution,
+  and subsequent recovery. These are offline boundary probes, not live repair proof.
+
+Remaining gates are explicit:
+- Full tools suite remains RED: **344 passed, 4 failed, 1 skipped** in
+  `reconcile-latest-tools.log`. Three legacy tests invoke a Windows `.CMD` server
+  directly and fail with `spawn EINVAL`; a real-TypeScript fixture's directory
+  cleanup failed with `EBUSY`.
+- The real TypeScript/trust/registry subset passed **8 tests** in isolation
+  (`reconcile-real-lsp-final.log`), then the latest combined subset had **7 passed,
+  1 failed** due to `EBUSY` cleanup (`reconcile-registry-last.log`). The isolated
+  pass does not erase the full-run or repeated cleanup failure.
+- Goal/aggregation, daemon, and the final LSP revision received scoped independent
+  quality approval. These reviews cover their explicitly inspected paths; they
+  do not certify whole-system or unattended runtime readiness.
+- Turbo warns that `packages/chimera-agent-pc` is absent from the lockfile's workspace
+  inventory. Remote CI, sustained concurrency, all mode/preset/provider combinations,
+  live failed-check recovery, and restart durability remain uncertified.
+- Disk pressure was observed throughout verification. No WIP/worktree cleanup,
+  dependency installation, new commit, or push was performed in this reconciliation.
+
+## Historical published checkpoint
+
 ## Publication scope
 
 This checkpoint's code is confined to `packages/chimera-tools`:

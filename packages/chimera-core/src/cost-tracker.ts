@@ -27,6 +27,10 @@ export class CostTracker {
     return this.spend.get(provider) ?? 0;
   }
 
+  getSpendByProvider(): Record<string, number> {
+    return Object.fromEntries(this.spend);
+  }
+
   /** Get total spend across all providers. */
   getTotalCost(): number {
     let total = 0;

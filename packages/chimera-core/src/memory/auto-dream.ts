@@ -57,7 +57,7 @@ export class AutoDreamService {
   private lockfilePath: string;
   private statePath: string;
 
-  constructor(memory: LongTermMemory, config?: Partial<DreamConfig>) {
+  constructor(memory: LongTermMemory, config?: Partial<DreamConfig>, private readonly query: typeof sideQuery = sideQuery) {
     this.memory = memory;
     this.config = DreamConfigSchema.parse(config ?? {});
 
@@ -108,7 +108,7 @@ export class AutoDreamService {
           similarCount++;
         }
       }
-      if (similarCount >= this.config.recurrenceThreshold) {
+      if (similarCount + 1 >= this.config.recurrenceThreshold) {
         return true;
       }
     }
@@ -166,7 +166,7 @@ export class AutoDreamService {
       if (items.length < 2) continue;
 
       const itemsText = items.map((m) => `[${m.id}] ${m.content}`).join('\n');
-      const result = await sideQuery({
+      const result = await this.query({
         prompt: `Summarize these ${items.length} related memories about "${topic}" into a single concise fact. Preserve the most important details.\n\n${itemsText}`,
         schema: ConsolidationSchema,
         model: this.config.model,

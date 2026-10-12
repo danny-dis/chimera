@@ -5,8 +5,8 @@
  * Inspired by `src/utils/sideQuery.ts` in the upstream target repo. Three
  * properties distinguish this from a regular `provider.complete()` call:
  *
- *   1. Default model is a cheap (Haiku-class) tier, not the frontier tier
- *      used by the main orchestrator.
+ *   1. The injected provider determines the model; explicit model overrides
+ *      require an injected resolver rather than silently using another model.
  *   2. A lockfile prevents concurrent sideQueries within the same process,
  *      mirroring the runForkedAgent isolation pattern.
  *   3. A no-leak marker is injected at the start of the system prompt so
@@ -55,6 +55,7 @@ export interface SideQueryProvider {
       temperature?: number;
       maxTokens?: number;
       responseFormat?: 'text' | 'json_object';
+      signal?: AbortSignal;
     },
   ): Promise<{
     content: string;
@@ -205,19 +206,22 @@ export class SideQueryChannel {
   private readonly lockfilePath: string;
   private readonly processLock = createInProcessLock();
   private readonly defaultProvider: SideQueryProvider;
-  private readonly defaultModel: string;
+  private readonly defaultModel: string | undefined;
+  private readonly resolveProvider?: (model: string) => SideQueryProvider;
   private readonly defaultMaxTokens: number;
   private readonly defaultTimeoutMs: number;
 
   constructor(opts?: {
     provider?: SideQueryProvider;
     model?: string;
+    resolveProvider?: (model: string) => SideQueryProvider;
     maxTokens?: number;
     timeoutMs?: number;
     lockfilePath?: string;
   }) {
     this.defaultProvider = opts?.provider ?? throwNoProvider();
-    this.defaultModel = opts?.model ?? 'anthropic/claude-haiku-3.5';
+    this.defaultModel = opts?.model;
+    this.resolveProvider = opts?.resolveProvider;
     this.defaultMaxTokens = opts?.maxTokens ?? 1024;
     this.defaultTimeoutMs = opts?.timeoutMs ?? 30_000;
     this.lockfilePath = opts?.lockfilePath ?? DEFAULT_LOCKFILE_PATH;
@@ -227,8 +231,9 @@ export class SideQueryChannel {
    * Run a side query. Schema-validated, repair-on-fail, lockfile-guarded.
    */
   async query<T>(opts: SideQueryOptions<T>): Promise<SideQueryResult<T>> {
-    const provider = opts.provider ?? this.defaultProvider;
     const model = opts.model ?? this.defaultModel;
+    if (model && !this.resolveProvider) return { ok: false, error: 'sideQuery model override requires a provider resolver' };
+    const provider = model ? this.resolveProvider!(model) : (opts.provider ?? this.defaultProvider);
     const maxTokens = opts.maxTokens ?? this.defaultMaxTokens;
     const timeoutMs = opts.timeoutMs ?? this.defaultTimeoutMs;
     const systemPrompt = opts.systemPrompt ?? buildDefaultSystemPrompt();
@@ -237,23 +242,24 @@ export class SideQueryChannel {
     // the in-process queue prevents a thundering herd from spamming the
     // filesystem.
     await acquireInProcess(this.processLock);
-    const lockResult = await tryAcquireLockfile(this.lockfilePath);
-    if (!lockResult.acquired) {
-      releaseInProcess(this.processLock);
-      return { ok: false, error: `sideQuery lock held at ${this.lockfilePath}` };
-    }
-
+    let lockResult: Awaited<ReturnType<typeof tryAcquireLockfile>> | undefined;
     try {
+      lockResult = await tryAcquireLockfile(this.lockfilePath);
+      if (!lockResult.acquired) {
+        return { ok: false, error: `sideQuery lock held at ${this.lockfilePath}` };
+      }
       return await this.runWithTimeout(opts, {
         provider,
-        model,
         maxTokens,
         timeoutMs,
         systemPrompt,
       });
     } finally {
-      await releaseLockfile(this.lockfilePath, lockResult.priorMtime);
-      releaseInProcess(this.processLock);
+      try {
+        if (lockResult?.acquired) await releaseLockfile(this.lockfilePath, lockResult.priorMtime);
+      } finally {
+        releaseInProcess(this.processLock);
+      }
     }
   }
 
@@ -261,25 +267,26 @@ export class SideQueryChannel {
     opts: SideQueryOptions<T>,
     ctx: {
       provider: SideQueryProvider;
-      model: string;
       maxTokens: number;
       timeoutMs: number;
       systemPrompt: string;
     },
   ): Promise<SideQueryResult<T>> {
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), ctx.timeoutMs);
+    let rejectDeadline!: (error: Error) => void;
+    const deadline = new Promise<never>((_resolve, reject) => { rejectDeadline = reject; });
+    const timer = setTimeout(() => {
+      controller.abort(new Error('sideQuery timed out'));
+      rejectDeadline(new Error('sideQuery timed out'));
+    }, ctx.timeoutMs);
     try {
-      const first = await this.callOnce(opts, ctx, controller.signal);
-      if (!first.ok) {
-        // Single repair retry.
+      const first = await Promise.race([this.callOnce(opts, ctx, controller.signal), deadline]);
+      if (!first.ok && !controller.signal.aborted) {
         const errorMsg = (first as { ok: false; error: string }).error;
-        const repair = await this.callOnce(
-          { ...opts, prompt: buildRepairPrompt(opts.prompt, errorMsg) },
-          ctx,
-          controller.signal,
-        );
-        return repair;
+        return await Promise.race([
+          this.callOnce({ ...opts, prompt: buildRepairPrompt(opts.prompt, errorMsg) }, ctx, controller.signal),
+          deadline,
+        ]);
       }
       return first;
     } catch (err) {
@@ -292,7 +299,7 @@ export class SideQueryChannel {
 
   private async callOnce<T>(
     opts: SideQueryOptions<T>,
-    ctx: { provider: SideQueryProvider; model: string; maxTokens: number; systemPrompt: string },
+    ctx: { provider: SideQueryProvider; maxTokens: number; systemPrompt: string },
     signal: AbortSignal,
   ): Promise<SideQueryResult<T>> {
     if (signal.aborted) {
@@ -305,7 +312,7 @@ export class SideQueryChannel {
           { role: 'system', content: ctx.systemPrompt },
           { role: 'user', content: opts.prompt },
         ],
-        { temperature: 0, maxTokens: ctx.maxTokens, responseFormat: 'json_object' },
+        { temperature: 0, maxTokens: ctx.maxTokens, responseFormat: 'json_object', signal },
       );
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);

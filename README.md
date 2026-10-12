@@ -18,12 +18,12 @@ A simple edit can stay on one inexpensive model. A difficult refactor can use a 
 - **Dynamic model mixing** — different models/providers can handle different roles in one run.
 - **Adaptive execution** — solo, sequential, parallel, Duo, Trio, debate and repair strategies.
 - **Trio Mode** — complementary planner/worker/reviewer execution with cheap, balanced and pro profiles.
-- **Cost-per-success optimization** — choose the smallest strategy likely to succeed, then escalate only when evidence requires it.
+- **Cost-aware execution** — spending is tracked and later calls can stop at configured thresholds. These are post-response stop thresholds, not guaranteed hard dollar ceilings for in-flight requests.
 - **Repository intelligence** — Git, symbols, dependencies, LSP, tests, semantic search and impact analysis.
 - **Context engineering** — focused context packs, compaction and structured handoffs instead of repository dumps.
 - **Verification** — tests, lint, typecheck, builds, security checks and independent review with evidence.
-- **Safe execution** — capability permissions, command policy, worktree isolation, sandboxing and audit events.
-- **Durable sessions** — checkpoints, recovery, cancellation and resumable long runs.
+- **Safe execution** — permission and workspace-trust gates, bounded cancellation, and audit events. Shared-workspace coding children run serially until isolated patch merge-back is verified.
+- **Saved sessions** — history/checkpoint storage and cancellation. Crash-safe continuation without replaying side effects is not yet certified.
 - **Terminal first** — CLI/TUI first, with IDE and API integrations available around the same core.
 
 ## Independence
@@ -34,18 +34,24 @@ Those systems may integrate with Chimera through documented APIs, SDKs, CLI usag
 
 ## Quick start
 
+The source-checkout workflow requires Node.js 22.13 or newer and pnpm 11. Install
+and configure a provider before asking Chimera to run a task.
+
 ```bash
-# Install
 git clone https://github.com/danny-dis/chimera.git
 cd chimera
-pnpm install
+corepack enable
+corepack prepare pnpm@11.0.8 --activate
+pnpm install --frozen-lockfile
 pnpm build
-
-# Run
-pnpm chimera "fix the failing tests"
+pnpm chimera setup
+pnpm chimera code "fix the failing tests" --verify "pnpm test"
 ```
 
-If the published package is available in your environment, the package-manager entry point can also be used.
+`setup` configures a provider; an API provider needs its credentials in the
+environment, or configure a local provider supported by your setup. Review the
+resulting diff and run the repository's relevant tests/build checks yourself.
+The public npm release and clean-consumer install have not been certified.
 
 ## How Chimera works
 

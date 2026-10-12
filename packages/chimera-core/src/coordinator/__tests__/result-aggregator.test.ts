@@ -104,7 +104,7 @@ describe('ResultAggregator', () => {
     ]);
 
     expect(results.output).toBe('implement feature A');
-    expect(results.resolved).toBe(true);
+    expect(results.resolved).toBe(false);
   });
 
   it('returns empty output when all results fail', async () => {
@@ -115,7 +115,7 @@ describe('ResultAggregator', () => {
     ]);
 
     expect(results.output).toBe('');
-    expect(results.resolved).toBe(true);
+    expect(results.resolved).toBe(false);
     expect(results.subTaskResults).toHaveLength(2);
   });
 

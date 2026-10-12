@@ -2,6 +2,10 @@
   "name": "@chimera/isolation",
   "version": "0.5.7",
   "description": "Worktree-based isolation for parallel agent runs (git worktree, lifecycle, cleanup, error classification)",
+  "license": "MIT",
+  "engines": { "node": ">=22.13.0" },
+  "publishConfig": { "access": "public" },
+  "files": ["dist", "!dist/**/__tests__/**", "!dist/**/*.test.*", "!dist/**/*.spec.*", "README.md", "LICENSE"],
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "scripts": {

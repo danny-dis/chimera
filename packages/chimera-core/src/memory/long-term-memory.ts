@@ -28,6 +28,7 @@ export class LongTermMemory {
   private storagePath: string | null;
   private decayHalfLifeMs: number;
   private maxMemories: number;
+  readonly ready: Promise<void>;
 
   constructor(config?: LongTermMemoryConfig) {
     this.store = new VectorStore(config?.embeddingProvider);
@@ -35,9 +36,7 @@ export class LongTermMemory {
     this.decayHalfLifeMs = (config?.decayHalfLifeDays ?? 30) * 24 * 60 * 60 * 1000;
     this.maxMemories = config?.maxMemories ?? 10_000;
 
-    if (this.storagePath && existsSync(this.storagePath)) {
-      this.loadFromDisk();
-    }
+    this.ready = this.loadFromDisk();
   }
 
   /**
@@ -52,6 +51,7 @@ export class LongTermMemory {
     sessionId?: string;
     tags?: string[];
   }): Promise<MemoryItem> {
+    await this.ready;
     const id = crypto.randomUUID();
     const now = Date.now();
 
@@ -131,6 +131,7 @@ export class LongTermMemory {
    * Retrieve memories by semantic similarity.
    */
   async retrieve(query: MemoryQuery): Promise<MemoryResult[]> {
+    await this.ready;
     const results = await this.store.search(query);
 
     // Update access metadata for retrieved items
@@ -276,11 +277,11 @@ export class LongTermMemory {
     writeFileSync(this.storagePath, this.store.serialize(), 'utf-8');
   }
 
-  private loadFromDisk(): void {
+  private async loadFromDisk(): Promise<void> {
     if (!this.storagePath || !existsSync(this.storagePath)) return;
     try {
       const data = readFileSync(this.storagePath, 'utf-8');
-      this.store.deserialize(data); // async but fire-and-forget on load
+      await this.store.deserialize(data);
     } catch {
       // Corrupted file — start fresh
     }
