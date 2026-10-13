@@ -70,5 +70,10 @@ try {
   const workflows = run(process.execPath, [entry, 'workflow', 'list'], consumer, env);
   assert.match(workflows, /stepCount/);
   assert.match(workflows, /standard-draft/);
-  console.log(JSON.stringify({ cleanConsumer: true, packages: ordered.length, version, cliHelp: true, sessions: true, workflowList: true, providerCalls: 0 }));
+  const packedShell = await createRequire(entry)('@chimera/tools').runShellCommandTool.execute({
+    command: `"${process.execPath}" -e "console.log('PACKED_SHELL_OK')"`, timeout: 10000,
+  }, { workspaceRoot: consumer });
+  assert.equal(packedShell.exitCode, 0, packedShell.stderr);
+  assert.equal(packedShell.stdout.trim(), 'PACKED_SHELL_OK');
+  console.log(JSON.stringify({ cleanConsumer: true, packages: ordered.length, version, cliHelp: true, sessions: true, workflowList: true, realShell: true }));
 } finally { rmSync(stage, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }); }
