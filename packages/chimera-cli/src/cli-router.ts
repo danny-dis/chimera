@@ -1,9 +1,8 @@
 import { Command } from 'commander';
 import * as readline from 'readline';
 import { resolve } from 'path';
-import { readFileSync } from 'fs';
-import { SessionOrchestrator, EventStream, LongTermMemory, MemoryPersistence, CoordinatorEngine, runWorkflow, SchedulerManager } from '@chimera/core';
-import type { LLMProvider, OrchestratorResult, ToolExecutorInterface, ToolRegistryInterface, WorkflowDefinition } from '@chimera/core';
+import { SessionOrchestrator, EventStream, LongTermMemory, MemoryPersistence, runWorkflow, SchedulerManager, createRuntimeMemory, withAbort } from '@chimera/core';
+import type { OrchestratorResult, ToolExecutorInterface, ToolRegistryInterface, WorkflowDefinition } from '@chimera/core';
 import type { Mode, DeliberationMode } from '@chimera/core';
 import { getBuiltInPreset } from '@chimera/core';
 import { ProviderFactory, RateLimitError, ProviderUnavailableError, ProviderError, RateLimiter, SimpleModelRegistry } from '@chimera/providers';
@@ -13,21 +12,17 @@ import { LearningEngine } from '@chimera/learning';
 import { UserSkillModel, tierMessage, suggestNextValue, resolveActiveStyle } from '@chimera/learning';
 import type { ObservedCapability } from '@chimera/learning';
 import type { TieredMessage, SkillTier } from '@chimera/learning';
-import { ToolRegistry, ToolExecutor, HookExecutor, allTools, getDiagnosticsForFile, setAutoApprove, disposeAllLspServices } from '@chimera/tools';
-import {
-  PermissionEngine,
-  readOnlyProfile,
-  editFilesProfile,
-  fullAccessProfile,
-  type PermissionRule,
-} from '@chimera/tools';
+import { getDiagnosticsForFile, setAutoApprove, disposeAllLspServices } from '@chimera/tools';
+import type { ToolRegistry, ToolExecutor } from '@chimera/tools';
+import { createToolContext, buildPermissionEngine } from './tool-context.js';
+import { buildHelpProgram } from './help-program.js';
 import { runEval, formatEvalMarkdown } from './eval-runner.js';
+import { adaptProvider } from './provider-adapter.js';
 import { runSlashCommand } from './commands/registry.js';
 import type { ReplContext } from './commands/registry.js';
-import { registerSkillCommand } from './commands/skill.js';
-import { registerWorkflowCommand } from './commands/workflow.js';
-import { registerLearnCommand } from './commands/learn.js';
-import { registerProjectsCommand } from './commands/projects.js';
+import { findInSources, loadWorkflowRegistry } from './commands/workflow.js';
+import { runWorkflowInContext } from './workflow-runtime.js';
+
 import { autoGenerateConfig, configExists, loadConfig, getProvidersByRole, getDefaultPreset, type ResolvedProvider, type ChimeraConfig } from './config-loader.js';
 import { cleanupStaleWorktrees, removeWorktree } from '@chimera/isolation';
 // @chimera/tui depends on Ink, which is ESM with top-level await.
@@ -38,103 +33,6 @@ import type { ToolActivity } from '@chimera/tui';
 import type { AgentRole } from '@chimera/core';
 import { createFallbackProvider } from './fallback-provider.js';
 import { runSetup } from './commands/setup.js';
-
-/**
- * Read the installed CLI version off our own package.json.
- *
- * This module is emitted as CommonJS (see the Ink note above), so `__dirname`
- * is available and resolves to `dist/` — the package root is one level up.
- * Never throws: a missing or unreadable manifest degrades to 'unknown' rather
- * than taking down every `chimera` invocation.
- */
-function readPackageVersion(): string {
-  try {
-    const manifest = readFileSync(resolve(__dirname, '..', 'package.json'), 'utf-8');
-    return (JSON.parse(manifest) as { version?: string }).version ?? 'unknown';
-  } catch {
-    return 'unknown';
-  }
-}
-
-function adaptProvider(provider: ModelProvider): LLMProvider {
-  return {
-    async complete(messages, options) {
-      const mappedMessages = messages.map((m) => {
-        const extra = m as unknown as Record<string, unknown>;
-        const msg: import('@chimera/providers').Message = {
-          role: m.role as 'system' | 'user' | 'assistant' | 'tool',
-          content: m.content,
-        };
-        if (m.role === 'tool') {
-          if (typeof extra.tool_call_id === 'string') {
-            msg.toolResultId = extra.tool_call_id;
-          } else {
-            try {
-              const parsed = JSON.parse(m.content);
-              if (parsed.toolCallId) {
-                msg.toolResultId = parsed.toolCallId;
-              }
-            } catch { /* content is not JSON — leave toolResultId undefined */ }
-          }
-        }
-        if (m.role === 'assistant') {
-          // Accept BOTH history shapes: snake_case `tool_calls` with nested
-          // `function` (session-orchestrator.buildToolResultMessages, trio
-          // mode) and camelCase `toolCalls` with flat name/arguments
-          // (agent-tool-loop solo/spawner modes). Missing this mapping drops
-          // the assistant's prior tool calls out of the request entirely, so
-          // from turn 2 onward the upstream sees orphaned tool results,
-          // abandons the tool protocol, and narrates pseudo-XML instead of
-          // emitting native calls — the solo code-edit false-success class.
-          const raw = Array.isArray(extra.tool_calls)
-            ? extra.tool_calls
-            : Array.isArray(extra.toolCalls)
-              ? extra.toolCalls
-              : undefined;
-          if (raw) {
-            msg.toolCalls = (raw as Array<Record<string, unknown>>)
-              .filter((tc) => tc && typeof tc === 'object')
-              .map((tc) => {
-                const fn = tc.function as { name?: unknown; arguments?: unknown } | undefined;
-                const name = typeof fn?.name === 'string' ? fn.name : typeof tc.name === 'string' ? tc.name : '';
-                const args =
-                  typeof fn?.arguments === 'string'
-                    ? fn.arguments
-                    : typeof tc.arguments === 'string'
-                      ? tc.arguments
-                      : JSON.stringify(tc.arguments ?? {});
-                return { id: String(tc.id ?? ''), name, arguments: args };
-              })
-              .filter((tc) => tc.name.length > 0);
-          }
-        }
-        return msg;
-      });
-
-      const result = await provider.complete(mappedMessages, {
-        temperature: options?.temperature,
-        maxTokens: options?.maxTokens,
-        responseFormat: options?.responseFormat,
-        tools: options?.tools,
-        cacheControl: options?.cacheControl,
-      });
-      return {
-        content: result.content,
-        toolCalls: result.toolCalls?.map((tc) => ({
-          id: tc.id,
-          name: tc.name,
-          arguments: typeof tc.arguments === 'string'
-            ? JSON.parse(tc.arguments)
-            : tc.arguments,
-        })),
-        usage: {
-          inputTokens: result.usage.inputTokens,
-          outputTokens: result.usage.outputTokens,
-        },
-      };
-    },
-  };
-}
 
 /**
  * Format a provider error into a user-actionable message.
@@ -184,7 +82,7 @@ function formatProviderError(err: unknown, providerName?: string): string {
 function renderTiered(msg: TieredMessage, tier: SkillTier): string {
   if (process.env.CHIMERA_DEV || process.argv.includes('--verbose')) {
     // dev-only single-line signal trace
-    console.debug(`[skill] (tierMessage) → ${tier}`);
+    console.error(`[skill] (tierMessage) → ${tier}`);
   }
   return tierMessage(msg, tier);
 }
@@ -197,6 +95,7 @@ function renderTiered(msg: TieredMessage, tier: SkillTier): string {
 function validateStartupProviders(
   mapped: { writer?: ModelProvider; reviewer?: ModelProvider; challenger?: ModelProvider; fallback: ModelProvider[] },
   skillModel?: UserSkillModel,
+  log: typeof console.log = console.log,
 ): void {
   const tier = skillModel?.tier() ?? 'intermediate';
   const real = mapped.fallback.filter((p) => p.getModel().provider !== 'mock');
@@ -208,8 +107,8 @@ function validateStartupProviders(
       intermediate: '  ⚠ No real API keys found — using offline mock provider.',
       advanced: '  ⚠ No real API keys — mock provider active.',
     };
-    console.log(renderTiered(mockMsg, tier));
-    console.log('  Run `chimera setup` to configure real providers.\n');
+    log(renderTiered(mockMsg, tier));
+    log('  Run `chimera setup` to configure real providers.\n');
   }
   if (mapped.fallback.length === 0) {
     const noneMsg: TieredMessage = {
@@ -241,50 +140,6 @@ interface FileDiffLike {
 }
 
 /**
- * Mutating write tools gated by the interactive pre-write approval flow.
- * In a real terminal (non --yolo) these request approval, and the executor
- * attaches a pre-write diff to the request so the user sees it before the
- * write lands. The rule order matters: the 'ask' rules must precede any
- * catch-all so they win the first-match evaluation.
- */
-const WRITE_GATE_TOOLS: ReadonlyArray<PermissionRule> = [
-  { toolPattern: 'write_file', decision: 'ask' },
-  { toolPattern: 'edit_file', decision: 'ask' },
-  { toolPattern: 'search_replace', decision: 'ask' },
-  { toolPattern: 'apply_patch', decision: 'ask' },
-];
-
-/**
- * Build the permission engine for a one-shot run. `--yolo` gets full access
- * (plus auto-approve elsewhere); plan/ask/review are read-only. In edit modes
- * with an interactive terminal, the write tools above are flipped to 'ask' so
- * the pre-write approval gate engages (--yolo / headless bypass it).
- */
-function buildPermissionEngine(
-  yolo: boolean,
-  mode: Mode,
-  interactive: boolean,
-): PermissionEngine {
-  const profile = yolo
-    ? fullAccessProfile
-    : mode === 'plan' || mode === 'ask' || mode === 'review'
-      ? readOnlyProfile
-      : editFilesProfile;
-  const engine = new PermissionEngine(profile);
-  if (!yolo && interactive) {
-    engine.loadProfile({
-      name: `${profile.name}Interactive`,
-      mode: profile.mode,
-      rules: [
-        ...(profile.rules ?? []).filter((r) => r.toolPattern !== '*'),
-        ...WRITE_GATE_TOOLS,
-      ],
-    });
-  }
-  return engine;
-}
-
-/**
  * Fully-wired run context, produced by `buildRunContext()` and consumed by
  * every entry point (one-shot run, REPL, TUI, resume, slash commands).
  * The orchestrator is created with a live `SimpleModelRegistry` plus active
@@ -305,14 +160,23 @@ export class CliRouter {
   private program: Command;
   private verbose = false;
   private noLearn = false;
-  private sessionStore: CheckpointStore;
-  private memory: LongTermMemory;
-  private memoryPersistence: MemoryPersistence;
-  private learningEngine: LearningEngine;
+  private sessionStore!: CheckpointStore;
+  private memory!: LongTermMemory;
+  private memoryPersistence!: MemoryPersistence;
+  private learningEngine!: LearningEngine;
+  private _runtimeInitialized = false;
 
   constructor() {
-    this.program = new Command();
-    this.program.option('--mode <mode>', 'launch mode: tui (default), repl, or rpc (headless JSON-RPC over stdio)');
+    this.program = buildHelpProgram((definition, inputs, eventStream) =>
+      this.executeWorkflowDefinition(definition, inputs, this.program.opts().mode ?? 'ask', eventStream));
+    this.setupCommands();
+  }
+
+  private initializeRuntime(): void {
+    if (this._runtimeInitialized) {
+      return;
+    }
+    this._runtimeInitialized = true;
     this.sessionStore = new CheckpointStore();
     const workspaceRoot = process.cwd();
     this.memoryPersistence = new MemoryPersistence({ workspaceRoot });
@@ -323,38 +187,32 @@ export class CliRouter {
       autoApply: true,
       minSessionsThreshold: 1,
     });
-    this.setupCommands();
   }
+
+
 
   /**
    * Build a fully-wired run context: tools, resolved providers, a live
    * `SimpleModelRegistry`, active `RateLimiter`, and a
-   * `SessionOrchestrator` that receives all of them. Previously this method
-   * omitted `options.registry` and the enforcers, which left `_registry` null
-   * and silently disabled the entire DeliberationEngine
-   * (solo/duo/trio/fusion/hive/swarm/auto).
+   * `SessionOrchestrator` that receives all of them. The `mode` parameter
+   * carries the requested/effective mode into the permission engine so that
+   * read-only modes (ask/plan/review) cannot write even when auto-approve
+   * is active.
    */
-  private async buildRunContext(): Promise<RunContext> {
+  private async buildRunContext(
+    mode: Mode,
+    options?: { yolo?: boolean; interactive?: boolean },
+  ): Promise<RunContext> {
     const eventStream = new EventStream();
 
     if (this.verbose) {
       eventStream.subscribe('*', (event) => {
-        console.log(`  [event] ${event.type}`, JSON.stringify(event, null, 2));
+        console.error(`  [event] ${event.type}`, JSON.stringify(event, null, 2));
       });
     }
 
-    // Wire up tool system (kept intact — tools must still register).
-    const toolRegistry = new ToolRegistry();
-    const hookExecutor = new HookExecutor();
-    const toolExecutor = new ToolExecutor(
-      toolRegistry,
-      () => 'allow' as const, // Default: allow all tools
-      undefined,
-      hookExecutor,
-    );
-    for (const tool of allTools) {
-      toolRegistry.register(tool as unknown as Parameters<typeof toolRegistry.register>[0]);
-    }
+    // Wire up tool system with mode-based permission enforcement.
+    const { toolRegistry, toolExecutor } = createToolContext(mode, options);
 
     // Resolve providers (reuse existing resolution — never duplicate it).
     const mapped = await this.getRoleMappedProviders();
@@ -412,7 +270,9 @@ export class CliRouter {
       {
         registry,
         rateLimiter,
-        memoryPersistence: this.memoryPersistence,
+        ...(writer
+          ? await createRuntimeMemory(process.cwd(), this.noLearn || this.program.opts().learn === false ? undefined : adaptProvider(writer), this.memoryPersistence)
+          : { memoryPersistence: this.memoryPersistence }),
         lspDiagnostics: (file: string) => getDiagnosticsForFile(process.cwd(), file),
       },
     );
@@ -430,8 +290,11 @@ export class CliRouter {
   }
 
   /** Thin backward-compatible accessor. Prefer `buildRunContext()`. */
-  private async initOrchestrator(): Promise<SessionOrchestrator> {
-    return (await this.buildRunContext()).orchestrator;
+  private async initOrchestrator(
+    mode: Mode,
+    options?: { yolo?: boolean; interactive?: boolean },
+  ): Promise<SessionOrchestrator> {
+    return (await this.buildRunContext(mode, options)).orchestrator;
   }
 
   private buildProviderFromEntry(entry: ResolvedProvider): ModelProvider | null {
@@ -497,7 +360,7 @@ export class CliRouter {
     const fallback = ProviderFactory.createFromEnv();
     const hasRealKeys = fallback.some((p) => p.getModel().provider !== 'mock');
     if (!hasRealKeys) {
-      console.log(
+      console.error(
         '\n  ⚠ No API keys configured — using offline MockProvider. Set ANTHROPIC_API_KEY, OPENAI_API_KEY, or GOOGLE_API_KEY to use a real model.\n',
       );
     }
@@ -535,7 +398,7 @@ export class CliRouter {
     }
   }
 
-  private async run(mode: Mode, task: string, preset: DeliberationMode = getDefaultPreset() ?? 'solo'): Promise<void> {
+  private async run(mode: Mode, task: string, preset: DeliberationMode = getDefaultPreset() ?? 'solo', verificationCommands: string[] = [], commandOptions: Record<string, unknown> = {}): Promise<void> {
     const label: Record<Mode, string> = {
       ask: 'Answering',
       plan: 'Planning',
@@ -548,7 +411,8 @@ export class CliRouter {
 
     // Per-invocation skill model (one-shot path has no persistent session).
     const skillModel = new UserSkillModel();
-    const opts = this.program.opts() as Record<string, unknown>;
+    const opts = { ...this.program.opts(), ...commandOptions };
+    const log = opts.json === true ? console.error : console.log;
     const scripted =
       !!process.env.NONINTERACTIVE ||
       process.argv.includes('--yes') ||
@@ -563,20 +427,20 @@ export class CliRouter {
     const workspaceRoot = process.cwd();
     const style = await resolveActiveStyle(workspaceRoot, skillModel);
 
-    console.log(`\n\u2699 Chimera [${mode}] \u2014 ${label[mode]}...\n`);
+    log(`\n\u2699 Chimera [${mode}] \u2014 ${label[mode]}...\n`);
 
     // Auto-generate config from env vars (fetches models from API if needed)
     if (!configExists()) {
       const generated = await autoGenerateConfig();
       if (generated) {
-        console.log(`  \u2713 Auto-configured from environment (${generated.providers.length} providers)`);
+        log(`  \u2713 Auto-configured from environment (${generated.providers.length} providers)`);
       }
     }
 
     const mapped = await this.getRoleMappedProviders();
 
     // #6 — Validate providers on startup (fail fast)
-    validateStartupProviders(mapped, skillModel);
+    validateStartupProviders(mapped, skillModel, log);
   
     // #1 — Use FallbackChain when multiple providers are available.
     // Instead of a single writer that dies on the first 429, the fallback
@@ -585,7 +449,7 @@ export class CliRouter {
     const writer = allProviders.length > 1
       ? createFallbackProvider(allProviders, (event) => {
           if (event.type === 'fallback') {
-            console.log(`  \u26a0 ${event.from} failed (${event.error.message.slice(0, 60)}), falling back to ${event.to}...`);
+            log(`  \u26a0 ${event.from} failed (${event.error.message.slice(0, 60)}), falling back to ${event.to}...`);
           }
         })
       : adaptProvider(allProviders[0]);
@@ -597,7 +461,17 @@ export class CliRouter {
     // Resolve preset aliases: map preset name → role→alias mapping
     const presetAliases = this.resolvePresetAliases(preset);
 
-    const ctx = await this.buildRunContext();
+    // #1d/#1e/#3d — Mode-based permission gating.
+    // plan/ask/review become read-only (no writes); `code`/`debug` permit edits.
+    // `--yolo` opts into full-access for code/debug only (off by default).
+    // In an interactive terminal the four write tools flip to 'ask', engaging
+    // the pre-write approval gate (diff shown before the write lands).
+    // The permission engine is attached to the tool executor via
+    // buildRunContext(mode, { yolo, interactive }) — read-only modes cannot
+    // write even with yolo.
+    const yolo = process.argv.includes('--yolo') || opts.yolo === true;
+    const interactive = process.stdin.isTTY === true;
+    const ctx = await this.buildRunContext(mode, { yolo, interactive });
     const orchestrator = ctx.orchestrator;
     // Pass backend URL from config to orchestrator for alias resolution
     const config = loadConfig();
@@ -608,14 +482,6 @@ export class CliRouter {
       orchestrator.setConfigBackend(backendUrl, config?.providers?.[0]?.api_key);
     }
 
-    // #1d/#1e/#3d — Mode-based permission gating.
-    // plan/ask/review become read-only (no writes); `code`/`debug` permit edits.
-    // `--yolo` opts into full-access (off by default, for CI/trusted automation).
-    // In an interactive terminal the four write tools flip to 'ask', engaging
-    // the pre-write approval gate (diff shown before the write lands).
-    const yolo = process.argv.includes('--yolo') || opts.yolo === true;
-    const permissionEngine = buildPermissionEngine(yolo, mode, process.stdin.isTTY === true);
-    ctx.toolExecutor.setPermissionEngine(permissionEngine);
     // When running headless (--yolo or NONINTERACTIVE=1 / --yes), auto-approve
     // the per-tool 'ask' gate so background/CI builds can actually write to
     // disk instead of stalling on a stdin prompt that will never arrive.
@@ -633,14 +499,14 @@ export class CliRouter {
         const argsPreview = call?.args
           ? ' ' + JSON.stringify(call.args).slice(0, 80)
           : '';
-        console.log(`  \u25b6 [tool] ${toolName}${argsPreview}`);
+        log(`  \u25b6 [tool] ${toolName}${argsPreview}`);
         // Pre-write approval gate: when a write tool requests approval, the
         // executor has attached a diff of exactly what is about to change —
         // show it BEFORE the interactive prompt (which fires right after this
         // event) so the user can approve against the real patch.
         const policy = (event as any).policy as string | undefined;
         if (policy === 'ask' || policy === 'escalate') {
-          this.printDiffs((event as any).diffs as FileDiffLike[] | undefined);
+          this.printDiffs((event as any).diffs as FileDiffLike[] | undefined, log);
         }
       } else if (event.type === 'tool_call_result') {
         const result = (event as any).result as
@@ -649,8 +515,8 @@ export class CliRouter {
         const status = result?.exitCode !== undefined && result.exitCode !== 0
           ? `\u2717 exit ${result.exitCode}`
           : '\u2713 ok';
-        console.log(`  \u25c0 [tool] ${result?.tool ?? 'unknown'} ${status}`);
-        this.printDiffs(result?.diffs);
+        log(`  \u25c0 [tool] ${result?.tool ?? 'unknown'} ${status}`);
+        this.printDiffs(result?.diffs, log);
       } else if (
         (event as any).type === 'tool_call_failed' ||
         (event as any).type === 'tool_call_retry' ||
@@ -660,10 +526,10 @@ export class CliRouter {
         // Loop-safety observability: these events mean the tool layer had to
         // heal or reject a call — without them a silent needs_user is undebuggable.
         const e = event as any;
-        console.log(`  \u26a0 [${e.type}] ${e.tool ?? e.path ?? ''} ${String(e.error ?? e.files ?? '').slice(0, 140)}`);
+        log(`  \u26a0 [${e.type}] ${e.tool ?? e.path ?? ''} ${String(e.error ?? e.files ?? '').slice(0, 140)}`);
       } else if ((event as any).type === 'compaction_triggered') {
         const e = event as any;
-        console.log(`  \u2a5d [compaction] freed ~${e.tokensSaved ?? '?'} tokens`);
+        log(`  \u2a5d [compaction] freed ~${e.tokensSaved ?? '?'} tokens`);
       }
     });
   
@@ -676,6 +542,8 @@ export class CliRouter {
         providers: { writer, reviewer, ...(challenger ? { challenger } : {}) },
         skillModel,
         style,
+        verificationCommands,
+        verificationOutputs: opts.verifyOutput as string[] | undefined,
       });
 
       skillModel.observeTaskOutcome({ clean: result.status === 'done' });
@@ -684,11 +552,12 @@ export class CliRouter {
       } else {
         this.printResult(result, skillModel);
       }
+      if (result.status !== 'done') process.exitCode = 1;
     } catch (err) {
       // #3 — Better error messages for provider failures
       const msg = formatProviderError(err);
       console.error(`\n\u2717 Error:\n${msg}\n`);
-      process.exit(1);
+      process.exitCode = 1;
     } finally {
       // One-shot CLI run: release the orchestrator's periodic timers so the
       // process can exit as soon as the result has been printed.
@@ -722,20 +591,20 @@ export class CliRouter {
    * Always prints the per-file +/- summary so a write is never silent; the
    * full patch body is reserved for --verbose to keep normal runs readable.
    */
-  private printDiffs(diffs?: FileDiffLike[]): void {
+  private printDiffs(diffs?: FileDiffLike[], log: typeof console.log = console.log): void {
     if (!diffs?.length) return;
 
     for (const d of diffs) {
       if (d.unchanged) {
-        console.log(`     ~ ${d.path} (no change)`);
+        log(`     ~ ${d.path} (no change)`);
         continue;
       }
       if (d.binary) {
-        console.log(`     ~ ${d.path} (binary, diff not shown)`);
+        log(`     ~ ${d.path} (binary, diff not shown)`);
         continue;
       }
       const truncNote = d.truncated ? ' [diff truncated]' : '';
-      console.log(`     ~ ${d.path}  +${d.additions}/-${d.deletions}${truncNote}`);
+      log(`     ~ ${d.path}  +${d.additions}/-${d.deletions}${truncNote}`);
 
       if (this.verbose && d.patch) {
         for (const line of d.patch.split('\n')) {
@@ -745,7 +614,7 @@ export class CliRouter {
             line.startsWith('+') && !line.startsWith('+++') ? '[32m'
             : line.startsWith('-') && !line.startsWith('---') ? '[31m'
             : '';
-          console.log(color ? `       ${color}${line}[0m` : `       ${line}`);
+          log(color ? `       ${color}${line}[0m` : `       ${line}`);
         }
       }
     }
@@ -819,14 +688,10 @@ export class CliRouter {
   }
 
   private setupCommands(): void {
+    const collectVerification = (value: string, previous: string[] = []) => [...previous, value];
     this.program
-      .name('chimera')
-      .description('Chimera — sovereign AI coding agent')
-      .version(readPackageVersion(), '-V, --version', 'output the installed chimera version')
-      .option('-v, --verbose', 'enable verbose event logging')
-      .option('--no-learn', 'disable automatic learning after each session')
-      .option('--repl', 'launch line-based REPL instead of the TUI dashboard')
       .action(async () => {
+        this.initializeRuntime();
         const opts = this.program.opts();
         this.verbose = opts.verbose ?? false;
         this.noLearn = opts.learn === false;
@@ -851,7 +716,7 @@ export class CliRouter {
         if (options.tui) {
           await this.startTui(task, 'ask');
         } else {
-          await this.run('ask', task, options.preset);
+          await this.run('ask', task, options.preset, [], options);
         }
       });
 
@@ -863,29 +728,33 @@ export class CliRouter {
       .option('--yolo', 'auto-approve all tool calls (off by default; for CI/trusted automation)')
       .action(async (task: string, options) => {
         this.verbose = this.program.opts().verbose ?? false;
-        await this.run('plan', task, options.preset);
+        await this.run('plan', task, options.preset, [], options);
       });
 
     this.program
       .command('code <task>')
       .description('Write code')
+      .option('--verify <command>', 'caller-owned verification command (repeatable)', collectVerification, [])
+      .option('--verify-output <path>', 'allow newly generated files under this caller-declared output path (repeatable)', collectVerification, [])
       .option('--preset <mode>', 'deliberation preset (solo|duo|trio|fusion|hive|swarm|auto)', 'solo')
       .option('--json', 'emit a JSON result instead of human-readable output')
       .option('--yolo', 'auto-approve all tool calls (off by default; for CI/trusted automation)')
       .action(async (task: string, options) => {
         this.verbose = this.program.opts().verbose ?? false;
-        await this.run('code', task, options.preset);
+        await this.run('code', task, options.preset, options.verify, options);
       });
 
     this.program
       .command('debug <task>')
       .description('Debug an issue')
+      .option('--verify <command>', 'caller-owned verification command (repeatable)', collectVerification, [])
+      .option('--verify-output <path>', 'allow newly generated files under this caller-declared output path (repeatable)', collectVerification, [])
       .option('--preset <mode>', 'deliberation preset (solo|duo|trio|fusion|hive|swarm|auto)', 'solo')
       .option('--json', 'emit a JSON result instead of human-readable output')
       .option('--yolo', 'auto-approve all tool calls (off by default; for CI/trusted automation)')
       .action(async (task: string, options) => {
         this.verbose = this.program.opts().verbose ?? false;
-        await this.run('debug', task, options.preset);
+        await this.run('debug', task, options.preset, options.verify, options);
       });
 
     this.program
@@ -896,26 +765,32 @@ export class CliRouter {
       .option('--yolo', 'auto-approve all tool calls (off by default; for CI/trusted automation)')
       .action(async (task: string, options) => {
         this.verbose = this.program.opts().verbose ?? false;
-        await this.run('review', task, options.preset);
+        await this.run('review', task, options.preset, [], options);
       });
 
     this.program
       .command('oal <task>')
       .description('Run an autonomous optimization loop (bounded budget, serial quality gate)')
+      .option('--verify <command>', 'caller-owned verification command (repeatable)', collectVerification, [])
+      .option('--verify-output <path>', 'allow newly generated files under this caller-declared output path (repeatable)', collectVerification, [])
       .option('--preset <mode>', 'deliberation preset (solo)', 'solo')
       .option('--json', 'emit a JSON result instead of human-readable output')
       .option('--yolo', 'auto-approve all tool calls (off by default; for CI/trusted automation)')
       .action(async (task: string, options) => {
         this.verbose = this.program.opts().verbose ?? false;
-        await this.run('oal', task, options.preset);
+        await this.run('oal', task, options.preset, options.verify, options);
       });
 
     this.program
       .command('parallel <task>')
-      .description('Execute task with parallel sub-agents')
-      .action(async (task: string) => {
+      .description('Execute a coding task with coordinated sub-agents and caller verification')
+      .option('--verify <command>', 'caller-owned verification command (repeatable)', collectVerification, [])
+      .option('--verify-output <path>', 'allow newly generated files under this caller-declared output path (repeatable)', collectVerification, [])
+      .option('--json', 'emit a JSON result instead of human-readable output')
+      .option('--yolo', 'explicitly auto-approve tools (off by default)')
+      .action(async (task: string, options) => {
         this.verbose = this.program.opts().verbose ?? false;
-        await this.runParallel(task);
+        await this.runParallel(task, options.verify, options);
       });
 
     this.program
@@ -934,14 +809,15 @@ export class CliRouter {
     this.program
       .command('goal <description...>')
       .description('Run until a goal is achieved')
-      .action(async (descParts: string[]) => {
+      .option('--verify <command>', 'verification command (repeatable)', collectVerification, [])
+      .action(async (descParts: string[], options: { verify: string[] }) => {
         this.verbose = this.program.opts().verbose ?? false;
         const goal = descParts.join(' ');
         if (!goal) {
           console.error('\n✗ Goal description required.\n');
           process.exit(1);
         }
-        await this.runGoal(goal);
+        await this.runGoal(goal, options.verify);
       });
 
     this.program
@@ -981,7 +857,7 @@ export class CliRouter {
           return;
         }
 
-        const orchestrator = await this.initOrchestrator();
+        const orchestrator = await this.initOrchestrator(checkpoint.mode);
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         await (orchestrator as any).restoreState(checkpoint as any);
         console.log(
@@ -1014,13 +890,6 @@ export class CliRouter {
           process.exit(1);
         }
       });
-
-    // Subcommands from dedicated modules — see ./commands/skill.ts,
-    // ./commands/workflow.ts, and ./commands/learn.ts.
-    registerSkillCommand(this.program);
-    registerWorkflowCommand(this.program);
-    registerLearnCommand(this.program);
-    registerProjectsCommand(this.program);
 
     this.program
       .command('eval <taskRef>')
@@ -1203,7 +1072,8 @@ export class CliRouter {
       ? adaptProvider(mapped.reviewer)
       : (allProvidersTui.length > 1 ? createFallbackProvider(allProvidersTui) : adaptProvider(allProvidersTui[0]));
     const challenger = mapped.challenger ? adaptProvider(mapped.challenger) : undefined;
-    const orchestrator = await this.initOrchestrator();
+    const ctx = await this.buildRunContext(initialMode);
+    const orchestrator = ctx.orchestrator;
     // Pass backend URL from config to orchestrator for alias resolution
     const tuiConfig = loadConfig();
     const tuiBackendUrl = (tuiConfig as any)?.backend === 'dmr-x' && tuiConfig?.providers?.[0]?.base_url
@@ -1348,6 +1218,10 @@ export class CliRouter {
       activeTool,
       workingDir: workspaceRoot,
       skillModel,
+      runWorkflow: (name, args) => this.runNamedWorkflow(name, args, currentMode),
+      runTask: async (task, options) => options.kind === 'goal'
+        ? this.executeGoal(task, options.verificationCommands)
+        : orchestrator.execute({ task, mode: currentMode, providers: { writer, reviewer, ...(challenger ? { challenger } : {}) }, preset: currentPreset }),
       onSendMessage: async (text) => {
         // Reset agents at the start of each new task so they don't accumulate
         currentAgents = [];
@@ -1449,6 +1323,7 @@ export class CliRouter {
       },
       onModeChange: (mode) => {
         currentMode = mode;
+        ctx.toolExecutor.setPermissionEngine(buildPermissionEngine(mode, false, true));
         tui.update({ mode: currentMode });
       },
       onPresetChange: (preset) => {
@@ -1460,6 +1335,7 @@ export class CliRouter {
           const cp = await this.sessionStore.load(id);
           if (cp) {
             currentMode = cp.mode;
+            ctx.toolExecutor.setPermissionEngine(buildPermissionEngine(cp.mode, false, true));
             // Append a system message indicating resume
             currentMessages = [...currentMessages, {
               id: Math.random().toString(36).slice(2),
@@ -1485,8 +1361,7 @@ export class CliRouter {
       },
       onExit: () => {
         tui.cleanup();
-        disposeAllLspServices();
-        process.exit(0);
+        return this.exitAfterLspShutdown();
       },
     });
 
@@ -1703,6 +1578,40 @@ export class CliRouter {
     await tui.waitUntilExit();
   }
 
+  private async executeWorkflowDefinition(
+    definition: import('@chimera/core').WorkflowDefinition,
+    inputs: Record<string, unknown>,
+    mode: Mode,
+    eventStream?: EventStream,
+  ) {
+    const context = await this.buildRunContext(mode);
+    return runWorkflowInContext(definition, context, {
+      inputs, mode, workspaceRoot: process.cwd(),
+      sessionId: this.sessionStore.generateSessionId(),
+      eventStream: eventStream ?? context.orchestrator.getEventStream(),
+      costTracker: context.orchestrator.getCostTracker(),
+    });
+  }
+
+  private async runNamedWorkflow(name: string, args: string, mode: Mode) {
+    const found = findInSources(await loadWorkflowRegistry(process.cwd()), name);
+    if (!found) return null;
+    const inputs = args.trim().startsWith('{') ? JSON.parse(args) : { args, task: args };
+    const result = await this.executeWorkflowDefinition(found.definition, inputs, mode);
+    return { status: result.status, output: result.error ?? JSON.stringify(result.outputs) };
+  }
+
+  private async exitAfterLspShutdown(): Promise<void> {
+    try {
+      await disposeAllLspServices();
+    } catch (error) {
+      console.error('LSP shutdown failed:', error);
+      process.exit(1);
+      return;
+    }
+    process.exit(0);
+  }
+
   private async startRepl(): Promise<void> {
     // Auto-generate config from env vars (fetches models from API if needed)
     if (!configExists()) {
@@ -1765,6 +1674,7 @@ export class CliRouter {
     // Build a ReplContext that bridges local state to the registry handlers
     const replCtx: ReplContext = {
       getMode: () => currentMode,
+      executeWorkflow: (name, args) => this.runNamedWorkflow(name, args, currentMode),
       setMode: (m) => { currentMode = m; },
       getPreset: () => currentPreset,
       setPreset: (p) => { currentPreset = p; },
@@ -1783,7 +1693,8 @@ export class CliRouter {
       getProviders: () => this.getProviders(),
       getSessionStore: () => this.sessionStore,
       printResult: (r) => this.printResult(r, skillModel),
-      initOrchestrator: () => this.initOrchestrator(),
+      initOrchestrator: () => this.initOrchestrator(currentMode),
+      executeGoal: (task, verificationCommands) => this.executeGoal(task, verificationCommands),
     };
 
     rl.prompt();
@@ -1798,10 +1709,10 @@ export class CliRouter {
       // Delegate slash commands to the registry
       if (input.startsWith('/')) {
         const [cmd, ...args] = input.slice(1).split(/\s+/);
-        const signal = await runSlashCommand(cmd!, args, replCtx);
+        const signal = await runSlashCommand(cmd!, args, replCtx, input.slice(cmd!.length + 1).trim());
         if (signal === 'exit') {
           rl.close();
-          process.exit(0);
+          return;
         }
         rl.prompt();
         return;
@@ -1842,7 +1753,7 @@ export class CliRouter {
     const reviewer = adaptProvider(mapped.reviewer ?? mapped.writer ?? mapped.fallback[0]);
     const challenger = mapped.challenger ? adaptProvider(mapped.challenger) : undefined;
 
-      const orchestrator = await this.initOrchestrator();
+      const orchestrator = await this.initOrchestrator(currentMode);
 
       try {
         const taskWithContext = memoryContext ? `${input}${memoryContext}` : input;
@@ -1932,37 +1843,13 @@ export class CliRouter {
 
     rl.on('close', () => {
       console.log('\n  Goodbye.\n');
-      disposeAllLspServices();
-      process.exit(0);
+      scheduler.stop();
+      void this.exitAfterLspShutdown();
     });
   }
 
-  private async runParallel(task: string): Promise<void> {
-    console.log(`\n⚙ Chimera [parallel] — decomposing task...\n`);
-
-    const mapped = await this.getRoleMappedProviders();
-    const provider = adaptProvider(mapped.writer ?? mapped.fallback[0]);
-
-    const eventStream = new EventStream();
-    if (this.verbose) {
-      eventStream.subscribe('*', (event) => {
-        console.log(`  [event] ${event.type}`, JSON.stringify(event, null, 2));
-      });
-    }
-
-    const coordinator = new CoordinatorEngine({ provider, eventStream });
-
-    try {
-      const result = await coordinator.execute(task, 'parallel execution');
-
-      console.log(`\n✓ Status: ${result.resolved ? 'resolved' : 'conflict'}`);
-      console.log(`  Sub-tasks: ${result.subTaskResults.length}`);
-      console.log(`  Conflicts: ${result.conflicts.length}`);
-      console.log(`  Tokens: ${result.totalTokens}`);
-      console.log(`\n${result.output}\n`);
-    } catch (err) {
-      console.error(`\n✗ Error: ${err instanceof Error ? err.message : String(err)}\n`);
-    }
+  private async runParallel(task: string, verificationCommands: string[] = [], commandOptions: Record<string, unknown> = {}): Promise<void> {
+    await this.run('code', task, 'hive', verificationCommands, commandOptions);
   }
 
   private async runLoop(turns: number, task: string): Promise<void> {
@@ -2000,38 +1887,70 @@ export class CliRouter {
     }
   }
 
-  private async runGoal(goal: string): Promise<void> {
+  private async runGoal(goal: string, verificationCommands: string[] = []): Promise<void> {
     console.log(`\n◎ Chimera goal — "${goal}"\n`);
+    try {
+      const result = await this.executeGoal(goal, verificationCommands);
+      this.printResult(result);
+      if (result.status !== 'done') process.exitCode = 1;
+      else if (!verificationCommands.length) console.log('  Note: completed without caller-supplied verification; not independently verified.');
+    } catch (err) {
+      console.error(`\n✗ Goal failed: ${err instanceof Error ? err.message : String(err)}\n`);
+      process.exitCode = 1;
+    }
+  }
 
-    const mapped = await this.getRoleMappedProviders();
-    const writer = adaptProvider(mapped.writer ?? mapped.fallback[0]);
-    const reviewer = adaptProvider(mapped.reviewer ?? mapped.writer ?? mapped.fallback[0]);
-
-    const goalWf: WorkflowDefinition = {
-      name: 'cli-goal',
-      steps: [{
-        id: 'goal',
-        kind: 'loop',
-        config: {
-          prompt: `Work on this goal: ${goal}\n\nWhen the goal is fully achieved, end your response with the word COMPLETE.`,
-          until: 'COMPLETE',
-          max_iterations: 20,
-          fresh_context: true,
-          role: 'writer',
-        },
-      }],
-    };
-
-    const result = await runWorkflow(goalWf, {
-      handlers: { providers: { writer, reviewer } },
+  private async executeGoal(goal: string, verificationCommands: string[] = []): Promise<OrchestratorResult> {
+    const context = await this.buildRunContext('code', {
+      yolo: this.program.opts().yolo === true || process.argv.includes('--yolo'),
+      interactive: process.stdin.isTTY === true,
     });
-
-    if (result.status === 'success') {
-      const out = result.outputs.goal as { content: string; iterations: number };
-      console.log(`  ✓ Goal achieved after ${out.iterations} iteration(s)\n${out.content}\n`);
-    } else {
-      console.error(`\n✗ Goal not achieved: ${result.error}\n`);
-      process.exit(1);
+    const mapped = await this.getRoleMappedProviders();
+    const writerProvider = mapped.writer ?? mapped.fallback[0];
+    const reviewerProvider = mapped.reviewer ?? writerProvider;
+    if (!writerProvider || !reviewerProvider || writerProvider.getModel().provider === 'mock' || reviewerProvider.getModel().provider === 'mock') {
+      context.orchestrator.dispose();
+      throw new Error('Goal execution requires a configured real provider. Run `chimera setup` first.');
+    }
+    const signal = AbortSignal.timeout(5 * 60_000);
+    let providerCalls = 0;
+    const budgetError = new Error('Goal provider call limit of 20 exceeded.');
+    const boundedProvider = (provider: ModelProvider) => {
+      const adapted = adaptProvider(provider);
+      return {
+        ...adapted,
+        async complete(...args: Parameters<typeof adapted.complete>) {
+          signal.throwIfAborted();
+          if (++providerCalls > 20) throw budgetError;
+          return withAbort(() => adapted.complete(...args), signal);
+        },
+      };
+    };
+    const writer = boundedProvider(writerProvider);
+    const reviewer = boundedProvider(reviewerProvider);
+    console.log(`  Progress: bounded to 20 provider calls and 5 minutes; verification checks: ${verificationCommands.length}.`);
+    try {
+      const execute = context.orchestrator.execute as unknown as (params: {
+        task: string; mode: Mode; providers: { writer: typeof writer; reviewer: typeof reviewer };
+        preset: DeliberationMode; costCap: number;
+        verificationCommands?: string[]; signal?: AbortSignal;
+      }) => Promise<OrchestratorResult>;
+      const result = await withAbort(() => execute.call(context.orchestrator, {
+        task: goal,
+        mode: 'code',
+        providers: { writer, reviewer },
+        preset: 'solo',
+        costCap: 10,
+        ...(verificationCommands.length ? { verificationCommands } : {}),
+        signal,
+      }), signal);
+      signal.throwIfAborted();
+      if (providerCalls > 20) throw budgetError;
+      return result;
+    } catch (err) {
+      throw err;
+    } finally {
+      context.orchestrator.dispose();
     }
   }
 
@@ -2046,14 +1965,23 @@ export class CliRouter {
     // parsing, which would already have launched the TUI/REPL).
     const modeIdx = argv.indexOf('--mode');
     const mode = modeIdx !== -1 ? argv[modeIdx + 1] : undefined;
-    if (mode === 'rpc') {
+    const informational = argv.slice(2).some(arg => ['--help', '-h', '--version', '-V'].includes(arg));
+    if (mode === 'rpc' && !informational) {
+      this.initializeRuntime();
       // Headless JSON-RPC over stdio — same protocol as the standalone
       // daemon, but inside this process (no separate daemon to boot).
       // Reuses ChimeraDaemon + its stdio loop; no second protocol.
       const { ChimeraDaemon, runStdioServer } = await import('@chimera/daemon');
-      await runStdioServer(new ChimeraDaemon());
+      try { await runStdioServer(new ChimeraDaemon()); }
+      finally { await disposeAllLspServices(); }
       return;
     }
+    this.program.hook('preAction', () => this.initializeRuntime());
+    this.program.hook('postAction', async (_root, command) => {
+      if (command !== this.program && !command.opts().tui && !this.program.opts().repl) {
+        await disposeAllLspServices();
+      }
+    });
     await this.program.parseAsync(argv);
   }
 }

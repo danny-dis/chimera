@@ -1,4 +1,5 @@
 import type { LLMProvider } from '../session-orchestrator.js';
+import type { WorktreeInfo } from '../agent/worktree-isolation.js';
 
 /** Subtask type classification for capability-based model routing. */
 export type SubTaskType =
@@ -47,9 +48,10 @@ export interface SubTask {
    * Opt into per-subtask filesystem isolation. When true, the spawner
    * creates a `WorktreeIsolation` worktree and runs this sub-agent against
    * the isolated branch path instead of the shared `workspaceRoot`. The
-   * branch is merged back on completion. Defaults to false.
+   * branch is retained for explicit review/merge. Defaults to false.
    */
   isolated?: boolean;
+  depth?: number;
 }
 
 export interface SubTaskResult {
@@ -60,6 +62,8 @@ export interface SubTaskResult {
   error?: string;
   durationMs: number;
   assignedModel?: string;
+  /** Allocated branch/path; setup failures can leave it absent or partially created. */
+  worktree?: WorktreeInfo;
 }
 
 export interface DecompositionResult {

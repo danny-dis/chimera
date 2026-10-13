@@ -20,17 +20,14 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v4
-        with:
-          version: 11
-
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
-          cache: 'pnpm'
+          node-version: 22
           registry-url: 'https://registry.npmjs.org'
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
@@ -48,26 +45,50 @@ jobs:
         run: pnpm test
 
       - name: Sync version
+        id: version
         run: |
-          VERSION="${{ github.event.inputs.version || github.ref_name }}"
-          VERSION="${VERSION#v}"
-          node -e "
-            const fs = require('fs');
-            const glob = require('path');
-            const root = JSON.parse(fs.readFileSync('package.json', 'utf8'));
-            root.version = '$VERSION';
-            fs.writeFileSync('package.json', JSON.stringify(root, null, 2) + '\n');
-            const pkgs = require('child_process').execSync('ls packages/chimera-*/package.json', { encoding: 'utf8' }).trim().split('\n');
-            for (const p of pkgs) {
-              const pkg = JSON.parse(fs.readFileSync(p, 'utf8'));
-              pkg.version = '$VERSION';
-              fs.writeFileSync(p, JSON.stringify(pkg, null, 2) + '\n');
+          node -e '
+            const fs = require("node:fs");
+            const raw = process.env.VERSION;
+            const version = raw.startsWith("v") ? raw.slice(1) : raw;
+            if (!/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-(?:(?:0|[1-9]\d*)|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:(?:0|[1-9]\d*)|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*))*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/.test(version)) {
+              throw new Error("Invalid release version");
             }
-            console.log('All packages set to $VERSION');
-          "
+            for (const file of ["package.json", ...fs.readdirSync("packages").filter((name) => name.startsWith("chimera-")).map((name) => `packages/${name}/package.json`)]) {
+              const pkg = JSON.parse(fs.readFileSync(file, "utf8"));
+              pkg.version = version;
+              fs.writeFileSync(file, `${JSON.stringify(pkg, null, 2)}\n`);
+            }
+            console.log(`Synchronized package versions to ${version}`);
+            fs.appendFileSync(process.env.GITHUB_OUTPUT, `version=${version}\n`);
+          '
+        env:
+          VERSION: ${{ github.event.inputs.version || github.ref_name }}
 
-      - name: Publish @chimera/cli to npm
-        run: pnpm --filter @chimera/cli publish --no-git-checks --access public
+      - name: Clean package consumer smoke
+        run: pnpm smoke:package
+        env:
+          CHIMERA_PACKAGE_OFFLINE: '1'
+
+      - name: Publish runtime packages to npm
+        run: |
+          for package in \
+            @chimera/paths \
+            @chimera/domain \
+            @chimera/context \
+            @chimera/providers \
+            @chimera/lsp \
+            @chimera/core \
+            @chimera/isolation \
+            @chimera/tools \
+            @chimera/session \
+            @chimera/eval \
+            @chimera/tui \
+            @chimera/learning \
+            @chimera/daemon \
+            @chimera/cli; do
+            pnpm --filter "$package" publish --no-git-checks --access public
+          done
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
@@ -75,4 +96,6 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           generate_release_notes: true
-          name: "v${{ github.event.inputs.version || github.ref_name }}"
+          target_commitish: ${{ github.sha }}
+          tag_name: "v${{ steps.version.outputs.version }}"
+          name: "v${{ steps.version.outputs.version }}"

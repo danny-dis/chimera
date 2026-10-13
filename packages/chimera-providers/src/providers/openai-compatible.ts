@@ -19,6 +19,7 @@ import {
   ProviderUnavailableError,
   StreamingError,
 } from '../errors.js';
+import { setTimeout as delay } from 'node:timers/promises';
 
 export interface OpenAICompatibleOptions {
   pricing?: PricingInfo;
@@ -444,6 +445,7 @@ export class OpenAICompatibleProvider implements ModelProvider {
       method: 'POST',
       headers: this.headers,
       body: JSON.stringify(body),
+      signal: options?.signal,
     });
 
     // Some OpenAI-compatible gateways (e.g. OpenGateway's tencent/hy3 free
@@ -459,6 +461,7 @@ export class OpenAICompatibleProvider implements ModelProvider {
         method: 'POST',
         headers: this.headers,
         body: JSON.stringify(retryBody),
+        signal: options?.signal,
       });
       if (retryResponse.ok) {
         const json = (await retryResponse.json()) as Record<string, unknown>;
@@ -495,6 +498,7 @@ export class OpenAICompatibleProvider implements ModelProvider {
           method: 'POST',
           headers: this.headers,
           body: JSON.stringify(body),
+          signal: options?.signal,
         });
         if (!retryResponse.ok) continue;
         const retryJson = (await retryResponse.json()) as Record<string, unknown>;
@@ -511,6 +515,7 @@ export class OpenAICompatibleProvider implements ModelProvider {
           method: 'POST',
           headers: this.headers,
           body: JSON.stringify(retryBody),
+          signal: options?.signal,
         });
         if (!retryResponse.ok) continue;
         const retryJson = (await retryResponse.json()) as Record<string, unknown>;
@@ -527,6 +532,7 @@ export class OpenAICompatibleProvider implements ModelProvider {
           method: 'POST',
           headers: this.headers,
           body: JSON.stringify(retryBody),
+          signal: options?.signal,
         });
         if (!retryResponse.ok) continue;
         const retryJson = (await retryResponse.json()) as Record<string, unknown>;
@@ -573,6 +579,7 @@ export class OpenAICompatibleProvider implements ModelProvider {
       method: 'POST',
       headers: this.headers,
       body: JSON.stringify(body),
+      signal: options?.signal,
     });
 
     if (!response.ok) {
@@ -700,12 +707,15 @@ export class OpenAICompatibleProvider implements ModelProvider {
     let lastError: unknown;
 
     for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), this.timeoutMs);
+      init.signal?.throwIfAborted();
+      const signal = AbortSignal.any([
+        AbortSignal.timeout(this.timeoutMs),
+        ...(init.signal ? [init.signal] : []),
+      ]);
       try {
         const res = await fetch(`${this.baseUrl}${path}`, {
           ...init,
-          signal: controller.signal,
+          signal,
         });
         if (res.ok || res.status < 500) return res;
         // 5xx: retryable. Read-and-discard body so the socket can be reused.
@@ -715,7 +725,8 @@ export class OpenAICompatibleProvider implements ModelProvider {
         );
         await res.body?.cancel().catch(() => {});
       } catch (error) {
-        if (error instanceof DOMException && error.name === 'AbortError') {
+        init.signal?.throwIfAborted();
+        if (signal.aborted) {
           lastError = new ProviderUnavailableError('Request timed out', this.modelInfo.provider);
         } else {
           lastError = new ProviderUnavailableError(
@@ -723,13 +734,11 @@ export class OpenAICompatibleProvider implements ModelProvider {
             this.modelInfo.provider,
           );
         }
-      } finally {
-        clearTimeout(timeout);
       }
 
       if (attempt < MAX_ATTEMPTS - 1) {
         const backoff = 200 * 2 ** attempt + Math.random() * 100;
-        await new Promise((r) => setTimeout(r, backoff));
+        await delay(backoff, undefined, { signal: init.signal ?? undefined });
       }
     }
 

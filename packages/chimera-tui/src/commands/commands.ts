@@ -1,6 +1,7 @@
 import { promises as fsp } from 'node:fs';
 import path from 'node:path';
 import type { Mode, DeliberationMode } from '@chimera/core';
+import { parseGoalInput } from '@chimera/core';
 // Deep subpath, not the '@chimera/tools' barrel: the barrel drags in LSP, MCP
 // and the sandbox, which cost ~35s to load in tests and would delay TUI
 // startup. trust.js only needs fs/os/path.
@@ -91,7 +92,8 @@ export interface CommandContext {
    * TUI, where these commands degrade to an honest "use the CLI" message
    * instead of faking a run.
    */
-  runTask?: (task: string, opts: { kind: 'loop' | 'goal'; maxIterations?: number }) => Promise<{ status: string; output: string; cost: number }>;
+  runTask?: (task: string, opts: { kind: 'loop' | 'goal'; maxIterations?: number; verificationCommands?: string[] }) => Promise<{ status: string; output: string; cost: number }>;
+  runWorkflow?: (name: string, args: string) => Promise<{ status: string; output: string } | null>;
 }
 
 // ── Help text ────────────────────────────────────────────────────────────
@@ -410,7 +412,7 @@ export async function runCommand(
     }
 
     case 'goal': {
-      const goal = args.join(' ');
+      const { task: goal, verificationCommands } = parseGoalInput(trimmed.slice('/goal'.length));
       if (!goal) {
         return { output: ['Usage: /goal <description>', 'Example: /goal all tests pass'] };
       }
@@ -420,7 +422,7 @@ export async function runCommand(
           'Run it there: chimera then /goal ' + goal,
         ] };
       }
-      const res = await ctx.runTask(goal, { kind: 'goal' });
+      const res = await ctx.runTask(goal, { kind: 'goal', verificationCommands });
       return { output: [`Goal: ${res.status}`, res.output] };
     }
 
@@ -725,6 +727,14 @@ export async function runCommand(
       return { output: ['Goodbye.'], exit: true };
 
     default:
+      if (ctx.runWorkflow) {
+        try {
+          const result = await ctx.runWorkflow(cmd, trimmed.slice(parts[0]!.length + 1).trimStart());
+          if (result) return { output: [`Workflow: ${result.status}`, result.output] };
+        } catch (error) {
+          return { output: [`Workflow failed: ${error instanceof Error ? error.message : String(error)}`] };
+        }
+      }
       return { output: [tiered({
         beginner: `I didn't recognise "/${cmd}". Commands start with a slash — try /help to see the full list, or just type your task in plain language.`,
         intermediate: `Unknown command: /${cmd}. Type /help for commands.`,

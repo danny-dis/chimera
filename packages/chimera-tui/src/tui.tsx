@@ -33,6 +33,8 @@ export const TUI: React.FC<TUIProps> = ({
   instructions,
   tokenUsage,
   onSendMessage,
+  runTask,
+  runWorkflow,
   onModeChange,
   onPresetChange,
   onSessionSelect,
@@ -96,7 +98,14 @@ export const TUI: React.FC<TUIProps> = ({
     getHistory: () => commandHistory,
     sessionId,
     skillModel,
-  }), [mode, preset, costData, commandHistory, sessionId, onModeChange, onPresetChange, skillModel]);
+    runTask,
+    runWorkflow,
+  }), [mode, preset, costData, commandHistory, sessionId, onModeChange, onPresetChange, skillModel, runTask, runWorkflow]);
+
+  const requestExit = useCallback(async () => {
+    if (onExit) await onExit();
+    else process.exit(0);
+  }, [onExit]);
 
   const handleSlashCommand = useCallback(async (text: string) => {
     const ctx = buildCommandContext();
@@ -106,8 +115,8 @@ export const TUI: React.FC<TUIProps> = ({
       setMessages([]);
     }
     if (result.exit) {
-      onExit?.();
-      process.exit(0);
+      await requestExit();
+      return;
     }
     if (result.viewHint) {
       setActiveOverlay(result.viewHint);
@@ -122,7 +131,7 @@ export const TUI: React.FC<TUIProps> = ({
       setMessages((prev) => [...prev, sysMsg]);
     }
     setCommandHistory((prev) => [...prev, text]);
-  }, [buildCommandContext, onExit]);
+  }, [buildCommandContext, requestExit]);
 
   const handleSendMessage = useCallback((text: string) => {
     if (text.startsWith('/')) {
@@ -168,8 +177,7 @@ export const TUI: React.FC<TUIProps> = ({
       }
     }
     if (key.ctrl && input === 'c') {
-      onExit?.();
-      process.exit(0);
+      void requestExit().catch(error => console.error('Shutdown failed:', error));
     }
     // Adaptive-onboarding: reversible explain depth toggle (more ↔ less ↔ default).
     //

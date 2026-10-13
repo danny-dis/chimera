@@ -39,6 +39,8 @@ interface DuoExecutorDeps {
   toolExecutor?: ToolExecutorInterface;
   /** Optional tool registry — supplies tool definitions to the writer. */
   toolRegistry?: ToolRegistryInterface;
+  /** Per-run abort signal, forwarded to the writer's tool loop. */
+  signal?: AbortSignal;
 }
 
 /**
@@ -63,6 +65,7 @@ export class DuoExecutor {
   private workspaceRoot: string | undefined;
   private toolExecutor: ToolExecutorInterface | undefined;
   private toolRegistry: ToolRegistryInterface | undefined;
+  private signal: AbortSignal | undefined;
 
   constructor(deps: DuoExecutorDeps) {
     this.eventStream = deps.eventStream;
@@ -71,6 +74,7 @@ export class DuoExecutor {
     this.workspaceRoot = deps.workspaceRoot;
     this.toolExecutor = deps.toolExecutor;
     this.toolRegistry = deps.toolRegistry;
+    this.signal = deps.signal;
   }
 
   /**
@@ -305,6 +309,7 @@ export class DuoExecutor {
               }))
             : undefined,
           sanitize: sanitizeWriterOutput,
+          signal: this.signal,
         });
         let content = loop.content || r.content;
         // Prose fallback: if the file still hasn't landed on disk, parse the

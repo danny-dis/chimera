@@ -10,41 +10,14 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
-import { SessionOrchestrator, EventStream } from '@chimera/core';
-import type { Mode, OrchestratorResult, LLMProvider } from '@chimera/core';
+import { SessionOrchestrator, EventStream, adaptProvider } from '@chimera/core';
+import type { Mode, OrchestratorResult, ToolRegistryInterface, ToolExecutorInterface } from '@chimera/core';
 import type { ChimeraEvent } from '@chimera/core';
 import type { ModelProvider } from '@chimera/providers';
 import { EvalHarness } from '@chimera/eval';
 import type { EvalReport, TaskSpec, Trajectory, TrajectoryStep } from '@chimera/eval';
+import { createToolContext } from './tool-context.js';
 
-/**
- * Adapt a ModelProvider (from @chimera/providers) to the LLMProvider interface
- * expected by SessionOrchestrator.
- */
-function adaptProvider(provider: ModelProvider): LLMProvider {
-  return {
-    async complete(messages, options) {
-      const result = await provider.complete(
-        messages.map((m) => ({
-          role: m.role as 'system' | 'user' | 'assistant' | 'tool',
-          content: m.content,
-        })),
-        {
-          temperature: options?.temperature,
-          maxTokens: options?.maxTokens,
-          responseFormat: options?.responseFormat,
-        },
-      );
-      return {
-        content: result.content,
-        usage: {
-          inputTokens: result.usage.inputTokens,
-          outputTokens: result.usage.outputTokens,
-        },
-      };
-    },
-  };
-}
 
 /**
  * Real trajectory recorder — executes a task through the SessionOrchestrator
@@ -58,9 +31,10 @@ export class RealTrajectoryRecorder {
 
   async record(task: TaskSpec, mode: Mode): Promise<Trajectory> {
     const eventStream = new EventStream();
+    const { toolRegistry, toolExecutor } = createToolContext(mode);
     const orchestrator = new SessionOrchestrator(
       eventStream,
-      undefined, // no tool system needed for eval
+      { registry: toolRegistry as unknown as ToolRegistryInterface, executor: toolExecutor as unknown as ToolExecutorInterface },
       this.workspaceRoot,
     );
 
@@ -69,14 +43,17 @@ export class RealTrajectoryRecorder {
     eventStream.subscribe('*', (event) => events.push(event));
 
     const startTime = Date.now();
-    const result = await orchestrator.execute({
-      task: task.description,
-      mode,
-      providers: {
-        writer: adaptProvider(this.providers.writer),
-        reviewer: adaptProvider(this.providers.reviewer),
-      },
-    });
+    let result: OrchestratorResult;
+    try {
+      result = await orchestrator.execute({
+        task: task.description,
+        mode,
+        providers: {
+          writer: adaptProvider(this.providers.writer),
+          reviewer: adaptProvider(this.providers.reviewer),
+        },
+      });
+    } finally { orchestrator.dispose(); }
     const duration = Date.now() - startTime;
 
     return this.buildTrajectory(task, mode, events, result, duration);
@@ -95,6 +72,7 @@ export class RealTrajectoryRecorder {
       const step = this.eventToStep(event);
       if (step) steps.push(step);
     }
+    steps.push({ timestamp: Date.now(), type: 'check', output: { pass: result.status === 'done', verification: result.verification }, ...(result.status !== 'done' ? { error: `Run ended ${result.status}` } : {}) });
 
     // Calculate total tokens from events
     const totalTokens = this.calculateTokens(events);
@@ -280,17 +258,11 @@ export function buildSyntheticTrajectory(task: TaskSpec, mode: Mode): Trajectory
       duration: 50,
     },
   ];
-  if (task.expectedFiles && task.expectedFiles.length > 0) {
-    steps.push({
-      timestamp: now + 2,
-      type: 'patch',
-      output: { filesChanged: task.expectedFiles },
-    });
-  }
   steps.push({
     timestamp: now + 3,
     type: 'check',
-    output: { pass: true },
+    output: { pass: false, reason: 'Synthetic trajectory: no task or checks executed' },
+    error: 'Synthetic trajectory: no task or checks executed',
   });
   steps.push({
     timestamp: now + 4,
@@ -326,6 +298,9 @@ export async function runEval(
 ): Promise<EvalReport> {
   const spec = loadTaskSpec(taskRef, options.fixturesDir);
   let trajectory: Trajectory;
+  if (options.real && (!options.providers || Object.values(options.providers).some(provider => provider.getModel().provider === 'mock'))) {
+    throw new Error('Real evaluation requires actual model providers; offline mock/synthetic runs are not live evidence');
+  }
 
   if (options.real && options.providers) {
     // Real orchestrator run

@@ -3,11 +3,12 @@ import { spawn, type ChildProcessWithoutNullStreams } from 'child_process';
 import { createMessageConnection, type MessageConnection, type Disposable } from 'vscode-jsonrpc/node';
 import { StreamMessageReader, StreamMessageWriter } from 'vscode-jsonrpc/node';
 import type { LspServerConfig } from './types.js';
+import { captureLspProcessTree, terminateWindowsProcessTree } from './windows-process-tree.js';
 
 export interface LspConnection extends Disposable {
   listen(): void;
   sendRequest<T>(method: string, params?: unknown): Promise<T>;
-  sendNotification(method: string, params?: unknown): void;
+  sendNotification(method: string, params?: unknown): void | Promise<void>;
   onNotification(method: string, handler: (params: unknown) => void): Disposable;
 }
 
@@ -15,6 +16,7 @@ export interface LspConnectionOptions {
   workspaceRoot: string;
   config: LspServerConfig;
   connectionFactory?: (child: ChildProcessWithoutNullStreams, config: LspServerConfig) => Promise<LspConnection>;
+  requestTimeoutMs?: number;
 }
 
 export class JsonRpcLspConnection implements LspConnection {
@@ -32,8 +34,8 @@ export class JsonRpcLspConnection implements LspConnection {
     return this.connection.sendRequest(method, params) as Promise<T>;
   }
 
-  sendNotification(method: string, params?: unknown): void {
-    this.connection.sendNotification(method, params);
+  sendNotification(method: string, params?: unknown): Promise<void> {
+    return this.connection.sendNotification(method, params);
   }
 
   onNotification(method: string, handler: (params: unknown) => void): Disposable {
@@ -58,19 +60,127 @@ export async function createJsonRpcConnection(
 export async function startLspConnection(
   options: LspConnectionOptions,
 ): Promise<{ child: ChildProcessWithoutNullStreams; connection: LspConnection }> {
-  const isWindows = process.platform === 'win32';
-  const child = spawn(options.config.command, options.config.args ?? [], {
+  const spawnOptions = {
     cwd: options.config.cwd ? resolveCwd(options.config.cwd, options.workspaceRoot) : options.workspaceRoot,
     env: { ...process.env, ...(options.config.env ?? {}) },
-    stdio: ['pipe', 'pipe', 'pipe'],
     windowsHide: true,
-    shell: isWindows,
-  });
+    shell: false,
+  };
+  let child: ChildProcessWithoutNullStreams;
+  if (process.platform === 'win32' && /\.(cmd|bat)$/i.test(options.config.command)) {
+    const { execa } = await import('execa');
+    const batch = execa(options.config.command, options.config.args ?? [], {
+      ...spawnOptions, stdin: 'pipe', stdout: 'pipe', stderr: 'pipe', buffer: false, reject: false,
+    });
+    void batch.catch(() => {});
+    child = batch as ChildProcessWithoutNullStreams;
+  } else {
+    child = spawn(options.config.command, options.config.args ?? [], {
+      ...spawnOptions, stdio: ['pipe', 'pipe', 'pipe'],
+    });
+  }
+  child.on('error', () => {});
 
+  // Establish listen/error/exit handling BEFORE initialization.
+  // Spawn failures must settle (reject) instead of hanging or
+  // surfacing as unhandled 'error' events. No request/notification
+  // is sent here — the caller sends `initialize` (protocol-required)
+  // only after `listen()` has been called.
+  let onSpawnError: ((err: Error) => void) | undefined;
+  let onEarlyExit: ((code: number | null) => void) | undefined;
+  const spawnSettled = new Promise<never>((_, reject) => {
+    onSpawnError = (err: Error) => reject(err);
+    onEarlyExit = () => reject(new Error(`LSP server exited before connection established`));
+    child.once('error', onSpawnError);
+    child.once('exit', onEarlyExit);
+  });
+  // Avoid unhandled rejection when the factory wins the race and the
+  // child later emits an unrelated error/exit.
+  spawnSettled.catch(() => {});
+
+  const timeoutMs = options.requestTimeoutMs ?? 10_000;
+  let failed = false;
+  let connection: LspConnection | undefined;
   const factory = options.connectionFactory ?? createJsonRpcConnection;
-  const connection = await factory(child, options.config);
-  connection.listen();
-  return { child, connection };
+  let factorySettled = false;
+  let lateConnection: LspConnection | undefined;
+  const pending = Promise.resolve().then(() => factory(child, options.config));
+  void pending.then(acquired => {
+    factorySettled = true;
+    lateConnection = acquired;
+    if (failed) {
+      try { acquired.dispose(); lateConnection = undefined; }
+      catch { /* Retained by the startup error's cleanup callback. */ }
+    }
+  }, () => { factorySettled = true; });
+  const cleanupLateConnection = async (): Promise<void> => {
+    await withDeadline(pending.catch(() => undefined), timeoutMs, 'late connection cleanup');
+    if (lateConnection) { lateConnection.dispose(); lateConnection = undefined; }
+  };
+  try {
+    connection = await withDeadline(Promise.race([pending, spawnSettled]), 10_000, 'connection');
+    lateConnection = undefined;
+    const acquired = connection;
+    connection = {
+      listen: () => acquired.listen(),
+      sendRequest: <T>(method: string, params?: unknown) => withDeadline(acquired.sendRequest<T>(method, params), timeoutMs, method),
+      sendNotification: (method, params) => withDeadline(Promise.resolve().then(() => acquired.sendNotification(method, params)), timeoutMs, method),
+      onNotification: (method, handler) => acquired.onNotification(method, handler),
+      dispose: () => acquired.dispose(),
+    };
+    if (onSpawnError) child.removeListener('error', onSpawnError);
+    if (onEarlyExit) child.removeListener('exit', onEarlyExit);
+    connection.listen();
+    return { child, connection };
+  } catch (err) {
+    failed = true;
+    const lateCleanup = !connection && (!factorySettled || lateConnection) ? { cleanup: cleanupLateConnection } : {};
+    if (onSpawnError) child.removeListener('error', onSpawnError);
+    if (onEarlyExit) child.removeListener('exit', onEarlyExit);
+    const failures: unknown[] = [err];
+    let retainedConnection: LspConnection | undefined;
+    try { await captureLspProcessTree(child); }
+    catch (error) { failures.push(error); }
+    try { connection?.dispose(); }
+    catch (error) { failures.push(error); retainedConnection = connection; }
+    try {
+      await terminateLspProcess(child);
+    } catch (error) {
+      throw Object.assign(new AggregateError([...failures, error], 'LSP startup cleanup failed'), { ...lateCleanup, child, connection: retainedConnection });
+    }
+    if (failures.length > 1) throw Object.assign(new AggregateError(failures, 'LSP startup cleanup failed'), { ...lateCleanup, connection: retainedConnection });
+    if ('cleanup' in lateCleanup) throw Object.assign(err instanceof Error ? err : new Error(String(err)), lateCleanup);
+    throw err;
+  }
+}
+
+async function withDeadline<T>(request: Promise<T>, timeoutMs: number, method: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout>;
+  const deadline = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`LSP ${method} timed out`)), timeoutMs);
+  });
+  try { return await Promise.race([request, deadline]); }
+  finally { clearTimeout(timer!); }
+}
+
+export async function terminateLspProcess(child: ChildProcessWithoutNullStreams): Promise<void> {
+  if (!child.pid) return;
+  if (process.platform === 'win32' && child.spawnfile) {
+    await terminateWindowsProcessTree(child);
+    return;
+  }
+  if (child.exitCode !== null || child.signalCode !== null) return;
+  const exited = (): Promise<boolean> => new Promise(resolve => {
+    const finish = (value: boolean) => { clearTimeout(timer); child.removeListener('exit', onExit); resolve(value); };
+    const onExit = () => finish(true);
+    const timer = setTimeout(() => finish(false), 500);
+    child.once('exit', onExit);
+    if (child.exitCode !== null || child.signalCode !== null) finish(true);
+  });
+  child.kill();
+  if (await exited()) return;
+  child.kill('SIGKILL');
+  if (!await exited()) throw new Error(`LSP child ${child.pid} did not exit`);
 }
 
 function resolveCwd(cwd: string, workspaceRoot: string): string {

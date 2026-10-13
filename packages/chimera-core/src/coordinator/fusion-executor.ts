@@ -83,6 +83,8 @@ interface FusionExecutorDeps {
   toolExecutor?: ToolExecutorInterface;
   toolRegistry?: ToolRegistryInterface;
   workspaceRoot?: string;
+  /** Per-run abort signal, forwarded to the writer's tool loop. */
+  signal?: AbortSignal;
 }
 
 function expectedPathFromTask(task: string): string | undefined {
@@ -101,6 +103,7 @@ export class FusionExecutor {
   private toolExecutor: ToolExecutorInterface | undefined;
   private toolRegistry: ToolRegistryInterface | undefined;
   private workspaceRoot: string | undefined;
+  private signal: AbortSignal | undefined;
 
   constructor(deps: FusionExecutorDeps) {
     this.eventStream = deps.eventStream;
@@ -109,6 +112,7 @@ export class FusionExecutor {
     this.toolExecutor = deps.toolExecutor;
     this.toolRegistry = deps.toolRegistry;
     this.workspaceRoot = deps.workspaceRoot;
+    this.signal = deps.signal;
   }
 
   async execute(
@@ -233,6 +237,7 @@ export class FusionExecutor {
               task,
               toolDefs,
               sanitize: sanitizeWriterOutput,
+              signal: this.signal,
             });
             content = loop.content || res.content;
             extraInput = (res.usage?.inputTokens ?? 0) + loop.inputTokens;

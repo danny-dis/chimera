@@ -6,13 +6,16 @@ export { AgentMesh } from './agent-mesh.js';
 export { TaskRouter } from './task-router.js';
 export { CostTracker } from './cost-tracker.js';
 export { SessionOrchestrator } from './session-orchestrator.js';
+export { adaptProvider } from './provider-adapter.js';
+export { withAbort } from './utils/abort.js';
+export { parseGoalInput } from './workflow/goal-input.js';
 export { ResponseSynthesizer } from './response-synthesizer.js';
 export { AGENT_PROMPTS, MODE_INSTRUCTIONS, RECOVERY_PROMPTS, buildMessages, buildWorkflowGeneratorPrompt, COMPACT_CORE_IDENTITY, SMALL_MODEL_GUIDANCE, TOOL_USE_GUIDANCE, compactAgentPrompt } from './prompts.js';
 export { bootstrap } from './bootstrap.js';
 export type { BootstrapResult } from './bootstrap.js';
 
 // Memory
-export { LongTermMemory, VectorStore, LocalEmbeddingProvider, AgentMemory, MemoryPersistence } from './memory/index.js';
+export { LongTermMemory, VectorStore, LocalEmbeddingProvider, AgentMemory, MemoryPersistence, createRuntimeMemory } from './memory/index.js';
 export type { LongTermMemoryConfig, MemoryPersistenceConfig } from './memory/index.js';
 export type { MemoryItem, MemoryMetadata, MemoryQuery, MemoryResult, EmbeddingProvider } from './memory/index.js';
 export type { AgentMemoryItem, AgentMemoryType, AgentMemoryQuery, AgentMemorySnapshot } from './memory/index.js';
@@ -104,6 +107,22 @@ export type { SideQueryProvider, SideQueryOptions, SideQueryResult, SideQueryCha
 // Output styles
 export { loadOutputStyles, getOutputStyle, buildStylePrompt } from './output-styles/index.js';
 export type { OutputStyle } from './output-styles/index.js';
+
+// Durable execution (Phase 13)
+export { DurableExecution } from './services/durable-execution.js';
+export type { DurableExecutionOptions, ExecutionContext } from './services/durable-execution.js';
+export { DurableEventLog } from './services/durable-event-log.js';
+export type { DurableEvent, DurableEventLogOptions } from './services/durable-event-log.js';
+export { RetryPolicy, RetryableErrors } from './services/retry-policy.js';
+export type { RetryPolicyOptions, RetryAttempt } from './services/retry-policy.js';
+export { LeaseManager } from './services/lease-manager.js';
+export type { Lease, LeaseManagerOptions } from './services/lease-manager.js';
+export { IdempotentExecutor } from './services/idempotent-executor.js';
+export type { IdempotentExecutorOptions } from './services/idempotent-executor.js';
+export { RecoveryManager } from './services/recovery-manager.js';
+export type { StaleRun, RecoveryResult, RecoveryManagerOptions } from './services/recovery-manager.js';
+export { DurableSessionState } from './services/durable-session-state.js';
+export type { SessionSnapshot, RunSnapshot, DurableSessionStateOptions } from './services/durable-session-state.js';
 
 // Types
 export type { PromptTemplate, OutputSchema, BuildMessagesParams } from './prompts.js';

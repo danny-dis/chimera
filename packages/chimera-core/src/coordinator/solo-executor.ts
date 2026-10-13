@@ -59,6 +59,8 @@ interface SoloExecutorDeps {
   toolExecutor?: ToolExecutorInterface;
   /** Optional tool registry — supplies tool definitions to the LLM. */
   toolRegistry?: ToolRegistryInterface;
+  /** Per-run abort signal, forwarded to the writer's tool loop. */
+  signal?: AbortSignal;
 }
 
 /**
@@ -90,6 +92,7 @@ export class SoloExecutor {
   private workspaceRoot?: string;
   private toolExecutor?: ToolExecutorInterface;
   private toolRegistry?: ToolRegistryInterface;
+  private signal?: AbortSignal;
 
   constructor(deps: SoloExecutorDeps) {
     this.eventStream = deps.eventStream;
@@ -98,6 +101,7 @@ export class SoloExecutor {
     this.workspaceRoot = deps.workspaceRoot;
     this.toolExecutor = deps.toolExecutor;
     this.toolRegistry = deps.toolRegistry;
+    this.signal = deps.signal;
   }
 
   /**
@@ -225,6 +229,7 @@ export class SoloExecutor {
         systemPrompt: config.systemPrompt,
         toolDefs: this.toolRegistry ? this.listToolDefs() : undefined,
         sanitize: sanitizeWriterOutput,
+        signal: this.signal,
       });
       round = loop.round;
       wroteFileCount += loop.wroteFileCount;

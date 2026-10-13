@@ -40,8 +40,9 @@ export function taskWantsFiles(task: string): boolean {
   return false;
 }
 
-import { existsSync, statSync } from 'fs';
+import { existsSync, statSync, readFileSync } from 'fs';
 import { isAbsolute, resolve } from 'path';
+import { createHash } from 'crypto';
 
 /**
  * Ground-truth check: did the task's expected output file actually land on
@@ -65,13 +66,14 @@ export function fileLandedOnDisk(task: string, workspaceRoot: string): boolean {
  * leave the pre-existing file in place (which `fileLandedOnDisk` falsely
  * reports as "landed").
  */
-export function snapshotTarget(task: string, workspaceRoot: string): { mtime: number; size: number } | null {
+export function snapshotTarget(task: string, workspaceRoot: string): { mtime: number; size: number; contentHash: string | null } | null {
   const rel = expectedPathFromTask(task);
   if (!rel) return null;
   const abs = isAbsolute(rel) ? rel : resolve(workspaceRoot, rel);
   try {
     const s = statSync(abs);
-    return { mtime: s.mtimeMs, size: s.size };
+    const hash = contentHash(abs);
+    return { mtime: s.mtimeMs, size: s.size, contentHash: hash };
   } catch {
     return null;
   }
@@ -85,9 +87,18 @@ export function snapshotTarget(task: string, workspaceRoot: string): { mtime: nu
  * new-file and edit tasks — unlike `fileLandedOnDisk`, which is always true
  * for an edit of a pre-existing file and thus yields a false `done`.
  */
-export function targetChanged(task: string, workspaceRoot: string, before: { mtime: number; size: number } | null): boolean {
+function contentHash(filepath: string): string | null {
+  try {
+    return createHash('sha256').update(readFileSync(filepath)).digest('hex');
+  } catch {
+    return null;
+  }
+}
+
+export function targetChanged(task: string, workspaceRoot: string, before: { mtime: number; size: number; contentHash: string | null } | null): boolean {
   const after = snapshotTarget(task, workspaceRoot);
   if (before === null) return after !== null;
   if (after === null) return false;
+  if (before.contentHash && after.contentHash) return before.contentHash !== after.contentHash;
   return before.mtime !== after.mtime || before.size !== after.size;
 }

@@ -1,21 +1,22 @@
-import { glob } from 'fast-glob';
-import { readFile } from 'node:fs/promises';
+import { readFile, readdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { workflowDefinitionSchema } from './schemas/workflow.js';
 import { createLogger } from '@chimera/paths';
 
 const log = createLogger('workflows.discovery');
 
-const MAX_DISCOVERY_DEPTH = 1;
 
 export async function discoverWorkflows(projectRoot: string): Promise<Record<string, unknown>> {
   const workflows: Record<string, unknown> = {};
   
-  // Search for .yaml or .yml files in examples/workflows/
-  const workflowFiles = await glob('examples/workflows/*.{yaml,yml}', {
-    cwd: projectRoot,
-    deep: MAX_DISCOVERY_DEPTH,
-  });
+  let entries;
+  try { entries = await readdir(join(projectRoot, 'examples/workflows'), { withFileTypes: true }); }
+  catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return workflows;
+    throw error;
+  }
+  const workflowFiles = entries.filter(entry => entry.isFile() && !entry.name.startsWith('.') && /\.(yaml|yml)$/.test(entry.name))
+    .map(entry => `examples/workflows/${entry.name}`).sort();
 
   for (const file of workflowFiles) {
     try {

@@ -9,16 +9,36 @@ const PathRestrictionConfigSchema = z.object({
 
 export class PathRestrictionEngine {
   private resolvedWorkspace: string;
+  private originalWorkspace: string;
   private allowedPatterns: RegExp[];
+  // Fail closed: when the workspace root itself cannot be canonicalized we
+  // cannot trust any path under it, so every containment check is a violation.
+  private workspaceUnresolvable = false;
 
   constructor(workspaceRoot: string, allowedPatterns?: string[]) {
     PathRestrictionConfigSchema.parse({ workspaceRoot, allowedPatterns });
-    this.resolvedWorkspace = path.resolve(workspaceRoot);
+    const resolved = path.resolve(workspaceRoot);
+    this.originalWorkspace = resolved;
+    try {
+      this.resolvedWorkspace = fs.realpathSync(resolved);
+    } catch (err: unknown) {
+      // ENOENT (a not-yet-created target) is legitimate — the lexical root is
+      // still a safe containment anchor. Any other failure (EACCES, EPERM,
+      // ELOOP, …) means we cannot verify the root, so refuse all paths.
+      const code = (err as NodeJS.ErrnoException)?.code;
+      this.resolvedWorkspace = resolved;
+      this.workspaceUnresolvable = code !== 'ENOENT';
+    }
     this.allowedPatterns = (allowedPatterns ?? []).map((p) => new RegExp(p));
   }
 
   isPathAllowed(inputPath: string): boolean {
     return this.getViolation(inputPath) === null;
+  }
+
+  /** Canonical (realpath) workspace root; the lexical root when unresolvable. */
+  getCanonicalRoot(): string {
+    return this.resolvedWorkspace;
   }
 
   resolvePath(inputPath: string): string {
@@ -29,6 +49,10 @@ export class PathRestrictionEngine {
   }
 
   getViolation(inputPath: string): string | null {
+    if (this.workspaceUnresolvable) {
+      return 'Workspace root could not be canonicalized';
+    }
+
     if (this.containsTraversal(inputPath)) {
       return 'Path traversal detected (../ sequences)';
     }
@@ -81,14 +105,61 @@ export class PathRestrictionEngine {
   }
 
   private isSymlinkEscaping(resolvedPath: string): boolean {
+    const workspace = this.resolvedWorkspace;
+    let target = resolvedPath;
+
+    let realPath: string;
     try {
-      if (!fs.existsSync(resolvedPath)) {
-        return false;
+      realPath = fs.realpathSync(target);
+    } catch (err: unknown) {
+      const code = (err as NodeJS.ErrnoException).code;
+      if (code !== 'ENOENT') {
+        return true;
       }
-      const realPath = fs.realpathSync(resolvedPath);
-      return !this.isWithinWorkspace(realPath);
-    } catch {
+      let parent = path.dirname(target);
+      while (parent !== target) {
+        if (target === workspace) {
+          // We reached the workspace boundary itself: a missing root (or a
+          // missing leaf directly under it) is still a safe containment
+          // anchor — legitimate not-yet-created paths stay allowed.
+          return false;
+        }
+        // Attempt canonical resolution of each ancestor (INCLUDING the
+        // workspace boundary itself) before declaring the missing leaf safe.
+        // Previously the walk short-circuited to `false` at `parent ===
+        // workspace` without ever resolving it, so a root that became
+        // unresolvable (EACCES) after construction silently bypassed the
+        // check.
+        try {
+          realPath = fs.realpathSync(parent);
+        } catch (parentErr: unknown) {
+          const parentCode = (parentErr as NodeJS.ErrnoException).code;
+          if (parentCode !== 'ENOENT') {
+            // Cannot verify containment (EACCES/EPERM/ELOOP) — fail closed.
+            return true;
+          }
+          if (parent === workspace) {
+            // The boundary itself does not exist yet: a legitimate
+            // not-yet-created root is still a safe containment anchor.
+            return false;
+          }
+          target = parent;
+          parent = path.dirname(parent);
+          continue;
+        }
+        // Ancestor exists and canonicalized. A missing leaf under an ancestor
+        // that resolves inside the workspace stays inside; otherwise it escapes.
+        return !this.isWithinWorkspace(realPath);
+      }
+      return !this.isWithinWorkspace(target);
+    }
+
+    if (realPath === workspace) {
       return false;
     }
+    if (!this.isWithinWorkspace(target)) {
+      return false;
+    }
+    return !this.isWithinWorkspace(realPath);
   }
 }

@@ -14,6 +14,7 @@ import { TaskRouter } from '../task-router.js';
 import { runAgentToolLoop } from './tool-execution-helper.js';
 import { executeProseActions } from './file-write-fallback.js';
 import { taskWantsFiles, snapshotTarget, targetChanged } from './path-from-task.js';
+import { parseReviewVerdict } from './review-verdict.js';
 import type { Mode, ToolCall } from '../types/agent.js';
 import type { OutputStyle } from '../output-styles/index.js';
 import type {
@@ -63,6 +64,8 @@ interface TrioExecutorDeps {
    * create a dependency cycle (learning value-imports core).
    */
   style?: OutputStyle;
+  /** Per-run abort signal, forwarded to the writer's tool loop. */
+  signal?: AbortSignal;
 }
 
 /**
@@ -97,6 +100,7 @@ export class TrioExecutor {
   private toolExecutor?: ToolExecutorInterface;
   private toolRegistry?: ToolRegistryInterface;
   private style?: OutputStyle;
+  private signal?: AbortSignal;
   private errorRecovery: ErrorRecovery;
 
   constructor(deps: TrioExecutorDeps) {
@@ -108,6 +112,7 @@ export class TrioExecutor {
     this.toolExecutor = deps.toolExecutor;
     this.toolRegistry = deps.toolRegistry;
     this.style = deps.style;
+    this.signal = deps.signal;
     this.errorRecovery = new ErrorRecovery({ eventStream: this.eventStream });
   }
 
@@ -230,6 +235,7 @@ export class TrioExecutor {
           systemPrompt: CHIMERA_CORE_IDENTITY,
           toolDefs: toolDefs,
           sanitize: sanitizeWriterOutput,
+          signal: this.signal,
         });
         if (loop.round > 0) {
           draftContent = sanitizeWriterOutput(loop.content);
@@ -322,6 +328,7 @@ export class TrioExecutor {
         );
         const inputTokens = result.usage?.inputTokens ?? 0;
         const outputTokens = result.usage?.outputTokens ?? 0;
+        const parsed = this.parseReviewer(result.content);
         return {
           modelId: config.reviewer,
           role: 'reviewer',
@@ -329,7 +336,8 @@ export class TrioExecutor {
           inputTokens,
           outputTokens,
           durationMs: Date.now() - start,
-          issues: this.tryExtractIssues(result.content),
+          issues: parsed.issues,
+          verdict: parsed.verdict,
         };
       };
 
@@ -375,7 +383,7 @@ export class TrioExecutor {
         totalCostUsd += cost;
         this.recordSpend(config.reviewer, cost);
         stages.push(reviewStage);
-        this.safeEmit({ type: 'verified', agentId: config.reviewer, verdict: reviewStage.issues && reviewStage.issues.length > 0 ? 'needs_revision' : 'pass', findings: (reviewStage.issues ?? []).map((i) => ({ description: i.description, severity: i.severity as 'high' | 'med' | 'low', evidence: i.evidence })) });
+        this.safeEmit({ type: 'verified', agentId: config.reviewer, verdict: reviewStage.verdict === 'PASS' ? 'pass' : reviewStage.verdict === 'FAIL' ? 'fail' : 'needs_revision', findings: (reviewStage.issues ?? []).map((i) => ({ description: i.description, severity: i.severity as 'high' | 'med' | 'low', evidence: i.evidence })) });
       }
 
       // Extract challenge result — optional, graceful degradation
@@ -420,7 +428,7 @@ export class TrioExecutor {
           ), { maxRetries: 2, baseDelayMs: 3000, maxDelayMs: 20000 });
           const inputTokens = reviewResult.usage?.inputTokens ?? 0;
           const outputTokens = reviewResult.usage?.outputTokens ?? 0;
-          const issues = this.tryExtractIssues(reviewResult.content);
+          const parsed = this.parseReviewer(reviewResult.content);
           reviewStage = {
             modelId: config.reviewer,
             role: 'reviewer',
@@ -428,7 +436,8 @@ export class TrioExecutor {
             inputTokens,
             outputTokens,
             durationMs: Date.now() - reviewStart,
-            issues,
+            issues: parsed.issues,
+            verdict: parsed.verdict,
           };
           totalTokens += inputTokens + outputTokens;
           const cost = this.computeCost(config.reviewer, inputTokens, outputTokens);
@@ -438,7 +447,7 @@ export class TrioExecutor {
           return this.degraded(`review stage failed: ${String(err)}`, totalTokens, totalCostUsd, startTime, false, stages, worktreePath);
         }
         stages.push(reviewStage);
-        this.safeEmit({ type: 'verified', agentId: config.reviewer, verdict: reviewStage.issues && reviewStage.issues.length > 0 ? 'needs_revision' : 'pass', findings: (reviewStage.issues ?? []).map((i) => ({ description: i.description, severity: i.severity as 'high' | 'med' | 'low', evidence: i.evidence })) });
+        this.safeEmit({ type: 'verified', agentId: config.reviewer, verdict: reviewStage.verdict === 'PASS' ? 'pass' : reviewStage.verdict === 'FAIL' ? 'fail' : 'needs_revision', findings: (reviewStage.issues ?? []).map((i) => ({ description: i.description, severity: i.severity as 'high' | 'med' | 'low', evidence: i.evidence })) });
 
         if (this.isOverBudget(config, totalCostUsd)) {
           return this.degraded(
@@ -488,12 +497,21 @@ export class TrioExecutor {
       }
     }
 
+    // ── Non-PASS verdict escalation (before synthesis) ───────────────
+    // A reviewer verdict of FAIL or NEEDS_REVISION must escalate to the user
+    // regardless of what the synthesizer produces. This prevents a non-PASS
+    // review from being silently overridden by a confident synthesis.
+    let needsUserEscalation = false;
+    let escalationReason: string | undefined;
+    if (reviewStage && reviewStage.verdict && reviewStage.verdict !== 'PASS') {
+      needsUserEscalation = true;
+      escalationReason = `reviewer verdict: ${reviewStage.verdict}`;
+    }
+
     // ── Stage 4: Synthesize ───────────────────────────────────────────
     const synthesisStart = Date.now();
     let analysis: Partial<TrioAnalysis>;
     let finalResponse: string;
-    let needsUserEscalation = false;
-    let escalationReason: string | undefined;
 
     if (config.synthesizer) {
       // LLM synthesizer with failover chain
@@ -901,6 +919,19 @@ export class TrioExecutor {
       // not JSON
     }
     return undefined;
+  }
+
+  /**
+   * Strictly parse a reviewer response into a validated verdict + findings.
+   * Reuses the shared fail-closed parser so a malformed/absent verdict maps to
+   * NEEDS_REVISION (never an inferred pass from "no issues found").
+   */
+  private parseReviewer(content: string): {
+    verdict: 'PASS' | 'FAIL' | 'NEEDS_REVISION';
+    issues: Array<{ description: string; severity: string; evidence: string }>;
+  } {
+    const parsed = parseReviewVerdict(content);
+    return { verdict: parsed.verdict, issues: parsed.findings };
   }
 
   private tryExtractChallenges(content: string): string[] | undefined {

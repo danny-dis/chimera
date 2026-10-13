@@ -1,4 +1,4 @@
-export { ChimeraLspService, formatLspOperationResult, type LspServiceOptions } from './lsp-service.js';
+export { ChimeraLspService, formatLspOperationResult, assertWorkspaceContainment, type LspServiceOptions } from './lsp-service.js';
 export { loadLspConfig, mergeLspConfig, DEFAULT_LSP_CONFIG, LspConfigSchema, LspServerConfigSchema } from './config.js';
 export type { LspServerStatus, LspServerConfig, LspWorkspaceConfig, LspLocation, LspDiagnostic, LspHover, LspDocumentSymbol, LspWorkspaceSymbol, LspOperationResult, LspService } from './types.js';
 export { startLspConnection, createJsonRpcConnection, type LspConnection, type LspConnectionOptions } from './connection.js';
