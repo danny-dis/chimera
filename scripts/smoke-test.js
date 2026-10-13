@@ -170,11 +170,7 @@ for (const mode of modes) {
       const stderr = err.stderr || '';
       const stdout = err.stdout || '';
 
-      // Mock provider fallback is acceptable for CI without keys
-      if (stdout.includes('MockProvider') || stdout.includes('offline') || stdout.includes('No API keys')) {
-        results.passed++;
-        console.log(`  ✓ ${mode}/${preset} — OK (mock fallback)`);
-      } else if (stderr.includes('ENOTFOUND') || stderr.includes('ECONNREFUSED')) {
+      if (stderr.includes('ENOTFOUND') || stderr.includes('ECONNREFUSED')) {
         results.skipped++;
         console.log(`  ⊘ ${mode}/${preset} — skipped (network unavailable)`);
       } else if (err.code === 'ETIMEDOUT' || err.signal === 'SIGTERM') {
