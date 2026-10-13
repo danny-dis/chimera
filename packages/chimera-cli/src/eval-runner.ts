@@ -94,7 +94,7 @@ export class RealTrajectoryRecorder {
 
     return {
       taskId: task.id,
-      config: { mode, real: true, tokensMeasured: false },
+      config: { mode, real: true, synthetic: false, tokensMeasured: false },
       steps,
       finalOutput: result.output,
       totalCost: result.cost,
@@ -262,16 +262,7 @@ export function buildSyntheticTrajectory(task: TaskSpec, mode: Mode): Trajectory
       type: 'user_request',
       input: { task: task.description, mode },
     },
-    {
-      timestamp: now + 1,
-      type: 'agent_call',
-      role: 'writer',
-      model: 'eval-synthetic',
-      output: { thought: 'Eval-trajectory stub', response: task.description },
-      tokens: { input: 100, output: 50 },
-      cost: 0.0001,
-      duration: 50,
-    },
+
   ];
   steps.push({
     timestamp: now + 3,
@@ -282,16 +273,16 @@ export function buildSyntheticTrajectory(task: TaskSpec, mode: Mode): Trajectory
   steps.push({
     timestamp: now + 4,
     type: 'response',
-    output: task.description,
+    output: `[SYNTHETIC] ${task.description}`,
   });
   return {
     taskId: task.id,
-    config: { mode },
+    config: { mode, real: false, synthetic: true, tokensMeasured: false },
     steps,
-    finalOutput: task.description,
-    totalCost: 0.0001,
-    totalTokens: { input: 100, output: 50 },
-    duration: 100,
+    finalOutput: `[SYNTHETIC] ${task.description}`,
+    totalCost: 0,
+    totalTokens: { input: 0, output: 0 },
+    duration: 0,
   };
 }
 
