@@ -85,9 +85,12 @@ export class DurableSessionState {
    * Save a snapshot to disk.
    */
   saveSnapshot(state: SessionSnapshot): void {
+    // ponytail: scan snapshots per save; cache the high-water mark if snapshot volume grows.
+    const previous = this.loadLatestSnapshot()?.savedAt;
+    const next = typeof previous === 'number' && Number.isSafeInteger(previous) && previous >= 0 && previous < Number.MAX_SAFE_INTEGER ? previous + 1 : 0;
     const snapshot: SessionSnapshot = {
       ...state,
-      savedAt: Date.now(),
+      savedAt: Math.max(Date.now(), next),
     };
     const file = this.getSnapshotFile(snapshot.id);
     writeFileSync(file, JSON.stringify(snapshot, null, 2), 'utf-8');
