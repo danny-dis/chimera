@@ -27,11 +27,16 @@ export class RealTrajectoryRecorder {
   constructor(
     private providers: { writer: ModelProvider; reviewer: ModelProvider },
     private workspaceRoot: string,
+    private toolOptions: Parameters<typeof createToolContext>[1] = {},
   ) {}
 
   async record(task: TaskSpec, mode: Mode): Promise<Trajectory> {
+    for (const field of ['expectedFiles', 'verificationCommands', 'verificationOutputs'] as const) {
+      const values = task[field];
+      if (values !== undefined && (!Array.isArray(values) || values.some(value => typeof value !== 'string' || !value.trim()))) throw new Error(`${field} must be an array of nonempty strings`);
+    }
     const eventStream = new EventStream();
-    const { toolRegistry, toolExecutor } = createToolContext(mode);
+    const { toolRegistry, toolExecutor } = createToolContext(mode, this.toolOptions);
     const orchestrator = new SessionOrchestrator(
       eventStream,
       { registry: toolRegistry as unknown as ToolRegistryInterface, executor: toolExecutor as unknown as ToolExecutorInterface },
@@ -52,6 +57,9 @@ export class RealTrajectoryRecorder {
           writer: adaptProvider(this.providers.writer),
           reviewer: adaptProvider(this.providers.reviewer),
         },
+        verificationCommands: task.verificationCommands,
+        verificationOutputs: task.verificationOutputs,
+        costCap: task.maxCost,
       });
     } finally { orchestrator.dispose(); }
     const duration = Date.now() - startTime;
@@ -72,14 +80,21 @@ export class RealTrajectoryRecorder {
       const step = this.eventToStep(event);
       if (step) steps.push(step);
     }
-    steps.push({ timestamp: Date.now(), type: 'check', output: { pass: result.status === 'done', verification: result.verification }, ...(result.status !== 'done' ? { error: `Run ended ${result.status}` } : {}) });
+    const files = (task.expectedFiles ?? []).filter(file => {
+      try {
+        const target = path.resolve(this.workspaceRoot, file);
+        const within = path.relative(fs.realpathSync(this.workspaceRoot), fs.realpathSync(target));
+        return within !== '..' && !within.startsWith(`..${path.sep}`) && !path.isAbsolute(within) && fs.statSync(target).isFile();
+      } catch { return false; }
+    });
+    steps.push({ timestamp: Date.now(), type: 'check', output: { pass: result.status === 'done', verification: result.verification, files }, ...(result.status !== 'done' ? { error: `Run ended ${result.status}` } : {}) });
 
     // Calculate total tokens from events
     const totalTokens = this.calculateTokens(events);
 
     return {
       taskId: task.id,
-      config: { mode },
+      config: { mode, real: true, tokensMeasured: false },
       steps,
       finalOutput: result.output,
       totalCost: result.cost,
@@ -294,6 +309,7 @@ export async function runEval(
     real?: boolean;
     providers?: { writer: ModelProvider; reviewer: ModelProvider };
     workspaceRoot?: string;
+    toolOptions?: Parameters<typeof createToolContext>[1];
   },
 ): Promise<EvalReport> {
   const spec = loadTaskSpec(taskRef, options.fixturesDir);
@@ -307,6 +323,7 @@ export async function runEval(
     const recorder = new RealTrajectoryRecorder(
       options.providers,
       options.workspaceRoot ?? process.cwd(),
+      options.toolOptions,
     );
     trajectory = await recorder.record(spec, options.mode);
   } else {
@@ -340,8 +357,8 @@ export function formatEvalMarkdown(report: EvalReport): string {
   lines.push(`- Pass rate: ${(report.summary.passRate * 100).toFixed(1)}%`);
   lines.push(`- Avg cost: $${report.summary.avgCost.toFixed(4)}`);
   lines.push(`- Avg latency: ${Math.round(report.summary.avgLatency)} ms`);
-  lines.push(`- Avg quality: ${(report.summary.avgQuality * 100).toFixed(1)}%`);
-  lines.push(`- Cost savings vs frontier: ${report.summary.costSavingsVsFrontier}%`);
+  lines.push(`- Avg quality (heuristic unless judged): ${(report.summary.avgQuality * 100).toFixed(1)}%`);
+  lines.push(`- Cost savings vs frontier: ${report.summary.costSavingsVsFrontier === null ? 'unavailable (no measured baseline)' : `${report.summary.costSavingsVsFrontier}%`}`);
   lines.push('');
   lines.push(`## Per-task results`);
   lines.push('');

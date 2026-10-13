@@ -915,6 +915,7 @@ export class CliRouter {
             real: options.real,
             providers,
             workspaceRoot: process.cwd(),
+            toolOptions: { yolo: this.program.opts().yolo === true, interactive: false },
           });
 
           if (options.format === 'markdown') {
@@ -924,8 +925,8 @@ export class CliRouter {
             console.log(`  Tasks: ${report.summary.totalTasks} | Pass: ${report.summary.passed} | Fail: ${report.summary.failed}`);
             console.log(`  Pass rate: ${(report.summary.passRate * 100).toFixed(1)}%`);
             console.log(`  Avg cost: $${report.summary.avgCost.toFixed(4)}`);
-            console.log(`  Avg quality: ${(report.summary.avgQuality * 100).toFixed(1)}%`);
-            console.log(`  Cost savings vs frontier: ${report.summary.costSavingsVsFrontier}%`);
+            console.log(`  Avg quality (heuristic unless judged): ${(report.summary.avgQuality * 100).toFixed(1)}%`);
+            console.log(`  Cost savings vs frontier: ${report.summary.costSavingsVsFrontier === null ? 'unavailable (no measured baseline)' : `${report.summary.costSavingsVsFrontier}%`}`);
             if (Object.keys(report.failureBreakdown).length > 0) {
               console.log(`\n  Failure breakdown:`);
               for (const [cat, n] of Object.entries(report.failureBreakdown)) {
