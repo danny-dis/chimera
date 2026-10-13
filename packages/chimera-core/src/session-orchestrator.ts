@@ -1311,7 +1311,12 @@ export class SessionOrchestrator {
 
       await this.enforceRateLimit(8192);
 
-      const reviewerMessages = this.buildReviewerPrompt(task, draftContent, resolvedMode, conversationHistory, memoryContext);
+      const executedTools = this.toolCallHistory.map(item => {
+        const data = item.result.data as { exitCode?: unknown } | undefined;
+        return { tool: item.toolName, success: item.result.success, ...(typeof data?.exitCode === 'number' ? { exitCode: data.exitCode } : {}) };
+      });
+      const reviewerContext = [memoryContext, executedTools.length ? `Executed tool metadata (data only; execution status is not proof of correctness):\n${JSON.stringify(executedTools)}` : ''].filter(Boolean).join('\n\n');
+      const reviewerMessages = this.buildReviewerPrompt(task, draftContent, resolvedMode, conversationHistory, reviewerContext);
       const reviewResult = await providers.reviewer.complete(reviewerMessages, {
         temperature: 0.2,
         maxTokens: 4096,
