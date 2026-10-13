@@ -51,7 +51,7 @@ jobs:
             const fs = require("node:fs");
             const raw = process.env.VERSION;
             const version = raw.startsWith("v") ? raw.slice(1) : raw;
-            if (!/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/.test(version)) {
+            if (!/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-(?:(?:0|[1-9]\d*)|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:(?:0|[1-9]\d*)|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*))*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/.test(version)) {
               throw new Error("Invalid release version");
             }
             for (const file of ["package.json", ...fs.readdirSync("packages").filter((name) => name.startsWith("chimera-")).map((name) => `packages/${name}/package.json`)]) {
@@ -96,5 +96,6 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           generate_release_notes: true
+          target_commitish: ${{ github.sha }}
           tag_name: "v${{ steps.version.outputs.version }}"
           name: "v${{ steps.version.outputs.version }}"
