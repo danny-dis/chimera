@@ -15,12 +15,10 @@ export type TUIHandle = {
 
 const TUIBridge: React.FC<{
   initial: TUIProps;
-  latestRef: React.MutableRefObject<TUIProps>;
   onReady: (set: React.Dispatch<React.SetStateAction<TUIProps>>) => void;
-}> = ({ initial, latestRef, onReady }) => {
+}> = ({ initial, onReady }) => {
   const [props, setProps] = useState<TUIProps>(initial);
 
-  latestRef.current = props;
 
   React.useEffect(() => {
     onReady(setProps);
@@ -33,23 +31,22 @@ export function runTUI(props: TUIProps): TUIHandle {
   const setterRef = { current: null as React.Dispatch<React.SetStateAction<TUIProps>> | null };
   const latestRef = { current: props };
 
-  const { waitUntilExit, cleanup } = render(
+  const app = render(
     React.createElement(TUIBridge, {
       initial: props,
-      latestRef,
-      onReady: (set) => { setterRef.current = set; },
+      onReady: (set) => { setterRef.current = set; set(latestRef.current); },
     }),
     { exitOnCtrlC: false },
   );
 
   return {
     update: (newProps: Partial<TUIProps>) => {
-      const merged = { ...latestRef.current, ...newProps };
+      latestRef.current = { ...latestRef.current, ...newProps };
       if (setterRef.current) {
-        setterRef.current(merged);
+        setterRef.current(previous => ({ ...previous, ...newProps }));
       }
     },
-    waitUntilExit,
-    cleanup,
+    waitUntilExit: app.waitUntilExit,
+    cleanup: () => { app.unmount(); app.cleanup(); setterRef.current = null; },
   };
 }

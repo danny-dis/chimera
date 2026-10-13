@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
-import { Box, useInput } from 'ink';
+import { Box, useInput, useStdin } from 'ink';
 
 interface ViewportProps<T> {
   items: T[];
@@ -47,6 +47,8 @@ export function Viewport<T>({
 }: ViewportProps<T>) {
   const [scrollOffset, setScrollOffset] = useState(0);
   const [selectedIndex, setSelectedIndex] = useState(0);
+  const [followingTail, setFollowingTail] = useState(autoScroll);
+  const { stdin } = useStdin();
 
   const getHeight = getItemHeight ?? (() => 3);
 
@@ -56,16 +58,18 @@ export function Viewport<T>({
 
   // Auto-scroll to bottom when items change.
   useEffect(() => {
-    if (autoScroll && items.length > 0) {
+    if (autoScroll && followingTail && items.length > 0) {
       const lastIndex = items.length - 1;
       setSelectedIndex(lastIndex);
       // Scroll so the last item is visible at the bottom.
-      const lastItemTop = prefixSum[lastIndex];
-      if (lastItemTop < scrollOffset || lastItemTop >= scrollOffset + height) {
-        setScrollOffset(Math.max(0, lastItemTop - height + getHeight(items[lastIndex])));
-      }
+      setScrollOffset(Math.max(0, totalHeight - height));
     }
-  }, [items.length, autoScroll, height]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [items.length, autoScroll, followingTail, totalHeight, height]);
+
+  useEffect(() => {
+    setSelectedIndex(previous => Math.max(0, Math.min(previous, items.length - 1)));
+    setScrollOffset(previous => Math.max(0, Math.min(previous, totalHeight - height)));
+  }, [items.length, totalHeight, height]);
 
   const scrollUp = useCallback(() => {
     setSelectedIndex((prev) => {
@@ -90,22 +94,16 @@ export function Viewport<T>({
   }, [prefixSum, items, getHeight, scrollOffset, height]);
 
   const pageUp = useCallback(() => {
-    setSelectedIndex((prev) => {
-      const targetRow = Math.max(0, prefixSum[prev] - height);
-      const next = findItemAtRow(prefixSum, targetRow);
-      setScrollOffset(Math.max(0, targetRow));
-      return next;
-    });
-  }, [prefixSum, height]);
+    const targetRow = Math.max(0, scrollOffset - height);
+    setSelectedIndex(findItemAtRow(prefixSum, targetRow));
+    setScrollOffset(targetRow);
+  }, [prefixSum, height, scrollOffset]);
 
   const pageDown = useCallback(() => {
-    setSelectedIndex((prev) => {
-      const targetRow = Math.min(totalHeight - height, prefixSum[prev] + height);
-      const next = findItemAtRow(prefixSum, targetRow);
-      setScrollOffset(Math.max(0, targetRow));
-      return next;
-    });
-  }, [prefixSum, totalHeight, height]);
+    const targetRow = Math.min(Math.max(0, totalHeight - height), scrollOffset + height);
+    setSelectedIndex(findItemAtRow(prefixSum, targetRow));
+    setScrollOffset(targetRow);
+  }, [prefixSum, totalHeight, height, scrollOffset]);
 
   // `isActive` must gate the hook itself, not just the handler body. Ink
   // ref()s stdin and enables raw mode on mount for every registered useInput,
@@ -113,23 +111,28 @@ export function Viewport<T>({
   // — which double-consumes keystrokes alongside the m/l detail toggle, and
   // crashes outright under a test stdin that has no ref().
   useInput((_input, key) => {
+    if (items.length === 0) return;
+    if (key.upArrow || key.downArrow || key.pageUp || key.pageDown) setFollowingTail(false);
     if (key.upArrow) scrollUp();
     if (key.downArrow) scrollDown();
     if (key.pageUp) pageUp();
     if (key.pageDown) pageDown();
 
-    const k = key as any;
-    if (k.home) {
-      setSelectedIndex(0);
-      setScrollOffset(0);
-    }
-    if (k.end) {
-      const lastIndex = items.length - 1;
-      setSelectedIndex(lastIndex);
-      const lastItemTop = prefixSum[lastIndex];
-      setScrollOffset(Math.max(0, lastItemTop - height + getHeight(items[lastIndex])));
-    }
   }, { isActive: focused });
+
+  useEffect(() => {
+    if (!focused || items.length === 0) return;
+    const navigate = (data: Buffer | string) => {
+      const key = data.toString();
+      if (['\x1b[H', '\x1b[1~', '\x1b[7~'].includes(key)) {
+        setFollowingTail(false); setSelectedIndex(0); setScrollOffset(0);
+      } else if (['\x1b[F', '\x1b[4~', '\x1b[8~'].includes(key)) {
+        setFollowingTail(true); setSelectedIndex(items.length - 1); setScrollOffset(Math.max(0, totalHeight - height));
+      }
+    };
+    stdin.on('data', navigate);
+    return () => { stdin.off('data', navigate); };
+  }, [stdin, focused, items.length, totalHeight, height]);
 
   // Find which items are visible within [scrollOffset, scrollOffset + height).
   const visibleStart = findItemAtRow(prefixSum, scrollOffset);
@@ -144,15 +147,13 @@ export function Viewport<T>({
 
   return (
     <Box flexDirection="column" height={height} overflow="hidden" width="100%">
-      {/* Top padding: skip rows above the first visible item. */}
-      {visibleStart > 0 && (
-        <Box flexShrink={0} marginTop={Math.max(0, prefixSum[visibleStart] - scrollOffset)} />
-      )}
+      <Box flexDirection="column" flexShrink={0} marginTop={(prefixSum[visibleStart] ?? 0) - scrollOffset}>
       {visibleItems.map(({ item, actualIndex }) => (
-        <Box key={actualIndex} width="100%">
+        <Box key={actualIndex} width="100%" flexShrink={0}>
           {renderItem(item, actualIndex, actualIndex === selectedIndex)}
         </Box>
       ))}
+      </Box>
     </Box>
   );
 }

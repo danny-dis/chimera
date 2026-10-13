@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Box, Text } from 'ink';
+import { Box, Text, useStdin } from 'ink';
+import { stripVTControlCharacters } from 'node:util';
 import { zen, hierarchy, tiered, panelBorderColor, PANEL_BORDER } from '../theme.js';
 import type { SkillModelView } from '../types.js';
 
@@ -11,19 +12,21 @@ interface InputProps {
   /** Whether this component holds logical focus (drives border color and,
    * critically, whether it captures stdin at all — see the effect below). */
   focused?: boolean;
+  onTab?: (reverse: boolean) => void;
   skillModel?: SkillModelView;
 }
 
 const BACKSPACE_CHARS = new Set(['\x7f', '\x08', '\b']);
+const GRAPHEMES = new Intl.Segmenter('en', { granularity: 'grapheme' });
 
 /** C0/C1 control and escape bytes to strip from a pasted chunk. Embedded
  * line breaks are collapsed to a space since this is a single-line composer. */
-const CONTROL_CHAR_RE = /[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g;
-const LINE_BREAK_RE = /\r\n|\r|\n/g;
+const CONTROL_CHAR_RE = /[\x00-\x1f\x7f-\x9f]/g;
+const LINE_BREAK_RE = /\x0d\x0a|[\x0d\x0a\x09]/g;
 
 /** Sanitize a multi-character stdin chunk (typically a paste) for insertion. */
 function sanitizePastedText(raw: string): string {
-  return raw.replace(LINE_BREAK_RE, ' ').replace(CONTROL_CHAR_RE, '');
+  return stripVTControlCharacters(raw).replace(LINE_BREAK_RE, ' ').replace(CONTROL_CHAR_RE, '');
 }
 
 const DEFAULT_PLACEHOLDERS: { beginner: string; intermediate: string; advanced: string } = {
@@ -38,9 +41,11 @@ export const Input: React.FC<InputProps> = ({
   placeholder,
   disabled = false,
   focused = true,
+  onTab,
   skillModel,
 }) => {
   const effectivePlaceholder = placeholder ?? tiered(DEFAULT_PLACEHOLDERS, skillModel);
+  const { stdin, setRawMode } = useStdin();
   const [value, setValue] = useState('');
   const [history, setHistory] = useState<string[]>([]);
   const valueRef = useRef(value);
@@ -52,6 +57,8 @@ export const Input: React.FC<InputProps> = ({
   onSubmitRef.current = onSubmit;
   const autocompleteRef = useRef(autocomplete);
   autocompleteRef.current = autocomplete;
+  const onTabRef = useRef(onTab);
+  onTabRef.current = onTab;
 
   useEffect(() => {
     // Only capture stdin while this component holds logical focus. This is
@@ -60,16 +67,13 @@ export const Input: React.FC<InputProps> = ({
     // never a keypress both handlers react to.
     if (disabled || !focused) return;
 
-    const wasRaw = process.stdin.isRaw;
-    if (typeof process.stdin.setRawMode === 'function') {
-      process.stdin.setRawMode(true);
-    }
+    setRawMode(true);
 
     const onData = (data: Buffer) => {
       const str = data.toString('utf-8');
 
       if (BACKSPACE_CHARS.has(str)) {
-        setValue((prev) => prev.slice(0, -1));
+        setValue((prev) => [...GRAPHEMES.segment(prev)].slice(0, -1).map(part => part.segment).join(''));
         return;
       }
 
@@ -84,13 +88,18 @@ export const Input: React.FC<InputProps> = ({
       }
 
       if (str === '\t') {
-        if (!autocompleteRef.current || !valueRef.current.startsWith('/')) return;
+        if (!autocompleteRef.current || !valueRef.current.startsWith('/')) {
+          onTabRef.current?.(false);
+          return;
+        }
         const matches = autocompleteRef.current(valueRef.current);
         if (matches.length === 1) {
-          setValue(matches[0] + ' ');
+          setValue(sanitizePastedText(matches[0]) + ' ');
         }
         return;
       }
+
+      if (str === '\x1b[Z') { onTabRef.current?.(true); return; }
 
       if (str === '\x1b[A') {
         const next = historyIndexRef.current + 1;
@@ -113,17 +122,12 @@ export const Input: React.FC<InputProps> = ({
         return;
       }
 
-      // Single printable character — the common case, kept as a fast path.
-      if (str.length === 1 && str >= ' ') {
-        setValue((prev) => prev + str);
-        return;
-      }
 
       // Multi-character chunk: terminals typically deliver a paste (e.g. a
       // file path) as one 'data' event rather than one keystroke at a time.
       // Previously anything longer than one character was silently dropped;
       // now we sanitize control/escape bytes and append the rest in one go.
-      if (str.length > 1) {
+      if (str.length > 0) {
         const cleaned = sanitizePastedText(str);
         if (cleaned) {
           setValue((prev) => prev + cleaned);
@@ -131,15 +135,13 @@ export const Input: React.FC<InputProps> = ({
       }
     };
 
-    process.stdin.on('data', onData);
+    stdin.on('data', onData);
 
     return () => {
-      process.stdin.removeListener('data', onData);
-      if (typeof process.stdin.setRawMode === 'function') {
-        process.stdin.setRawMode(wasRaw ?? false);
-      }
+      stdin.removeListener('data', onData);
+      setRawMode(false);
     };
-  }, [disabled, focused]);
+  }, [disabled, focused, stdin, setRawMode]);
 
   const isCommand = value.startsWith('/');
   const active = focused && !disabled;

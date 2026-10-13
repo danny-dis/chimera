@@ -18,20 +18,27 @@ import type { CommandContext } from './commands/commands.js';
 import type { Message, Agent, CostData, EventLogEntry, TUIProps } from './types.js';
 
 type Overlay = 'sessions' | 'diff' | 'agents' | 'events' | null;
+const EMPTY_MESSAGES: Message[] = [];
+const EMPTY_AGENTS: Agent[] = [];
+const EMPTY_EVENTS: EventLogEntry[] = [];
+const EMPTY_COST: CostData = { currentCost: 0, budget: 10, breakdown: [] };
 
 export const TUI: React.FC<TUIProps> = ({
   mode: initialMode = 'code',
   preset: initialPreset = 'solo',
   sessionId = 'active',
-  messages: initialMessages = [],
-  agents: initialAgents = [],
-  costData: initialCostData = { currentCost: 0, budget: 10, breakdown: [] },
+  messages: initialMessages = EMPTY_MESSAGES,
+  agents: initialAgents = EMPTY_AGENTS,
+  costData: initialCostData = EMPTY_COST,
   sessions = [],
   diffFiles = [],
-  events: initialEvents = [],
+  events: initialEvents = EMPTY_EVENTS,
   activeTool,
   instructions,
   tokenUsage,
+  isRunning = false,
+  onCancel,
+  commandContext,
   onSendMessage,
   runTask,
   runWorkflow,
@@ -57,7 +64,7 @@ export const TUI: React.FC<TUIProps> = ({
   const bumpExplain = useCallback(() => setExplainVersion((v) => v + 1), []);
 
   const layout = useLayout(sidebarVisible);
-  const focus = useFocus();
+  const focus = useFocus(sidebarVisible ? 4 : 2);
 
   useEffect(() => {
     setMessages(initialMessages);
@@ -84,6 +91,7 @@ export const TUI: React.FC<TUIProps> = ({
   }, [initialPreset]);
 
   const buildCommandContext = useCallback((): CommandContext => ({
+    ...commandContext,
     getMode: () => mode,
     setMode: (m) => {
       setMode(m);
@@ -100,7 +108,7 @@ export const TUI: React.FC<TUIProps> = ({
     skillModel,
     runTask,
     runWorkflow,
-  }), [mode, preset, costData, commandHistory, sessionId, onModeChange, onPresetChange, skillModel, runTask, runWorkflow]);
+  }), [mode, preset, costData, commandHistory, sessionId, onModeChange, onPresetChange, skillModel, runTask, runWorkflow, commandContext]);
 
   const requestExit = useCallback(async () => {
     if (onExit) await onExit();
@@ -133,12 +141,16 @@ export const TUI: React.FC<TUIProps> = ({
     setCommandHistory((prev) => [...prev, text]);
   }, [buildCommandContext, requestExit]);
 
-  const handleSendMessage = useCallback((text: string) => {
-    if (text.startsWith('/')) {
-      handleSlashCommand(text);
-      return;
+  const handleSendMessage = useCallback(async (text: string) => {
+    try {
+      if (text.startsWith('/')) await handleSlashCommand(text);
+      else await onSendMessage?.(text);
+    } catch (error) {
+      setMessages(previous => [...previous, {
+        id: `error-${Date.now()}`, role: 'system', timestamp: Date.now(),
+        content: `Failed: ${error instanceof Error ? error.message : String(error)}`,
+      }]);
     }
-    onSendMessage?.(text);
   }, [handleSlashCommand, onSendMessage]);
 
   const handleModeChange = useCallback((newMode: Mode) => {
@@ -177,7 +189,14 @@ export const TUI: React.FC<TUIProps> = ({
       }
     }
     if (key.ctrl && input === 'c') {
-      void requestExit().catch(error => console.error('Shutdown failed:', error));
+      const action = isRunning && onCancel ? onCancel : requestExit;
+      void Promise.resolve().then(action).catch(error => console.error('Cancel/shutdown failed:', error));
+      return;
+    }
+    if (activeOverlay || !layout.isMinSize) return;
+    if (key.tab && (isRunning || !focus.isFocused(0))) {
+      focus.moveFocus(key.shift ? -1 : 1);
+      return;
     }
     // Adaptive-onboarding: reversible explain depth toggle (more ↔ less ↔ default).
     //
@@ -209,8 +228,7 @@ export const TUI: React.FC<TUIProps> = ({
     }
   });
 
-  if (!layout.isMinSize) {
-    return (
+  const sizeWarning = !layout.isMinSize ? (
       <Box flexDirection="column" alignItems="center" justifyContent="center" height={layout.height}>
         <Text bold color={zen.accent}>CHIMERA</Text>
         <Box marginTop={1}>
@@ -220,8 +238,7 @@ export const TUI: React.FC<TUIProps> = ({
           <Text dimColor>Current: {layout.width}x{layout.height}</Text>
         </Box>
       </Box>
-    );
-  }
+    ) : null;
 
   // Height budget: every row is accounted for so the fixed-height chat/event
   // viewport matches what yoga actually allocates (a previous version of this
@@ -234,12 +251,14 @@ export const TUI: React.FC<TUIProps> = ({
   const statusBarHeight = 1;
   const footerHeight = 2;
   const inputHeight = 3;
-  const chatHeight = layout.height - statusBarHeight - footerHeight - inputHeight;
+  const chatHeight = Math.max(4, layout.height - statusBarHeight - footerHeight - inputHeight);
   const chatFocused = focus.isFocused(1);
   const inputFocused = focus.isFocused(0);
 
   return (
     <Box flexDirection="column" height={layout.height}>
+      {sizeWarning}
+      <Box flexDirection="column" height={layout.height} display={layout.isMinSize ? 'flex' : 'none'}>
       <Box height={statusBarHeight} paddingX={1}>
         <StatusBar
           mode={mode}
@@ -278,8 +297,9 @@ export const TUI: React.FC<TUIProps> = ({
           <Box height={inputHeight}>
             <Input
               onSubmit={handleSendMessage}
+              onTab={reverse => focus.moveFocus(reverse ? -1 : 1)}
               autocomplete={autocompleteCommand}
-              disabled={activeOverlay !== null}
+              disabled={activeOverlay !== null || isRunning || !layout.isMinSize}
               focused={inputFocused}
               placeholder={tiered({
                 beginner: 'e.g. "Refactor utils.ts to use async/await"',
@@ -302,6 +322,7 @@ export const TUI: React.FC<TUIProps> = ({
               tokenUsage={derivedTokenUsage}
               instructions={instructions}
               contentWidth={layout.sidebarContentWidth}
+              activeFocus={!activeOverlay && !isRunning && layout.isMinSize ? focus.focusIndex : -1}
               onModeChange={handleModeChange}
               onPresetChange={handlePresetChange}
               skillModel={skillModel}
@@ -311,6 +332,7 @@ export const TUI: React.FC<TUIProps> = ({
       </Box>
 
       <Footer width={layout.width} sessionId={sessionId} skillModel={skillModel} />
+      </Box>
     </Box>
   );
 };
