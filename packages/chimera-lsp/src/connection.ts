@@ -3,6 +3,7 @@ import { spawn, type ChildProcessWithoutNullStreams } from 'child_process';
 import { createMessageConnection, type MessageConnection, type Disposable } from 'vscode-jsonrpc/node';
 import { StreamMessageReader, StreamMessageWriter } from 'vscode-jsonrpc/node';
 import type { LspServerConfig } from './types.js';
+import { ownedWindowsProcess } from './windows-owned-process.js';
 import { captureLspProcessTree, terminateWindowsProcessTree } from './windows-process-tree.js';
 
 export interface LspConnection extends Disposable {
@@ -67,19 +68,20 @@ export async function startLspConnection(
     shell: false,
   };
   let child: ChildProcessWithoutNullStreams;
-  if (process.platform === 'win32' && /\.(cmd|bat)$/i.test(options.config.command)) {
-    const { execa } = await import('execa');
-    const batch = execa(options.config.command, options.config.args ?? [], {
-      ...spawnOptions, stdin: 'pipe', stdout: 'pipe', stderr: 'pipe', buffer: false, reject: false,
+  if (process.platform === 'win32') {
+    const nodeOptionsKey = Object.keys(spawnOptions.env).find(key => key.toUpperCase() === 'NODE_OPTIONS');
+    const launch = ownedWindowsProcess(options.config.command, options.config.args ?? [], false, nodeOptionsKey ? spawnOptions.env[nodeOptionsKey] : undefined);
+    child = spawn(launch.command, launch.args, {
+      ...spawnOptions, env: Object.fromEntries(Object.entries(spawnOptions.env).filter(([key]) => key.toUpperCase() !== 'NODE_OPTIONS')),
+      stdio: ['pipe','pipe','pipe'], windowsVerbatimArguments: launch.windowsVerbatimArguments,
     });
-    void batch.catch(() => {});
-    child = batch as ChildProcessWithoutNullStreams;
   } else {
     child = spawn(options.config.command, options.config.args ?? [], {
       ...spawnOptions, stdio: ['pipe', 'pipe', 'pipe'],
     });
   }
   child.on('error', () => {});
+  child.stderr.resume();
 
   // Establish listen/error/exit handling BEFORE initialization.
   // Spawn failures must settle (reject) instead of hanging or

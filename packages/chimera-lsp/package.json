@@ -20,13 +20,14 @@
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "scripts": {
-    "build": "tsc",
+    "build": "tsc && node -e \"require('fs').cpSync('src/windows-owned-process-host.cjs','dist/windows-owned-process-host.cjs')\"",
     "dev": "tsc --watch",
     "test": "vitest run",
     "lint": "eslint src/",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "cross-spawn": "^7.0.6",
     "execa": "^9.0.0",
     "koffi": "^3.3.3",
     "vscode-jsonrpc": "^8.2.1",

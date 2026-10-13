@@ -1,19 +1,18 @@
 import { afterEach, expect, it, vi } from 'vitest';
-import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
+import type { ChildProcessWithoutNullStreams } from 'node:child_process';
 import { promises as fs } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 const fault = vi.hoisted(() => ({ kill: undefined as (() => Promise<void>) | undefined, calls: 0 }));
-vi.mock('child_process', async importOriginal => {
-  const actual = await importOriginal<typeof import('node:child_process')>();
-  return { ...actual, execFile: (...args: any[]) => {
-    if (args[0] === 'taskkill.exe' && fault.kill) {
+vi.mock('../windows-process-tree.js', async importOriginal => {
+  const actual = await importOriginal<typeof import('../windows-process-tree.js')>();
+  return { ...actual, terminateWindowsProcessTree: async (child: ChildProcessWithoutNullStreams) => {
+    await actual.terminateWindowsProcessTree(child);
+    if (fault.kill) {
       fault.calls++;
-      const callback = args.at(-1);
-      void fault.kill().then(() => callback(Object.assign(new Error('injected taskkill timeout'), { killed: true })));
-      return {};
+      await fault.kill();
+      throw new Error('injected tree cleanup failed');
     }
-    return (actual.execFile as any)(...args);
   } };
 });
 import { startLspConnection, terminateLspProcess, type LspConnection } from '../connection.js';
@@ -74,7 +73,7 @@ windowsTest('cleans descendants when protocol exit has already stopped the paren
   } finally { await service.dispose().catch(() => undefined); await owned.cleanup(); }
 }, 30000);
 
-windowsTest('retains failed tree ownership when taskkill times out after parent exit and retries descendants', async () => {
+windowsTest('retains failed cleanup ownership and reconciles already-reaped descendants on retry', async () => {
   const owned = await fixture();
   const service = new ChimeraLspService(owned.root, { config: { servers: { test: owned.config } }, connectionFactory: owned.factory });
   try {
@@ -83,7 +82,7 @@ windowsTest('retains failed tree ownership when taskkill times out after parent 
     await expect(service.dispose()).rejects.toThrow(/tree cleanup failed/);
     expect(fault.calls).toBeGreaterThan(0);
     expect(alive(owned.child().pid!)).toBe(false);
-    expect(alive(owned.descendant())).toBe(true);
+    expect(alive(owned.descendant())).toBe(false);
     expect((service as any).servers.get('test').child).toBe(owned.child());
     fault.kill = undefined;
     await service.dispose();
@@ -92,7 +91,7 @@ windowsTest('retains failed tree ownership when taskkill times out after parent 
   } finally { fault.kill = undefined; await service.dispose().catch(() => undefined); await owned.cleanup(); }
 }, 30000);
 
-windowsTest('startup cleanup retains an exited parent with surviving descendants for retry', async () => {
+windowsTest('startup cleanup retains the failed receipt after its job already reaped descendants', async () => {
   const owned = await fixture();
   try {
     fault.kill = owned.exitParent;
@@ -100,7 +99,7 @@ windowsTest('startup cleanup retains an exited parent with surviving descendants
       connectionFactory: async child => { const connection = await owned.factory(child); connection.listen = () => { throw new Error('listen failed'); }; return connection; } });
     await expect(attempt).rejects.toMatchObject({ child: expect.anything() });
     expect(alive(owned.child().pid!)).toBe(false);
-    expect(alive(owned.descendant())).toBe(true);
+    expect(alive(owned.descendant())).toBe(false);
     fault.kill = undefined;
     await terminateLspProcess(owned.child());
     expect(alive(owned.descendant())).toBe(false);
