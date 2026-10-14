@@ -14,7 +14,7 @@ export function expectedPathFromTask(task: string): string | undefined {
   // Use (?<!...) instead of \b at the start — \b fails between space and `.`
   // (both non-word), so dotfile paths like ".foo/bar.txt" would never match.
   const verbPath = task.match(
-    /\b(?:write|create|generate|output|report|save|produce|append|add)[\s\S]*?(?<![a-zA-Z0-9_])([A-Za-z0-9_\-./]+\.(?:rs|ts|js|jsx|tsx|py|toml|json|md|ya?ml|go|java|cpp|c|rb|php|txt|html|css|sh))\b/i,
+    /\b(?:write|create|generate|output|report|save|produce|append|add)[^.!?;\n]*?(?<![a-zA-Z0-9_])([A-Za-z0-9_\-./]+\.(?:rs|ts|js|jsx|tsx|py|toml|json|md|ya?ml|go|java|cpp|c|rb|php|txt|html|css|sh))\b/i,
   );
   if (verbPath) return verbPath[1];
   // Fallback: match a named file anywhere in the task.
