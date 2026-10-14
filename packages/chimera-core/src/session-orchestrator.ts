@@ -1765,6 +1765,9 @@ export class SessionOrchestrator {
   private buildProviderFactory(
     providers: { writer: LLMProvider; reviewer: LLMProvider; challenger?: LLMProvider },
   ): (modelId: string) => LLMProvider {
+    const roleProviders = [providers.writer, providers.reviewer, providers.challenger ?? providers.writer];
+    const byModel = new Map(this._registry?.getAll().filter(model => !model.deprecated)
+      .map((model, index) => [model.id, roleProviders[index] ?? providers.writer] as const));
     return (modelId: string) => {
       switch (modelId) {
         case 'reviewer':
@@ -1772,7 +1775,7 @@ export class SessionOrchestrator {
         case 'challenger':
           return providers.challenger ?? providers.writer;
         default:
-          return providers.writer;
+          return byModel.get(modelId) ?? providers.writer;
       }
     };
   }
