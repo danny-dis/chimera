@@ -205,8 +205,8 @@ export class DuoExecutor {
     }
 
     // In sequential mode, we prefer the reviewer (Model B) if it succeeded.
-    const sourceA = sources.find(s => s.role === 'writer');
-    const sourceB = sources.find(s => s.role === 'reviewer');
+    const sourceA = validSources.find(s => s.role === 'writer');
+    const sourceB = validSources.find(s => s.role === 'reviewer');
 
     // If only writer succeeded (reviewer failed or was over budget)
     if (sourceA && !sourceB) {
