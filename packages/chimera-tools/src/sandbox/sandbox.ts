@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { execa } from 'execa';
+
 import os from 'node:os';
 import { PTYExecutor } from './pty-executor.js';
 import { EnvironmentFilter } from './env-filter.js';
@@ -156,6 +156,7 @@ export class Sandbox {
 
     try {
       const shell = isWindows ? 'powershell' : 'bash';
+      const { execa } = require('execa') as typeof import('execa');
       const result = await execa(shell, shellArgs, {
         cwd: options.cwd,
         timeout: options.timeout,
@@ -261,6 +262,7 @@ ${networkRule}
 (allow sysctl-read)`;
 
     const profilePath = `/tmp/chimera-sandbox-${Date.now()}.sb`;
+    const { execa } = require('execa') as typeof import('execa');
     try {
       await execa('bash', ['-c', `echo '${profile.replace(/'/g, "'\"'\"'")}' > ${profilePath}`]);
 
@@ -296,6 +298,7 @@ ${networkRule}
     options: { cwd: string; timeout: number; maxMemoryMB: number; networkEgress: boolean; env: Record<string, string> },
   ): Promise<SandboxResult> {
     try {
+      const { execa } = require('execa') as typeof import('execa');
       const bwrapArgs = [
         '--bind', '/', '/',
         '--bind', options.cwd, options.cwd,
@@ -341,6 +344,7 @@ ${networkRule}
     const mountMode = 'ro';
 
     try {
+      const { execa } = require('execa') as typeof import('execa');
       const runResult = await execa('docker', [
         'run', '--rm',
         '--name', containerName,

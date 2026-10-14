@@ -1,6 +1,5 @@
 import path from 'path';
-import { DEFAULT_LSP_CONFIG, loadLspConfig, mergeLspConfig, type LspWorkspaceConfig } from '@chimera/lsp';
-import { ChimeraLspService, type LspService } from '@chimera/lsp';
+import type { ChimeraLspService, LspService, LspWorkspaceConfig } from '@chimera/lsp';
 import { isWorkspaceTrusted } from './hooks/trust.js';
 
 // ── Registry ─────────────────────────────────────────────────────────────────
@@ -50,6 +49,7 @@ export function resolveAppInstalledTypeScriptServer(): { command: string; args: 
  * Exported as the CLI-safe contract (CLI itself not edited here).
  */
 export async function resolveSafeDefaultLspConfig(): Promise<LspWorkspaceConfig> {
+  const { DEFAULT_LSP_CONFIG, mergeLspConfig } = await import('@chimera/lsp');
   return mergeLspConfig(DEFAULT_LSP_CONFIG, {
     servers: {
       typescript: {
@@ -109,6 +109,7 @@ export async function resolveDefaultLspConfig(workspaceRoot: string): Promise<Ls
   // the application-installed default server, which may run.
   const trusted = await isWorkspaceTrusted(workspaceRoot).catch(() => false);
   if (!trusted) return resolveSafeDefaultLspConfig();
+  const { loadLspConfig, mergeLspConfig } = await import('@chimera/lsp');
   const loaded = await loadLspConfig(workspaceRoot);
   if (Object.keys(loaded.servers).length > 0) return loaded;
   return mergeLspConfig(loaded, {
@@ -137,6 +138,7 @@ export async function getOrCreateLspService(workspaceRoot: string): Promise<LspS
     // blocked project config via loadLspConfig.
     const trusted = await isWorkspaceTrusted(root).catch(() => false);
     const config = trusted ? await resolveDefaultLspConfig(root) : await resolveSafeDefaultLspConfig();
+    const { ChimeraLspService } = await import('@chimera/lsp');
     const service = new ChimeraLspService(root, { config });
     try {
       await service.start();

@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { execa } from 'execa';
+import type { execa } from 'execa';
 import path from 'node:path';
 
 const PTYOptionsSchema = z.object({
@@ -51,6 +51,7 @@ export class PTYExecutor {
     const shell = isWin ? 'cmd.exe' : 'bash';
     const shellArgs = isWin ? ['/c', validated.command] : ['-c', validated.command];
 
+    const { execa } = require('execa') as typeof import('execa');
     this.currentProcess = execa(shell, shellArgs, {
       cwd: resolvedCwd,
       timeout: validated.timeout,

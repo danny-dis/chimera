@@ -150,14 +150,27 @@ export function setAutoApprove(value: boolean): void {
   autoApprove = value;
 }
 
-function promptAsk(toolName: string): Promise<PermissionDecision> {
+function promptAsk(toolName: string, signal?: AbortSignal): Promise<PermissionDecision> {
+  if (signal?.aborted) return Promise.resolve('deny');
   if (isAutoApproveEnabled()) return Promise.resolve('allow');
   if (!process.stdin.isTTY) return Promise.resolve('deny');
   const rl = createInterface({ input: process.stdin, output: process.stdout });
   return new Promise((resolve) => {
-    rl.question(`Allow tool "${toolName}" to run? [y/N]: `, (line) => {
+    let settled = false;
+    const finish = (decision: PermissionDecision) => {
+      if (settled) return;
+      settled = true;
+      signal?.removeEventListener('abort', deny);
+      rl.removeListener('close', deny);
       rl.close();
-      resolve(/^(y|yes)$/i.test(line.trim()) ? 'allow' : 'deny');
+      resolve(decision);
+    };
+    const deny = () => finish('deny');
+    signal?.addEventListener('abort', deny, { once: true });
+    rl.once('close', deny);
+    if (signal?.aborted) { deny(); return; }
+    rl.question(`Allow tool "${toolName}" to run? [y/N]: `, (line) => {
+      finish(/^(y|yes)$/i.test(line.trim()) ? 'allow' : 'deny');
     });
   });
 }
@@ -427,7 +440,7 @@ export class ToolExecutor {
       ...(preview ? { diffs: preview } : {}),
     } as Parameters<typeof context.eventStream.append>[0]);
 
-    const granted = await promptAsk(toolName);
+    const granted = await promptAsk(toolName, context.signal);
     if (context.signal?.aborted) return 'aborted';
     return granted === 'allow' ? 'allow' : 'deny';
   }

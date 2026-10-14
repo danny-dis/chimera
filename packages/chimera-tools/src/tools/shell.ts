@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { execa } from 'execa';
+import type { execa } from 'execa';
 import { spawnSync } from 'node:child_process';
 import path from 'path';
 import type { ToolDefinition, ToolContext } from '../tool-schema.js';
@@ -172,6 +172,7 @@ export const runShellCommandTool: ToolDefinition<typeof RunShellCommandParamsSch
     let subprocess: ReturnType<typeof execa> | undefined;
 
     try {
+      const { execa } = require('execa') as typeof import('execa');
       const isWindows = process.platform === 'win32';
       const shellBin = isWindows ? 'cmd.exe' : 'bash';
       const shellArgs = isWindows ? ['/c', params.command] : ['-c', params.command];

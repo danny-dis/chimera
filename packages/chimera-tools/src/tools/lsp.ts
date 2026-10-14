@@ -2,7 +2,7 @@ import { z } from 'zod';
 import type { ToolDefinition, ToolContext } from '../tool-schema.js';
 import { buildTool } from '../tool-builder.js';
 import type { LspLocation, LspHover, LspDocumentSymbol, LspWorkspaceSymbol } from '@chimera/lsp';
-import { uriToPath } from '@chimera/lsp';
+
 import { PathRestrictionEngine } from '../permission/path-restrictions.js';
 import { getOrCreateLspService } from '../lsp-registry.js';
 
@@ -92,6 +92,7 @@ export const lspTool: ToolDefinition<typeof LspParamsSchema, typeof LspReturnsSc
     // with assertWorkspaceContainment (exported from @chimera/lsp src).
     // workspaceSymbol takes a query, not a path, so nothing to contain.
     if (params.operation !== 'workspaceSymbol') {
+      const { uriToPath } = require('@chimera/lsp') as typeof import('@chimera/lsp');
       let decoded = params.filePath.startsWith('file:') ? uriToPath(params.filePath) : params.filePath;
       // Normalize drive-letter case on Windows (vscode-uri lowercases it)
       // so legitimate inside URIs are not false-positive escapes.
