@@ -10,6 +10,7 @@ import { runAgentToolLoop, countSourceFiles } from './agent-tool-loop.js';
 import { executeProseActions } from './file-write-fallback.js';
 import { taskWantsFiles, snapshotTarget, targetChanged } from './path-from-task.js';
 import { zodToJsonSchema } from '../zod-json.js';
+import { withAbort } from '../utils/abort.js';
 import type {
   DuoConfig,
   DuoContext,
@@ -186,7 +187,8 @@ export class DuoExecutor {
       this.recordSpend(config.modelB, costB);
 
     } catch (err) {
-      return this.degraded(totalTokens, totalCostUsd, startTime, sources, `sequential calls failed: ${String(err)}`);
+      degraded = true;
+      degradationReason = `sequential calls failed: ${String(err)}`;
     }
 
     // Budget check after both calls
@@ -277,11 +279,12 @@ export class DuoExecutor {
       ? this.buildPeerPrompt(role, task, config.context)
       : this.buildReviewPrompt(task, draft!, config.context);
 
-    const r = await withRetry(() => provider.complete(
+    const r = await withAbort(() => withRetry(() => withAbort(() => provider.complete(
       [{ role: 'user', content: prompt }],
-      { temperature: config.temperature, maxTokens: config.maxCompletionTokens, ...(config.reasoning !== undefined ? { reasoning: config.reasoning } : {}),
+      { signal: this.signal, temperature: config.temperature, maxTokens: config.maxCompletionTokens, ...(config.reasoning !== undefined ? { reasoning: config.reasoning } : {}),
         ...(role === 'writer' && this.readOnly && this.toolRegistry ? { tools: this.toolRegistry.getAll().map(t => ({ name: t.name, description: t.description, parameters: zodToJsonSchema(t.parameters as any) })) } : {}) }
-    ), { maxRetries: 2, baseDelayMs: 3000, maxDelayMs: 20000 });
+    ), this.signal), { maxRetries: 2, baseDelayMs: 3000, maxDelayMs: 20000 }), this.signal);
+    this.signal?.throwIfAborted();
 
     // Writer path: route through the shared agentic tool loop so the writer
     // can actually call write_file instead of narrating the file in prose.
@@ -342,6 +345,7 @@ export class DuoExecutor {
           durationMs: Date.now() - start,
         };
       } catch {
+        this.signal?.throwIfAborted();
         // Tool loop failed — fall through to the bare draft below.
       }
     }

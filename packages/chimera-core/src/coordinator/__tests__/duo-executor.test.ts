@@ -136,10 +136,7 @@ describe('DuoExecutor — smoke', () => {
 
     expect(result.degraded).toBe(true);
     expect(result.degradationReason).toBeDefined();
-    // In sequential mode, if B fails, we should still have A's content if we handle it
-    // But currently the impl returns an empty degraded result on any sequential failure
-    // Let's verify the current behavior
-    expect(result.output).toBe(''); 
+    expect(result.output).toBe('writer content');
     expect(result.sources).toHaveLength(1); // Only A succeeded
   });
 
