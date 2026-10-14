@@ -425,7 +425,7 @@ export class CliRouter {
     // owns the `learning` dependency. core must not import `learning`
     // (dependency cycle), so the resolved style is passed down as plain data.
     const workspaceRoot = process.cwd();
-    const style = await resolveActiveStyle(workspaceRoot, skillModel);
+    const style = await resolveActiveStyle(workspaceRoot, this.noLearn || opts.learn === false ? undefined : skillModel);
 
     log(`\n\u2699 Chimera [${mode}] \u2014 ${label[mode]}...\n`);
 
@@ -1055,7 +1055,7 @@ export class CliRouter {
     // TUI owns its own skill model instance (it feeds its own signals; the
     // per-turn REPL feeding path is a separate launch and need not share this).
     const skillModel = new UserSkillModel();
-    const style = await resolveActiveStyle(process.cwd(), skillModel);
+    const style = await resolveActiveStyle(process.cwd(), this.noLearn || this.program.opts().learn === false ? undefined : skillModel);
 
     // Auto-generate config from env vars (fetches models from API if needed)
     if (!configExists()) {
@@ -1721,7 +1721,7 @@ export class CliRouter {
 
     // One skill model per session — fed by signals as they occur.
     const skillModel = new UserSkillModel();
-    const style = await resolveActiveStyle(process.cwd(), skillModel);
+    const style = await resolveActiveStyle(process.cwd(), this.noLearn || this.program.opts().learn === false ? undefined : skillModel);
     // Capabilities the user has touched this session (drives the value nudge).
     const seenCapabilities = new Set<ObservedCapability>();
     // Surface one underused capability at a natural pause (task completion),
