@@ -138,7 +138,7 @@ describe('WorkflowRunner', () => {
             config: {
               branches: [
                 { id: 'a', kind: 'llm', config: { role: 'writer' } },
-                { id: 'b', kind: 'llm', config: { role: 'reviewer' } },
+                { id: 'b', kind: 'llm', required: false, config: { role: 'reviewer' } },
               ],
             },
           },
@@ -319,7 +319,7 @@ describe('WorkflowRunner', () => {
 
     it('respects until_bash completion check', async () => {
       const provider = noopProvider('still going');
-      const toolExecutor = vi.fn().mockResolvedValue({ success: true, data: {}, duration: 0 });
+      const toolExecutor = vi.fn().mockResolvedValue({ success: true, data: { exitCode: 0 }, duration: 0 });
       const wf: WorkflowDefinition = {
         name: 'loop-bash',
         steps: [{
@@ -332,7 +332,7 @@ describe('WorkflowRunner', () => {
         handlers: makeHandlers({ providers: { writer: provider }, toolExecutor }),
       });
       expect(result.status).toBe('success');
-      expect(toolExecutor).toHaveBeenCalledWith('bash', expect.objectContaining({ command: 'test -f output.txt' }));
+      expect(toolExecutor).toHaveBeenCalledWith('run_shell_command', expect.objectContaining({ command: 'test -f output.txt' }));
       const out = result.outputs.lp as { completionDetected: boolean };
       expect(out.completionDetected).toBe(true);
     });
@@ -350,7 +350,7 @@ describe('WorkflowRunner', () => {
       };
       const toolExecutor = vi.fn()
         .mockResolvedValueOnce({ success: false, error: 'exit 1', duration: 0 })
-        .mockResolvedValueOnce({ success: true, data: {}, duration: 0 });
+        .mockResolvedValueOnce({ success: true, data: { exitCode: 0 }, duration: 0 });
       const wf: WorkflowDefinition = {
         name: 'loop-bash-fail',
         steps: [{

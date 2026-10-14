@@ -11,7 +11,7 @@
 
 import { EventEmitter } from 'events';
 import { AsyncSemaphore } from './async-semaphore.js';
-import { DynamicConcurrencyEngine, type ConcurrencyOverrides } from './dynamic-concurrency-engine.js';
+
 import type { LLMProvider } from '../session-orchestrator.js';
 import type { EventStream } from '../event-stream.js';
 import type { CostTracker } from '../cost-tracker.js';
@@ -84,7 +84,7 @@ export class SwarmOrchestrator extends EventEmitter {
   private config: SwarmConfig;
   private agents: Map<string, SwarmAgent> = new Map();
   private providerPool: ProviderPoolEntry[] = [];
-  private concurrencyEngine: DynamicConcurrencyEngine;
+
   private eventStream?: EventStream;
   private costTracker?: CostTracker;
   private currentProviderIndex = 0;
@@ -98,7 +98,7 @@ export class SwarmOrchestrator extends EventEmitter {
     this.config = { ...DEFAULT_CONFIG, ...deps.config };
     this.eventStream = deps.eventStream;
     this.costTracker = deps.costTracker;
-    this.concurrencyEngine = new DynamicConcurrencyEngine();
+
   }
 
   /**

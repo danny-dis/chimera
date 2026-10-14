@@ -48,6 +48,7 @@ RESEARCH BEFORE WRITING:
 - If you have a known documentation URL, use webfetch to pull its contents.`;
 
 interface SoloExecutorDeps {
+  readOnly?: boolean;
   eventStream: EventStream;
   /** Model registry — used for cost lookups. */
   registry: ModelRegistry;
@@ -86,6 +87,7 @@ function expectedPathFromTask(task: string): string | undefined {
 }
 
 export class SoloExecutor {
+  private readOnly: boolean;
   private eventStream: EventStream;
   private registry: ModelRegistry;
   private costTracker: CostTracker | undefined;
@@ -95,6 +97,7 @@ export class SoloExecutor {
   private signal?: AbortSignal;
 
   constructor(deps: SoloExecutorDeps) {
+    this.readOnly = deps.readOnly ?? false;
     this.eventStream = deps.eventStream;
     this.registry = deps.registry;
     this.costTracker = deps.costTracker;
@@ -133,7 +136,7 @@ export class SoloExecutor {
     let wroteFileCount = 0;
     const selfVerify = config.selfVerify ?? true;
     // Whether the task wants files created on disk (used for the completion gate).
-    const wantsFiles = taskWantsFiles(task);
+    const wantsFiles = !this.readOnly && taskWantsFiles(task);
     // Capture the pre-existing target file content (if any) so the prose
     // fallback can detect "the model only NARRATED the fix" — a write tool may
     // have been *called* yet failed to land, leaving the file at its seed/old
@@ -180,7 +183,7 @@ export class SoloExecutor {
     try {
       // For tool-driven (code) tasks, force an agentic system prompt so the
       // model actually invokes tools instead of narrating a plan in prose.
-      const writerConfig: SoloConfig = this.toolRegistry
+      const writerConfig: SoloConfig = this.toolRegistry && !this.readOnly
         ? { ...config, systemPrompt: [CODE_MODE_PROMPT, config.systemPrompt].filter(Boolean).join('\n\n') }
         : config;
       const res = await this.callPeer(

@@ -73,9 +73,35 @@ import type {
 
 export class DeliberationEngine {
   private deps: DeliberationEngineDeps;
+  private readOnly: boolean;
 
   constructor(deps: DeliberationEngineDeps) {
+    this.readOnly = deps.mode === 'ask' || deps.mode === 'plan' || deps.mode === 'review';
     this.deps = deps;
+    if (!this.readOnly) return;
+
+    const tools = (deps.toolRegistry?.getAll() ?? []).filter(tool =>
+      tool && 'permissionLevel' in tool && tool.permissionLevel === 'read');
+    const allowed = new Set(tools.map(tool => tool.name));
+    const prompt = `Operational mode: ${deps.mode}. Use read-only tools to gather evidence, then return the requested analysis or plan. Do not create, edit, or execute files; no on-disk artifact is required.`;
+    this.deps = {
+      ...deps,
+      toolRegistry: deps.toolRegistry ? { getAll: () => tools, has: name => allowed.has(name) } : undefined,
+      toolExecutor: deps.toolExecutor ? {
+        execute: async (name, params, context) => allowed.has(name)
+          ? deps.toolExecutor!.execute(name, params, { ...deps.toolContext, ...context, mode: deps.mode })
+          : { success: false, error: `Tool ${name} is unavailable in ${deps.mode} mode`, duration: 0 },
+      } : undefined,
+      providerFactory: modelId => {
+        const provider = deps.providerFactory(modelId);
+        return {
+          ...provider,
+          complete: (messages, options) => provider.complete([{ role: 'system', content: prompt }, ...messages], options),
+          ...(provider.getCost ? { getCost: provider.getCost.bind(provider) } : {}),
+          ...(provider.getPricing ? { getPricing: provider.getPricing.bind(provider) } : {}),
+        };
+      },
+    };
   }
 
   /**
@@ -119,6 +145,7 @@ export class DeliberationEngine {
   private async runSolo(cfg: SoloDeliberationConfig): Promise<DeliberationResult> {
     const startTime = Date.now();
     const executor = new SoloExecutor({
+      readOnly: this.readOnly,
       eventStream: this.deps.eventStream,
       registry: this.deps.registry,
       ...(this.deps.costTracker ? { costTracker: this.deps.costTracker } : {}),
@@ -225,6 +252,7 @@ export class DeliberationEngine {
   private async runDuo(cfg: DuoDeliberationConfig): Promise<DeliberationResult> {
     const startTime = Date.now();
     const executor = new DuoExecutor({
+      readOnly: this.readOnly,
       eventStream: this.deps.eventStream,
       registry: this.deps.registry,
       ...(this.deps.costTracker ? { costTracker: this.deps.costTracker } : {}),
@@ -264,6 +292,7 @@ export class DeliberationEngine {
   private async runTrio(cfg: TrioDeliberationConfig): Promise<DeliberationResult> {
     const startTime = Date.now();
     const executor = new TrioExecutor({
+      readOnly: this.readOnly,
       eventStream: this.deps.eventStream,
       registry: this.deps.registry,
       ...(this.deps.costTracker ? { costTracker: this.deps.costTracker } : {}),
@@ -316,6 +345,7 @@ export class DeliberationEngine {
   private async runFusion(cfg: FusionDeliberationConfig): Promise<DeliberationResult> {
     const startTime = Date.now();
     const executor = new FusionExecutor({
+      readOnly: this.readOnly,
       eventStream: this.deps.eventStream,
       registry: this.deps.registry,
       ...(this.deps.costTracker ? { costTracker: this.deps.costTracker } : {}),
@@ -453,13 +483,14 @@ export class DeliberationEngine {
       }));
     }
 
-    // File-writing sub-tasks get tool definitions so hive sub-agents emit
-    // write_file/edit_file tool_calls (landing real files) instead of
-    // narrating code as text. Conversational/analysis tasks don't need tools.
+    const mode = this.deps.mode ?? 'ask';
+    const canWrite = ['code', 'debug', 'oal'].includes(mode);
     const wantsFiles = !TaskRouter.isConversationalTask(cfg.task);
     let fileTools: Array<{ name: string; description: string; parameters: Record<string, unknown> }> = [];
     if (wantsFiles && this.deps.toolRegistry) {
-      const WRITE_EDIT = new Set(['write_file', 'edit_file', 'read_file']);
+      const WRITE_EDIT = new Set(canWrite
+        ? ['write_file', 'edit_file', 'read_file', 'run_shell_command']
+        : ['read_file']);
       for (const tool of this.deps.toolRegistry.getAll()) {
         if (WRITE_EDIT.has(tool.name)) {
           fileTools.push({
@@ -470,9 +501,15 @@ export class DeliberationEngine {
         }
       }
     }
-    if (fileTools.length > 0) {
-      subTasks = subTasks.map((st) => ({ ...st, tools: fileTools }));
-    }
+    subTasks = subTasks.map((st) => ({
+      ...st,
+      context: [
+        st.context,
+        'Parent task constraint data (applies only to the assigned subtask; do not expand scope):',
+        JSON.stringify({ task: cfg.task, context: cfg.context ?? '' }),
+      ].filter(Boolean).join('\n\n'),
+      tools: fileTools.filter(tool => !st.tools || st.tools.some(allowed => allowed.name === tool.name)),
+    }));
 
     // 4. Execute subtasks via CoordinatorEngine (decomposition already done above)
     const coordinator = new CoordinatorEngine({
@@ -483,6 +520,8 @@ export class DeliberationEngine {
         toolRegistry: this.deps.toolRegistry,
         workspaceRoot: this.deps.workspaceRoot,
         signal: this.deps.signal,
+        mode,
+        toolContext: this.deps.toolContext,
       },
     });
     const aggregated = await coordinator.execute(cfg.task, cfg.context, subTasks);

@@ -77,6 +77,7 @@ function extractJsonObject(raw: string): Record<string, unknown> {
 }
 
 interface FusionExecutorDeps {
+  readOnly?: boolean;
   eventStream: EventStream;
   registry: ModelRegistry;
   costTracker?: CostTracker;
@@ -97,6 +98,7 @@ function expectedPathFromTask(task: string): string | undefined {
  * Parallel panel of models generates answers, then a judge synthesizes.
  */
 export class FusionExecutor {
+  private readOnly: boolean;
   private eventStream: EventStream;
   private registry: ModelRegistry;
   private costTracker: CostTracker | undefined;
@@ -106,6 +108,7 @@ export class FusionExecutor {
   private signal: AbortSignal | undefined;
 
   constructor(deps: FusionExecutorDeps) {
+    this.readOnly = deps.readOnly ?? false;
     this.eventStream = deps.eventStream;
     this.registry = deps.registry;
     this.costTracker = deps.costTracker;
@@ -217,7 +220,7 @@ export class FusionExecutor {
         let extraInput = res.usage?.inputTokens ?? 0;
         let extraOutput = res.usage?.outputTokens ?? 0;
         if (this.toolExecutor && this.toolRegistry && this.workspaceRoot) {
-          const wantsFiles = taskWantsFiles(task);
+          const wantsFiles = !this.readOnly && taskWantsFiles(task);
           try {
             const loop = await runAgentToolLoop({
               provider,

@@ -42,6 +42,7 @@ function expectedPathFromTask(task: string): string | undefined {
 }
 
 interface TrioExecutorDeps {
+  readOnly?: boolean;
   eventStream: EventStream;
   /** Model registry — used for cost lookups and (future) capability checks. */
   registry: ModelRegistry;
@@ -92,6 +93,7 @@ interface TrioExecutorDeps {
  *   9. Test coverage — smoke + benchmark tests live in `__tests__/`
  */
 export class TrioExecutor {
+  private readOnly: boolean;
   private eventStream: EventStream;
   private registry: ModelRegistry;
   private costTracker: CostTracker | undefined;
@@ -104,6 +106,7 @@ export class TrioExecutor {
   private errorRecovery: ErrorRecovery;
 
   constructor(deps: TrioExecutorDeps) {
+    this.readOnly = deps.readOnly ?? false;
     this.eventStream = deps.eventStream;
     this.registry = deps.registry;
     this.costTracker = deps.costTracker;
@@ -164,7 +167,7 @@ export class TrioExecutor {
     }
 
     // ── Worktree isolation (opt-in) ───────────────────────────────────
-    if (config.isolateWorktree) {
+    if (config.isolateWorktree && !this.readOnly) {
       if (!this.worktreeIsolation) {
         return this.degraded('isolateWorktree=true but no WorktreeIsolation provided', totalTokens, totalCostUsd, startTime, false, stages, worktreePath);
       }
@@ -230,7 +233,7 @@ export class TrioExecutor {
           maxRounds: Math.max(1, config.maxDepth ?? 4),
           mode: 'trio',
           forceMinFiles: 1,
-          wantsFiles: taskWantsFiles(task),
+          wantsFiles: !this.readOnly && taskWantsFiles(task),
           task,
           systemPrompt: CHIMERA_CORE_IDENTITY,
           toolDefs: toolDefs,
@@ -270,7 +273,7 @@ export class TrioExecutor {
       // "no real file landed on disk" (not wroteFileCount — a failed emit would
       // wrongly suppress this), so we don't clobber a file that genuinely landed
       // but always rescue a missing one.
-      if (this.toolExecutor && this.workspaceRoot && !targetChanged(task, this.workspaceRoot, targetBefore)) {
+      if (!this.readOnly && this.toolExecutor && this.workspaceRoot && !targetChanged(task, this.workspaceRoot, targetBefore)) {
         try {
           await executeProseActions(draftContent, {
             eventStream: this.eventStream,
@@ -567,7 +570,7 @@ export class TrioExecutor {
     // Completion gate: a task that wants files on disk must have actually
     // written at least one, or we escalate to needs_user instead of a false
     // `done` (small/free models sometimes narrate instead of writing).
-    const wantsFiles = taskWantsFiles(task);
+    const wantsFiles = !this.readOnly && taskWantsFiles(task);
     if (wantsFiles && this.workspaceRoot) {
       // Completion gate: a file-writing task must have actually MODIFIED its
       // target on disk (mtime/size change vs run start), not merely left a
@@ -749,6 +752,9 @@ export class TrioExecutor {
   }
 
   private buildDraftPrompt(task: string, context?: string, style?: OutputStyle): string {
+    if (this.readOnly) {
+      return `You are the writer. Gather evidence with read-only tools and provide the requested analysis or plan.\n\nTASK: ${task}${context ? `\n\nPROJECT CONTEXT:\n${context}` : ''}`;
+    }
     if (TaskRouter.isConversationalTask(task)) {
       const contextBlock = context ? `\n\n[!] PROJECT CONTEXT [!]\n${context}` : '';
       return `You are a helpful assistant. Answer the following conversational question directly.\n` +

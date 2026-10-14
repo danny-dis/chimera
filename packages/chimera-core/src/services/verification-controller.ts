@@ -10,6 +10,7 @@ import type { Mode } from '../types/agent.js';
 import { SecretDetector } from '../security/secret-detector.js';
 import { SecurityManager } from './security-manager.js';
 import { checkToolOutput, sanitizeForPrompt } from '../security/prompt-guard.js';
+import { verificationInputsUnchanged, type VerificationInputs } from './verification-inputs.js';
 
 export interface CommandVerification {
   verified: boolean;
@@ -89,6 +90,7 @@ export class VerificationController {
     commands: string[];
     /** Caller-declared generated outputs, never inferred from directory names. */
     generatedOutputs?: string[];
+    verificationInputs?: VerificationInputs;
     executor: ToolExecutorInterface | null;
     registry: ToolRegistryInterface | null;
     workspaceRoot: string;
@@ -96,14 +98,18 @@ export class VerificationController {
     signal?: AbortSignal;
   }): Promise<CommandVerification> {
     const collector = new EvidenceCollector();
+    const commands = [...request.commands];
+    const generatedOutputs = [...(request.generatedOutputs ?? [])];
+    const verificationInputs = { ...(request.verificationInputs ?? {}) };
     let reason: string | undefined;
     try {
       if (request.signal?.aborted) throw new Error('Aborted');
-      if (!request.commands.length) throw new Error('No caller-owned verification commands executed');
+      if (!commands.length) throw new Error('No caller-owned verification commands executed');
+      if (!verificationInputsUnchanged(request.workspaceRoot, verificationInputs)) throw new Error('Caller-owned verification inputs changed');
       const shell = request.registry?.has('run_shell_command') ? 'run_shell_command' : 'shell';
       if (!request.executor || !request.registry?.has(shell)) throw new Error('Registered shell executor required for verification');
-      const before = workspaceFingerprint(request.workspaceRoot, request.generatedOutputs);
-      for (const command of request.commands) {
+      const before = workspaceFingerprint(request.workspaceRoot, generatedOutputs);
+      for (const command of commands) {
         if (typeof command !== 'string' || !command.trim()) throw new Error('Verification commands must be nonempty strings');
         if (request.signal?.aborted) throw new Error('Aborted');
         const result = await request.executor.execute(shell, { command }, {
@@ -127,14 +133,16 @@ export class VerificationController {
           data: { command, cwd: request.workspaceRoot, exitCode: result.data?.exitCode,
             durationMs: result.duration, fingerprint: before.digest, ...(diagnostic ? { diagnostic } : {}) },
         });
+        if (!verificationInputsUnchanged(request.workspaceRoot, verificationInputs)) throw new Error('Caller-owned verification inputs changed');
+        if (workspaceFingerprint(request.workspaceRoot, generatedOutputs, before.paths).digest !== before.digest) throw new Error('Verification is stale: workspace changed during checks');
         if (!passed) throw new Error(request.signal?.aborted ? 'Aborted' : 'Verification failed or was denied');
       }
       if (request.signal?.aborted) throw new Error('Aborted');
-      if (workspaceFingerprint(request.workspaceRoot, request.generatedOutputs, before.paths).digest !== before.digest) throw new Error('Verification is stale: workspace changed during checks');
+
     } catch (err) {
       // Executor exceptions can include raw output or credentials; retain no arbitrary error text.
       reason = request.signal?.aborted ? 'Aborted' :
-        (err instanceof Error && /^(No caller-owned verification commands executed|Registered shell executor required for verification|Verification commands must be nonempty strings|Verification failed or was denied|Verification is stale: workspace changed during checks|Cannot verify symlinked workspace inputs|Generated output paths must be strictly inside the workspace)$/.test(err.message)
+        (err instanceof Error && /^(No caller-owned verification commands executed|Registered shell executor required for verification|Verification commands must be nonempty strings|Verification failed or was denied|Verification is stale: workspace changed during checks|Cannot verify symlinked workspace inputs|Generated output paths must be strictly inside the workspace|Caller-owned verification inputs changed)$/.test(err.message)
           ? err.message : 'Verification unavailable');
     }
     const bundle = collector.buildBundle(request.runId);

@@ -38,6 +38,7 @@ describe('AutoDreamService', () => {
       lockfileDir: dir,
       minSessionGap: 5,
       minTimeGapMs: 0,
+      enableRecurrenceTrigger: false,
     });
 
     expect(await service.shouldDream()).toBe(false);

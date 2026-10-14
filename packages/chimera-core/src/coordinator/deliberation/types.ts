@@ -207,6 +207,8 @@ export interface DeliberationEngineDeps {
    * are executed against the workspace instead of being ignored.
    */
   workspaceRoot?: string;
+  mode?: import('../../types/agent.js').Mode;
+  toolContext?: Record<string, unknown>;
   toolExecutor?: import('../../session-orchestrator.js').ToolExecutorInterface;
   toolRegistry?: import('../../session-orchestrator.js').ToolRegistryInterface;
   /** Resolved output style, injected by the caller (which owns `learning`). */

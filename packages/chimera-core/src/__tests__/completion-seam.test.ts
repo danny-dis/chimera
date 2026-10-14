@@ -56,18 +56,30 @@ describe('completion choke point', () => {
     });
   });
 
-  it('excluded .env and credential files do not enter the fingerprint', async () => {
+  it.each(['.env', 'credentials.json'])('changed %s stales verification without exposing secret contents', async file => {
     await fixture(async (orch, root, controller, execute) => {
-      fs.writeFileSync(path.join(root, '.env'), 'SECRET_FIXTURE');
-      fs.writeFileSync(path.join(root, 'credentials.json'), 'SECRET_FIXTURE');
+      fs.writeFileSync(path.join(root, file), 'SECRET_FIXTURE');
       execute.mockImplementation(async () => {
-        fs.writeFileSync(path.join(root, '.env'), 'REPLACED_SECRET_FIXTURE');
-        fs.writeFileSync(path.join(root, 'credentials.json'), 'REPLACED_SECRET_FIXTURE');
+        fs.writeFileSync(path.join(root, file), 'REPLACED_SECRET_FIXTURE');
         return { success: true, data: { exitCode: 0 }, duration: 0 };
       });
       const result = await orch.execute(params('code', controller.signal));
+      expect(result.status).toBe('needs_user');
+      expect(result.verification?.verified).toBe(false);
+      expect(result.verification?.reason).toMatch(/stale/i);
+      expect(JSON.stringify(result)).not.toContain('SECRET_FIXTURE');
+      expect(execute).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  it('stable secret files allow verification without exposing their contents', async () => {
+    await fixture(async (orch, root, controller) => {
+      fs.writeFileSync(path.join(root, '.env'), 'SECRET_FIXTURE');
+      fs.writeFileSync(path.join(root, 'credentials.json'), 'SECRET_FIXTURE');
+      const result = await orch.execute(params('code', controller.signal));
+      expect(result.status).toBe('done');
       expect(result.verification?.verified).toBe(true);
-      expect(JSON.stringify(result.verification)).not.toContain('SECRET_FIXTURE');
+      expect(JSON.stringify(result)).not.toContain('SECRET_FIXTURE');
     });
   });
 

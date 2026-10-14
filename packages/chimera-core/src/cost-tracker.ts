@@ -31,6 +31,19 @@ export class CostTracker {
     return Object.fromEntries(this.spend);
   }
 
+  restoreSpend(spend: Record<string, number>, replace: boolean, minimumTotal: number): void {
+    const staged = replace ? new Map<string, number>() : new Map(this.spend);
+    for (const [provider, amount] of Object.entries(spend)) {
+      if (typeof amount !== 'number' || !Number.isFinite(amount) || amount < 0) throw new Error('Invalid checkpoint spend');
+      staged.set(provider, Math.max(staged.get(provider) ?? 0, amount));
+    }
+    const total = [...staged.values()].reduce((sum, amount) => sum + amount, 0);
+    if (!Number.isFinite(total) || !Number.isFinite(minimumTotal) || minimumTotal < 0 || minimumTotal > total) {
+      throw new Error('Invalid checkpoint task budget baseline');
+    }
+    this.spend = staged;
+  }
+
   /** Get total spend across all providers. */
   getTotalCost(): number {
     let total = 0;

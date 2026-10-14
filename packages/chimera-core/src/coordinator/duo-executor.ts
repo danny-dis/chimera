@@ -9,6 +9,7 @@ import { TaskRouter } from '../task-router.js';
 import { runAgentToolLoop, countSourceFiles } from './agent-tool-loop.js';
 import { executeProseActions } from './file-write-fallback.js';
 import { taskWantsFiles, snapshotTarget, targetChanged } from './path-from-task.js';
+import { zodToJsonSchema } from '../zod-json.js';
 import type {
   DuoConfig,
   DuoContext,
@@ -28,6 +29,7 @@ export type {
 } from './duo-types.js';
 
 interface DuoExecutorDeps {
+  readOnly?: boolean;
   eventStream: EventStream;
   /** Model registry — used for cost lookups and (future) capability checks. */
   registry: ModelRegistry;
@@ -59,6 +61,7 @@ interface DuoExecutorDeps {
  * tracking, defensive usage access.
  */
 export class DuoExecutor {
+  private readOnly: boolean;
   private eventStream: EventStream;
   private registry: ModelRegistry;
   private costTracker: CostTracker | undefined;
@@ -68,6 +71,7 @@ export class DuoExecutor {
   private signal: AbortSignal | undefined;
 
   constructor(deps: DuoExecutorDeps) {
+    this.readOnly = deps.readOnly ?? false;
     this.eventStream = deps.eventStream;
     this.registry = deps.registry;
     this.costTracker = deps.costTracker;
@@ -241,7 +245,7 @@ export class DuoExecutor {
       confidence: sourceB ? 0.9 : 0.8,
     };
 
-    const wantsFilesFinal = taskWantsFiles(task);
+    const wantsFilesFinal = !this.readOnly && taskWantsFiles(task);
     const fileUnchanged = wantsFilesFinal && this.workspaceRoot && !targetChanged(task, this.workspaceRoot, targetBefore);
     return {
       output: finalResponse,
@@ -275,14 +279,15 @@ export class DuoExecutor {
 
     const r = await withRetry(() => provider.complete(
       [{ role: 'user', content: prompt }],
-      { temperature: config.temperature, maxTokens: config.maxCompletionTokens, ...(config.reasoning !== undefined ? { reasoning: config.reasoning } : {}) }
+      { temperature: config.temperature, maxTokens: config.maxCompletionTokens, ...(config.reasoning !== undefined ? { reasoning: config.reasoning } : {}),
+        ...(role === 'writer' && this.readOnly && this.toolRegistry ? { tools: this.toolRegistry.getAll().map(t => ({ name: t.name, description: t.description, parameters: zodToJsonSchema(t.parameters as any) })) } : {}) }
     ), { maxRetries: 2, baseDelayMs: 3000, maxDelayMs: 20000 });
 
     // Writer path: route through the shared agentic tool loop so the writer
     // can actually call write_file instead of narrating the file in prose.
     // Falls back to the bare draft when tooling is unavailable (non-file tasks).
     if (role === 'writer' && this.toolExecutor && this.toolRegistry && this.workspaceRoot) {
-      const wantsFiles = taskWantsFiles(task);
+      const wantsFiles = !this.readOnly && taskWantsFiles(task);
       try {
         const loop = await runAgentToolLoop({
           provider,
