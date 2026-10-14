@@ -16,12 +16,12 @@ export function sanitizeReviewerOutput(raw: string): string {
       if (typeof obj.response === 'string' && obj.response.trim().length > 10) return obj.response.trim();
       if (typeof obj.improvedAnswer === 'string' && obj.improvedAnswer.trim().length > 10) return obj.improvedAnswer.trim();
       if (typeof obj.answer === 'string' && obj.answer.trim().length > 10) return obj.answer.trim();
-      const verdict = obj.verdict ?? 'PASS';
-      const findings = obj.findings ?? [];
-      if (findings.length === 0 && verdict === 'PASS') return '';
-      if (findings.length === 0) return '';
-      const lines = findings.map((f: { description: string; severity: string }) => `- [${f.severity.toUpperCase()}] ${f.description}`);
-      return `Review findings:\n${lines.join('\n')}`;
+      if (obj.verdict !== undefined || Array.isArray(obj.findings)) {
+        const findings = obj.findings ?? [];
+        if (findings.length === 0) return '';
+        const lines = findings.map((f: { description: string; severity: string }) => `- [${f.severity.toUpperCase()}] ${f.description}`);
+        return `Review findings:\n${lines.join('\n')}`;
+      }
     } catch { /* not valid JSON, continue */ }
   }
 
@@ -88,8 +88,8 @@ export function sanitizeWriterOutput(raw: string): string {
     return '';
   }
 
-  // 6. No JSON, no scaffolding — plain text passthrough.
-  if (!jsonBlock && !trimmed.includes('"response"') && !hasReasoningScaffolding(trimmed)) {
+  // 6. Preserve plain answers and documents with JSON examples.
+  if ((!jsonBlock || !trimmed.startsWith('{')) && !trimmed.includes('"response"') && !hasReasoningScaffolding(trimmed)) {
     return trimmed;
   }
 
@@ -143,7 +143,8 @@ const ANALYSIS_LEAK_PATTERNS = [
 ];
 
 function hasReasoningScaffolding(text: string): boolean {
-  return SCAFFOLD_PATTERNS.some((p) => p.test(text));
+  const prose = text.replace(/```[\s\S]*?```/g, '').trim();
+  return SCAFFOLD_PATTERNS.some((p) => p.test(prose || text));
 }
 
 function hasAnalysisLeak(text: string): boolean {
