@@ -29,6 +29,7 @@ import type {
 } from '../session-orchestrator.js';
 import type { ToolCall } from '../types/agent.js';
 import { runToolCalls } from './tool-execution-helper.js';
+import { zodToJsonSchema } from '../zod-json.js';
 import { expectedPathFromTask, fileLandedOnDisk, snapshotTarget, targetChanged } from './path-from-task.js';
 
 /** Disk state of a file: mtime+size, or null if missing. Used to verify a
@@ -320,10 +321,14 @@ export async function runAgentToolLoop(
     wantsFiles,
     task,
     systemPrompt,
-    toolDefs,
+    toolDefs: rawToolDefs,
     sanitize,
   } = params;
 
+  const toolDefs = rawToolDefs?.map(tool => ({
+    ...tool,
+    parameters: tool.parameters?._def ? zodToJsonSchema(tool.parameters as any) : tool.parameters,
+  }));
   const sanitizeFn = sanitize ?? ((s: string) => s);
   const messages: LoopChatMessage[] = seedMessages.map((m) => ({ ...m }));
 
@@ -435,7 +440,10 @@ export async function runAgentToolLoop(
       : (wantsFiles && wroteFileCount === 0 ? FILE_NUDGE : CONTINUE_NUDGE);
     messages.push({ role: 'user', content: nudge });
 
-    const r = await completeWithRetry(provider, messages, options, eventStream, 'loop', params.signal);
+    const r = await completeWithRetry(provider, messages, {
+      ...options,
+      ...(toolDefs?.length ? { tools: toolDefs, toolChoice: options.toolChoice ?? 'auto' } : {}),
+    }, eventStream, 'loop', params.signal);
     const nextContent = sanitizeFn(r.content ?? '');
     inputTokens += (r as any).usage?.inputTokens ?? 0;
     outputTokens += (r as any).usage?.outputTokens ?? 0;
