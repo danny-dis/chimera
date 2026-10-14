@@ -27,34 +27,7 @@ import {
 
 import { skillTierFromCli, tierMessage, type TieredMessage } from '@chimera/learning';
 
-/**
- * Built-in workflows surfaced by the CLI. `standard-draft` and
- * `quality-gate` are the orchestrator's and the mesh's own. The
- * `parallel-decompose` workflow is registered by `CoordinatorEngine`
- * via its `registerBuiltins` static so the engine owns its own
- * discoverable workflow definition.
- */
-const BUILTIN_WORKFLOWS: WorkflowDefinition[] = [
-  {
-    name: 'standard-draft',
-    description: 'Default draft → reviewer∥challenger → synthesize pipeline',
-    steps: [
-      { id: 'draft', kind: 'llm', config: { role: 'writer', withTools: true } },
-      {
-        id: 'quality-gate',
-        kind: 'parallel',
-        config: {
-          branches: [
-            { id: 'review', kind: 'llm', config: { role: 'reviewer' } },
-            { id: 'challenge', kind: 'llm', config: { role: 'challenger' } },
-          ],
-        },
-      },
-      { id: 'synthesize', kind: 'tool', config: { name: 'synthesizer' } },
-    ],
-    tags: ['builtin', 'orchestrator'],
-  },
-];
+
 
 interface WorkflowSource {
   registry: WorkflowRegistry;
@@ -84,7 +57,7 @@ export async function loadWorkflowRegistry(workspaceRoot: string): Promise<Workf
   // user-defined names (last-writer-wins would otherwise let a user's
   // `quality-gate.yaml` silently shadow the built-in).
   const builtin = new WorkflowRegistry();
-  for (const wf of BUILTIN_WORKFLOWS) builtin.register(wf);
+
   // Register the engine/mesh-owned built-in workflows via the canonical
   // core API (CoordinatorEngine/AgentMesh no longer expose static
   // registration methods).
@@ -205,6 +178,7 @@ export function registerWorkflowCommand(
       if (options.input && options.input !== '{}') {
         try {
           parsedInput = JSON.parse(options.input);
+          if (!parsedInput || typeof parsedInput !== 'object' || Array.isArray(parsedInput)) throw new Error('Workflow input must be a JSON object');
         } catch (err) {
           console.error(`\n✗ --input is not valid JSON: ${err instanceof Error ? err.message : err}\n`);
           process.exitCode = 1;

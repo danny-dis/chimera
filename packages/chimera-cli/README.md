@@ -26,7 +26,14 @@ build steps, then run `pnpm chimera setup`.
 
 ```bash
 chimera code "fix the off-by-one in src/parser.ts" --verify "npm test"
+chimera code "fix src/parser.ts" --verify "node verify.cjs" --verify-input verify.cjs
 ```
+
+`--verify-input` is repeatable on `code`, `debug`, `oal`, and `parallel`.
+It pins existing verifier/fixture file contents before generation, including
+repair and checkpoint resume. Workflow coding steps accept the same paths in
+`inputs.verificationInputs`. Only declared files are protected; this detects
+changes at verification boundaries, not transient writes restored between them.
 
 Inspect the worktree diff and run the relevant tests and build checks yourself;
 the command's completion status alone is not proof that a task is correct.

@@ -10,7 +10,7 @@ it.each([false, true])('forwards explicit goal yolo=%s into the canonical tool c
   await router.executeGoal('run caller verification');
   expect(build).toHaveBeenCalledWith('code', expect.objectContaining({ yolo }));
 });
-it.each(['hung', 'late'])('bounds a %s goal result even when execution ignores abort', async (kind) => {
+it.each(['hung', 'late'])('retains a %s goal until settlement and rejects cancelled output', async (kind) => {
   const controller = new AbortController();
   vi.spyOn(AbortSignal, 'timeout').mockReturnValue(controller.signal);
   const router = new CliRouter() as any;
@@ -26,7 +26,12 @@ it.each(['hung', 'late'])('bounds a %s goal result even when execution ignores a
   try {
     await vi.waitFor(() => expect(execute).toHaveBeenCalledOnce());
     controller.abort(new Error('goal timeout'));
-    if (kind === 'late') release({ status: 'done', output: 'late', cost: 0, agentCount: 1 });
+    if (kind === 'hung') {
+      await new Promise(resolve => setTimeout(resolve, 20));
+      expect(outcome).toBeUndefined();
+      expect(dispose).not.toHaveBeenCalled();
+    }
+    release({ status: 'done', output: 'late', cost: 0, agentCount: 1 });
     await vi.waitFor(() => expect(outcome).toBeInstanceOf(Error), { timeout: 200 });
     await checked;
     expect((outcome as Error).message).toBe('goal timeout');

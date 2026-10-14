@@ -32,6 +32,21 @@ it('does not bypass read-only tool policy for a workflow', async () => {
   await expect(access(join(root, 'proof.txt'))).rejects.toThrow();
 });
 
+it.each(['done', 'needs_user'])('tool-enabled workflow uses canonical execution and honors %s', async status => {
+  const root = await mkdtemp(join(tmpdir(), 'chimera-workflow-coding-')); roots.push(root);
+  const tools = createToolContext('code', { interactive: false });
+  const eventStream = new EventStream();
+  const execute = vi.fn(async () => ({ status, output: 'canonical result' }));
+  const result = await runWorkflowInContext({ name: 'coding', steps: [{ id: 'writer', kind: 'llm', config: { role: 'writer', toolLoop: true, preset: 'hive' } }] },
+    { writer, toolExecutor: tools.toolExecutor, orchestrator: { execute } as any }, {
+      workspaceRoot: root, mode: 'code', sessionId: 'coding-test', eventStream, costTracker: new CostTracker(eventStream),
+      inputs: { task: 'Create sum.js', verificationCommands: ['node verify.cjs'], verificationOutputs: ['dist'] },
+    });
+  expect(execute).toHaveBeenCalledWith(expect.objectContaining({ task: 'Create sum.js', mode: 'code', preset: 'hive', verificationCommands: ['node verify.cjs'], verificationOutputs: ['dist'] }));
+  expect(result.status).toBe(status === 'done' ? 'success' : 'error');
+  if (status === 'done') expect((result.outputs.writer as any).usage).toBeUndefined();
+});
+
 it('rejects offline mock providers rather than certifying a workflow run', async () => {
   const tools = createToolContext('code', { interactive: false });
   const eventStream = new EventStream();

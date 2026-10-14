@@ -24,7 +24,7 @@ import { findInSources, loadWorkflowRegistry } from './commands/workflow.js';
 import { runWorkflowInContext } from './workflow-runtime.js';
 
 import { autoGenerateConfig, configExists, loadConfig, getProvidersByRole, getDefaultPreset, type ResolvedProvider, type ChimeraConfig } from './config-loader.js';
-import { cleanupStaleWorktrees, removeWorktree } from '@chimera/isolation';
+
 // @chimera/tui depends on Ink, which is ESM with top-level await.
 // Loading it synchronously fails under Node ≥ 22 when this CJS module requires it.
 // We import it dynamically inside `startTui()` instead.
@@ -544,6 +544,7 @@ export class CliRouter {
         style,
         verificationCommands,
         verificationOutputs: opts.verifyOutput as string[] | undefined,
+        verificationInputs: opts.verifyInput as string[] | undefined,
       });
 
       skillModel.observeTaskOutcome({ clean: result.status === 'done' });
@@ -736,6 +737,7 @@ export class CliRouter {
       .description('Write code')
       .option('--verify <command>', 'caller-owned verification command (repeatable)', collectVerification, [])
       .option('--verify-output <path>', 'allow newly generated files under this caller-declared output path (repeatable)', collectVerification, [])
+      .option('--verify-input <path>', 'protect this existing caller-owned verifier file across generation and repair (repeatable)', collectVerification, [])
       .option('--preset <mode>', 'deliberation preset (solo|duo|trio|fusion|hive|swarm|auto)', 'solo')
       .option('--json', 'emit a JSON result instead of human-readable output')
       .option('--yolo', 'auto-approve all tool calls (off by default; for CI/trusted automation)')
@@ -749,6 +751,7 @@ export class CliRouter {
       .description('Debug an issue')
       .option('--verify <command>', 'caller-owned verification command (repeatable)', collectVerification, [])
       .option('--verify-output <path>', 'allow newly generated files under this caller-declared output path (repeatable)', collectVerification, [])
+      .option('--verify-input <path>', 'protect this existing caller-owned verifier file across generation and repair (repeatable)', collectVerification, [])
       .option('--preset <mode>', 'deliberation preset (solo|duo|trio|fusion|hive|swarm|auto)', 'solo')
       .option('--json', 'emit a JSON result instead of human-readable output')
       .option('--yolo', 'auto-approve all tool calls (off by default; for CI/trusted automation)')
@@ -773,6 +776,7 @@ export class CliRouter {
       .description('Run an autonomous optimization loop (bounded budget, serial quality gate)')
       .option('--verify <command>', 'caller-owned verification command (repeatable)', collectVerification, [])
       .option('--verify-output <path>', 'allow newly generated files under this caller-declared output path (repeatable)', collectVerification, [])
+      .option('--verify-input <path>', 'protect this existing caller-owned verifier file across generation and repair (repeatable)', collectVerification, [])
       .option('--preset <mode>', 'deliberation preset (solo)', 'solo')
       .option('--json', 'emit a JSON result instead of human-readable output')
       .option('--yolo', 'auto-approve all tool calls (off by default; for CI/trusted automation)')
@@ -786,6 +790,7 @@ export class CliRouter {
       .description('Execute a coding task with coordinated sub-agents and caller verification')
       .option('--verify <command>', 'caller-owned verification command (repeatable)', collectVerification, [])
       .option('--verify-output <path>', 'allow newly generated files under this caller-declared output path (repeatable)', collectVerification, [])
+      .option('--verify-input <path>', 'protect this existing caller-owned verifier file across generation and repair (repeatable)', collectVerification, [])
       .option('--json', 'emit a JSON result instead of human-readable output')
       .option('--yolo', 'explicitly auto-approve tools (off by default)')
       .action(async (task: string, options) => {
@@ -852,8 +857,7 @@ export class CliRouter {
         console.log(`  Status: ${checkpoint.metadata.status}\n`);
 
         if (checkpoint.metadata.status === 'completed') {
-          console.log('  Session already completed. Re-running task.\n');
-          await this.run(checkpoint.mode, checkpoint.task);
+          console.log('  Session already completed; no actions replayed.\n');
           return;
         }
 
@@ -883,8 +887,13 @@ export class CliRouter {
             mode: checkpoint.mode,
             providers: { writer, reviewer, ...(challenger ? { challenger } : {}) },
             conversationHistory: priorHistory,
+            verificationCommands: (checkpoint as any).verificationContract?.commands,
+            verificationOutputs: (checkpoint as any).verificationContract?.generatedOutputs,
+          }).finally(async () => {
+            await this.sessionStore.save(orchestrator.exportState(sessionId, checkpoint.task, checkpoint.mode));
           });
           this.printResult(result);
+          if (result.status !== 'done') process.exitCode = 1;
         } catch (err) {
           console.error(`\n✗ Error: ${err instanceof Error ? err.message : String(err)}\n`);
           process.exit(1);
@@ -972,6 +981,7 @@ export class CliRouter {
           console.log(`\n🔍 Scanning for stale worktrees in: ${worktreeDir}`);
           console.log(`  Max age: ${Math.round(maxAgeMs / 86400000)} days\n`);
 
+          const { cleanupStaleWorktrees, removeWorktree } = await import('@chimera/isolation');
           const staleWorktrees = await cleanupStaleWorktrees(worktreeDir, maxAgeMs);
 
           if (staleWorktrees.length === 0) {
@@ -1073,7 +1083,9 @@ export class CliRouter {
       ? adaptProvider(mapped.reviewer)
       : (allProvidersTui.length > 1 ? createFallbackProvider(allProvidersTui) : adaptProvider(allProvidersTui[0]));
     const challenger = mapped.challenger ? adaptProvider(mapped.challenger) : undefined;
-    const ctx = await this.buildRunContext(initialMode);
+    const yolo = this.program.opts().yolo === true || process.argv.includes('--yolo');
+    const interactive = process.stdin.isTTY === true;
+    const ctx = await this.buildRunContext(initialMode, { yolo, interactive });
     const orchestrator = ctx.orchestrator;
     // Pass backend URL from config to orchestrator for alias resolution
     const tuiConfig = loadConfig();
@@ -1083,14 +1095,14 @@ export class CliRouter {
     if (tuiBackendUrl) {
       orchestrator.setConfigBackend(tuiBackendUrl, tuiConfig?.providers?.[0]?.api_key);
     }
-    const sessionId = this.sessionStore.generateSessionId();
+    let sessionId = this.sessionStore.generateSessionId();
 
     let currentMessages: Message[] = [];
     let currentAgents: Agent[] = [];
     let currentCostData: CostData = { currentCost: 0, budget: 10, breakdown: [] };
     let currentEvents: EventLogEntry[] = [];
     let currentMode: Mode = initialMode;
-    let currentPreset: DeliberationMode = 'solo';
+    let currentPreset: DeliberationMode = getDefaultPreset() ?? 'solo';
     let activeTool: ToolActivity | undefined;
     let currentDiffFiles: DiffFile[] = [];
     const conversationHistory: Array<{ role: string; content: string }> = [];
@@ -1165,26 +1177,18 @@ export class CliRouter {
       return files;
     };
 
-    /** Build cost data from agent token usage. */
-    const buildLiveCostData = (): CostData => {
-      let inputTokens = 0;
-      let outputTokens = 0;
-      for (const agent of currentAgents) {
-        inputTokens += agent.tokenUsage.input;
-        outputTokens += agent.tokenUsage.output;
-      }
-      return {
-        currentCost: 0,
-        budget: 10,
-        breakdown: [{
-          provider: 'default',
-          model: 'default',
-          inputTokens,
-          outputTokens,
-          cost: 0,
-        }],
-      };
-    };
+    // The tracker exposes spend only; never infer tokens from spend or progress.
+    const buildLiveCostData = (): CostData => ({
+      currentCost: orchestrator.getCostTracker().getTotalCost(),
+      budget: 10,
+      breakdown: Object.entries(orchestrator.getCostTracker().getSpendByProvider()).map(([role, cost]) => ({
+        provider: role,
+        model: '',
+        inputTokens: 0,
+        outputTokens: 0,
+        cost,
+      })),
+    });
 
     /** Load sessions from CheckpointStore for the SessionBrowser. */
     const loadSessions = async () => {
@@ -1204,380 +1208,436 @@ export class CliRouter {
     };
 
     const workspaceRoot = process.cwd();
+    const providers = { writer, reviewer, ...(challenger ? { challenger } : {}) };
+    let tui!: TUIHandle;
+    let activeController: AbortController | undefined;
+    let activeOperation: Promise<unknown> | undefined;
+    let restoringSession = false;
+    let exiting = false;
+    let unsubscribe = () => {};
+    let shutdownPromise: Promise<void> | undefined;
+    let loopState: ReturnType<ReplContext['getLoopState']> = null;
 
-    const tui: TUIHandle = runTUI({
-      mode: currentMode,
-      preset: currentPreset,
-      messages: currentMessages,
-      agents: currentAgents,
-      costData: currentCostData,
-      tokenUsage: computeTokenUsage(),
-      diffFiles: currentDiffFiles,
-      events: currentEvents,
-      sessions: await loadSessions(),
-      sessionId,
-      activeTool,
-      workingDir: workspaceRoot,
-      skillModel,
-      runWorkflow: (name, args) => this.runNamedWorkflow(name, args, currentMode),
-      runTask: async (task, options) => options.kind === 'goal'
-        ? this.executeGoal(task, options.verificationCommands)
-        : orchestrator.execute({ task, mode: currentMode, providers: { writer, reviewer, ...(challenger ? { challenger } : {}) }, preset: currentPreset }),
-      onSendMessage: async (text) => {
-        // Reset agents at the start of each new task so they don't accumulate
-        currentAgents = [];
-        activeTool = undefined;
+    const shutdown = (): Promise<void> => shutdownPromise ??= (async () => {
+      exiting = true;
+      activeController?.abort(new Error('TUI closed'));
+      unsubscribe();
+      try {
+        await activeOperation?.catch(() => {});
+      } finally {
+        orchestrator.dispose();
+        tui?.cleanup();
+        await disposeAllLspServices();
+      }
+    })();
 
-        currentMessages = [...currentMessages, {
-          id: Math.random().toString(36).slice(2),
-          role: 'user',
-          content: text,
-          timestamp: Date.now()
-        }];
-        tui.update({ messages: currentMessages, agents: currentAgents, tokenUsage: computeTokenUsage(), diffFiles: currentDiffFiles, activeTool: undefined });
+    const notice = (content: string) => {
+      currentMessages = [...currentMessages, {
+        id: Math.random().toString(36).slice(2), role: 'system', content, timestamp: Date.now(),
+      }];
+      if (!exiting) tui.update({ messages: currentMessages, mode: currentMode, preset: currentPreset });
+    };
 
+    const runOperation = <T,>(operation: (mode: Mode, preset: DeliberationMode, signal: AbortSignal) => Promise<T>): Promise<T> => {
+      if (activeController || restoringSession || exiting) return Promise.reject(new Error('Another operation is active or the TUI is closing.'));
+      const mode = currentMode;
+      const preset = currentPreset;
+      const controller = new AbortController();
+      // An optional host-owned signal is composed, never replaced or aborted.
+      const contextSignal = (ctx as RunContext & { signal?: AbortSignal }).signal;
+      const signal = AbortSignal.any([controller.signal, ...(contextSignal ? [contextSignal] : [])]);
+      activeController = controller;
+      ctx.toolExecutor.setPermissionEngine(buildPermissionEngine(mode, yolo, interactive));
+      tui.update({ isRunning: true });
+      activeOperation = (async () => {
         try {
-          // Resolve preset aliases from config for multi-agent deliberation
-          const presetAliases = this.resolvePresetAliases(currentPreset);
+          signal.throwIfAborted();
+          return await operation(mode, preset, signal);
+        } finally {
+          controller.abort('operation-finished');
+          try {
+            currentCostData = buildLiveCostData();
+            if (!exiting) tui.update({ costData: currentCostData, sessions: await loadSessions() });
+          } finally {
+            activeController = undefined;
+            activeOperation = undefined;
+            activeTool = undefined;
+            if (!exiting) tui.update({ isRunning: false, activeTool: undefined });
+          }
+        }
+      })();
+      return activeOperation as Promise<T>;
+    };
 
-          // TODO: Phase 2 — wire up WorkflowDispatcher for background execution
-          await orchestrator.execute({
-            task: text,
-            mode: currentMode,
-            providers: { writer, reviewer, ...(challenger ? { challenger } : {}) },
-            preset: currentPreset,
-            presetAliases: presetAliases ?? undefined,
-            conversationHistory,
-            skillModel,
-            style,
-          });
+    const executeTask = async (task: string, mode: Mode, preset: DeliberationMode, signal: AbortSignal, verificationCommands?: string[], costCap = 10, goal = false) => {
+      const result = goal ? await this.executeGoal(task, verificationCommands, { context: ctx, signal, mode, preset }) : await orchestrator.execute({
+        task, mode, providers, preset, signal, costCap, verificationCommands,
+        presetAliases: this.resolvePresetAliases(preset) ?? undefined,
+        conversationHistory, skillModel, style,
+      });
+      const content = `${result.status === 'done' ? '' : `Status: ${result.status}\n`}${result.output || 'The model returned no response.'}`;
+      const last = currentMessages[currentMessages.length - 1];
+      currentMessages = last?.role === 'assistant'
+        ? [...currentMessages.slice(0, -1), { ...last, content }]
+        : [...currentMessages, { id: Math.random().toString(36).slice(2), role: 'assistant', content, timestamp: Date.now() }];
+      conversationHistory.push({ role: 'user', content: task }, { role: 'assistant', content: result.output.slice(0, 2000) });
+      if (conversationHistory.length > 20) conversationHistory.splice(0, conversationHistory.length - 20);
+      if (!exiting) tui.update({ messages: currentMessages });
+      await this.sessionStore.save(orchestrator.exportState(sessionId, task, mode));
+      return result;
+    };
 
-          // If the deliberation produced empty output (degraded provider),
-          // surface a user-visible error instead of showing a blank response.
+    const onSendMessage = async (text: string) => {
+      try {
+        await runOperation(async (mode, preset, signal) => {
+          currentAgents = [];
+          activeTool = undefined;
+          currentMessages = [...currentMessages, {
+            id: Math.random().toString(36).slice(2), role: 'user', content: text, timestamp: Date.now(),
+          }];
+          tui.update({ messages: currentMessages, agents: currentAgents, tokenUsage: computeTokenUsage(), activeTool: undefined });
+          await executeTask(text, mode, preset, signal);
+        });
+      } catch (err) {
+        const errorMsg = formatProviderError(err);
+        currentEvents = [...currentEvents, { id: Math.random().toString(36).slice(2), timestamp: Date.now(), type: 'error', message: errorMsg }].slice(-50);
+        notice(`Error: ${errorMsg}`);
+        if (!exiting) tui.update({ events: currentEvents });
+      }
+    };
+
+    const runTask: NonNullable<import('@chimera/tui').CommandContext['runTask']> = (task, options) => runOperation(async (mode, preset, signal) => {
+      const iterations = options.kind === 'loop' ? options.maxIterations ?? 1 : 1;
+      if (!Number.isSafeInteger(iterations) || iterations < 1 || iterations > 100) throw new Error('Loop iterations must be between 1 and 100.');
+      if (options.kind === 'goal' && mapped.fallback.some(provider => provider.getModel().provider === 'mock')) {
+        throw new Error('Goal execution requires a configured real provider. Run `chimera setup` first.');
+      }
+      const baseline = orchestrator.getCostTracker().getTotalCost();
+      loopState = { kind: options.kind, task, maxIterations: iterations, currentIteration: 0, status: 'running', startedAt: Date.now() };
+      try {
+        let result!: OrchestratorResult;
+        if (options.kind === 'goal') {
+          loopState.currentIteration = 1;
+          result = await executeTask(task, mode, preset, signal, options.verificationCommands, 10, true);
+        } else for (let i = 0; i < iterations; i++) {
+          signal.throwIfAborted();
+          const remaining = 10 - (orchestrator.getCostTracker().getTotalCost() - baseline);
+          if (remaining <= 0) throw new Error('Task spending limit exceeded ($10).');
+          loopState.currentIteration = i + 1;
+          result = await executeTask(task, mode, preset, signal, options.verificationCommands, remaining);
+          if (result.status !== 'done') break;
+        }
+        loopState.status = result.status === 'done' ? 'completed' : 'failed';
+        return { status: result.status, output: result.output, cost: orchestrator.getCostTracker().getTotalCost() - baseline };
+      } catch (err) {
+        loopState.status = 'failed';
+        throw err;
+      }
+    });
+
+    const runWorkflow: NonNullable<import('@chimera/tui').CommandContext['runWorkflow']> = (name, args) => runOperation(async (mode, _preset, signal) => {
+      const found = findInSources(await loadWorkflowRegistry(workspaceRoot), name);
+      signal.throwIfAborted();
+      if (!found) return null;
+      const inputs = args.trim().startsWith('{') ? JSON.parse(args) : { args, task: args };
+      const result = await runWorkflowInContext(found.definition, ctx, {
+        inputs, mode, signal, workspaceRoot, sessionId,
+        eventStream: orchestrator.getEventStream(), costTracker: orchestrator.getCostTracker(),
+      });
+      return { status: result.status, output: result.error ?? JSON.stringify(result.outputs) };
+    });
+
+    const onModeChange = (mode: Mode) => {
+      if (activeController || restoringSession) { notice('Cannot change mode while an operation is active.'); return; }
+      currentMode = mode;
+      ctx.toolExecutor.setPermissionEngine(buildPermissionEngine(mode, yolo, interactive));
+      tui.update({ mode });
+    };
+    const onPresetChange = (preset: DeliberationMode) => {
+      if (activeController || restoringSession) { notice('Cannot change preset while an operation is active.'); return; }
+      currentPreset = preset;
+      tui.update({ preset });
+    };
+    const commandContext: Partial<import('@chimera/tui').CommandContext> = {
+      get sessionId() { return sessionId; },
+      getMode: () => currentMode, setMode: onModeChange,
+      getPreset: () => currentPreset, setPreset: onPresetChange,
+      getCostData: buildLiveCostData,
+      getAggregateCost: () => orchestrator.getCostTracker().getTotalCost(),
+      getRoleSpend: role => orchestrator.getCostTracker().getSpend(role),
+      getTokenUsage: () => Object.entries(orchestrator.getCostTracker().getSpendByProvider()).map(([role, spend]) => ({ role, spend })),
+      getLoopState: () => loopState,
+      listSessions: async () => (await this.sessionStore.list()).map(({ id, mode, status, task }) => ({ id, mode, status, task })),
+      loadSession: async id => { const checkpoint = await this.sessionStore.load(id); return checkpoint ? { task: checkpoint.task, mode: checkpoint.mode } : null; },
+      getSessionCount: async () => (await this.sessionStore.list()).length,
+      getMemoryEntries: () => this.memory.getAll(),
+      getMemorySize: () => this.memory.size(),
+      getProviders: async () => mapped.fallback.map(provider => ({ getModel: () => {
+        const { provider: name, name: modelName, id, contextWindow } = provider.getModel();
+        return { provider: name, name: modelName, id, contextWindow };
+      } })),
+      hasOrchestrator: () => !exiting,
+      getEventStream: () => ({ getAll: () => orchestrator.getEventStream().getAll().map(event => ({ ...event })) }),
+      initAgentsMd: async (cwd, options) => (await import('./commands/init.js')).initAgentsMd(cwd, options),
+      readConfig: async () => {
+        const config = loadConfig();
+        return config ? {
+          providers: config.providers.map(({ name, provider, model, role }) => ({ name, provider, model, role })),
+          defaults: { preset: config.defaults?.preset },
+        } : null;
+      },
+      skillModel, runTask, runWorkflow,
+    };
+
+    try {
+      currentCostData = buildLiveCostData();
+      tui = runTUI({
+        mode: currentMode, preset: currentPreset, messages: currentMessages, agents: currentAgents,
+        costData: currentCostData, tokenUsage: computeTokenUsage(), diffFiles: currentDiffFiles,
+        events: currentEvents, sessions: await loadSessions(), sessionId, activeTool,
+        workingDir: workspaceRoot, skillModel, commandContext, isRunning: false,
+        onCancel: () => { activeController?.abort(new Error('Cancelled by user')); },
+        runWorkflow, runTask, onSendMessage, onModeChange, onPresetChange,
+        onSessionSelect: async id => {
+          if (activeController || restoringSession || exiting) { notice('Cannot change session while an operation is active.'); return; }
+          restoringSession = true;
+          try {
+            const checkpoint = await this.sessionStore.load(id);
+            if (!checkpoint) throw new Error('Session not found');
+            await orchestrator.restoreState(checkpoint);
+            currentMessages = [];
+            currentAgents = [];
+            currentEvents = [];
+            currentDiffFiles = [];
+            sessionId = checkpoint.sessionId;
+            currentMode = checkpoint.mode;
+            ctx.toolExecutor.setPermissionEngine(buildPermissionEngine(currentMode, yolo, interactive));
+            currentMessages = checkpoint.messages.filter(message => message.role === 'user' || message.role === 'assistant').map((message, index) => ({
+              id: `${sessionId}-${index}`, role: message.role as 'user' | 'assistant', content: message.content, timestamp: Date.now(),
+            }));
+            conversationHistory.splice(0, conversationHistory.length, ...currentMessages.slice(-20).map(({ role, content }) => ({ role, content })));
+            currentCostData = buildLiveCostData();
+            tui.update({ sessionId, mode: currentMode, commandContext, messages: currentMessages, agents: currentAgents,
+              events: currentEvents, diffFiles: currentDiffFiles, costData: currentCostData, tokenUsage: computeTokenUsage() });
+            notice(`Session ${sessionId} loaded: ${checkpoint.task.slice(0, 80)}`);
+          } catch (err) {
+            notice(`Failed to load session: ${err instanceof Error ? err.message : String(err)}`);
+          } finally {
+            restoringSession = false;
+          }
+        },
+        onSessionDelete: async id => {
+          if (restoringSession || (activeController && id === sessionId)) { notice('Cannot delete the active session while an operation is active.'); return; }
+          try {
+            if (!await this.sessionStore.delete(id)) throw new Error('Session not found or could not be deleted');
+            tui.update({ sessions: await loadSessions() });
+          } catch (err) {
+            notice(`Failed to delete session: ${err instanceof Error ? err.message : String(err)}`);
+          }
+        },
+        onExit: async () => {
+          await shutdown();
+          return this.exitAfterLspShutdown();
+        },
+      });
+
+      // Subscribe to events and update TUI state
+      unsubscribe = orchestrator.getEventStream().subscribe('*', (event) => {
+        if (restoringSession || exiting) return;
+        // ── Events log ──────────────────────────────────────────────────
+        currentEvents = [...currentEvents, {
+          id: Math.random().toString(36).slice(2),
+          timestamp: Date.now(),
+          type: event.type,
+          message: 'text' in event ? (event as any).text : event.type,
+          data: event as unknown as Record<string, unknown>
+        }].slice(-50);
+
+        // ── Agent lifecycle ─────────────────────────────────────────────
+        if (event.type === 'agent_spawned') {
+          currentAgents = [...currentAgents, {
+            id: event.agentId,
+            role: event.role as AgentRole,
+            provider: event.provider,
+            model: event.model,
+            status: 'running' as const,
+            tokenUsage: { input: 0, output: 0 }
+          }];
+        } else if (event.type === 'verified' || event.type === 'challenged') {
+          currentAgents = currentAgents.map(a =>
+            a.id === event.agentId ? { ...a, status: 'completed' as const } : a
+          );
+        } else if (event.type === 'patch_proposed') {
+          // Surface proposed changes in the DiffViewer (/diff, Ctrl+D).
+          const files = (event as any).files as string[] | undefined;
+          currentDiffFiles = collectDiffFiles(files);
+        }
+
+        // ── Workflow dispatch lifecycle ────────────────────────────────
+        if (event.type === 'workflow_dispatched') {
+          const e = event as any;
+          currentMessages = [...currentMessages, {
+            id: Math.random().toString(36).slice(2),
+            role: 'system',
+            content: `Workflow "${e.workflowName}" queued (run: ${e.workflowRunId})`,
+            timestamp: Date.now()
+          }];
+          tui.update({ messages: currentMessages });
+        } else if (event.type === 'workflow_run_completed') {
+          const e = event as any;
+          currentMessages = [...currentMessages, {
+            id: Math.random().toString(36).slice(2),
+            role: 'system',
+            content: `Workflow "${e.name}" ${e.status} (${e.durationMs}ms, ${e.stepCount} steps)`,
+            timestamp: Date.now()
+          }];
+          tui.update({ messages: currentMessages });
+        } else if (event.type === 'workflow_dispatch_failed') {
+          const e = event as any;
+          currentMessages = [...currentMessages, {
+            id: Math.random().toString(36).slice(2),
+            role: 'system',
+            content: `Workflow "${e.workflowName}" failed: ${e.error}`,
+            timestamp: Date.now()
+          }];
+          tui.update({ messages: currentMessages });
+        }
+
+        // ── Tool activity (live indicator) ──────────────────────────────
+        if (event.type === 'tool_call_requested') {
+          const call = (event as any).call as { tool?: string; args?: Record<string, unknown> } | undefined;
+          activeTool = {
+            tool: call?.tool ?? 'unknown',
+            args: call?.args ? JSON.stringify(call.args).slice(0, 40) : undefined,
+            status: 'running',
+            startedAt: Date.now(),
+          };
+          // Also push a tool-call indicator onto the current/last assistant message
           const lastMsg = currentMessages[currentMessages.length - 1];
-          if (lastMsg?.role === 'assistant' && (!lastMsg.content || lastMsg.content.trim().length === 0)) {
-            const providerName = mapped.writer?.getModel()?.provider ?? 'unknown';
-            const modelName = mapped.writer?.getModel()?.id ?? 'unknown';
+          if (lastMsg?.role === 'assistant') {
             currentMessages = [
               ...currentMessages.slice(0, -1),
               {
                 ...lastMsg,
-                content: [
-                  `The model returned an empty response.`,
-                  `Provider: ${providerName} | Model: ${modelName}`,
-                  ``,
-                  `Possible causes:`,
-                  `- Invalid or missing API key`,
-                  `- Model not available or deprecated`,
-                  `- Rate limit or quota exceeded`,
-                  `- Content filter blocked the response`,
-                  ``,
-                  `Check your .chimera/config.yaml and environment variables.`,
-                ].join('\n'),
-                analysis: undefined,
+                toolCalls: [
+                  ...(lastMsg.toolCalls ?? []),
+                  { name: call?.tool ?? 'unknown', status: 'running' as const, args: call?.args ? JSON.stringify(call.args).slice(0, 60) : undefined },
+                ],
               },
             ];
           }
-
-          // Assistant message already added by event-stream handlers
-          // (deliberation_result / final_response). Just sync state.
-          tui.update({ messages: currentMessages });
-
-          // Accumulate conversation history for context in subsequent turns
-          const lastAssistantMsg = currentMessages[currentMessages.length - 1];
-          if (lastAssistantMsg?.role === 'assistant' && lastAssistantMsg.content) {
-            conversationHistory.push({ role: 'user', content: text });
-            conversationHistory.push({ role: 'assistant', content: lastAssistantMsg.content.slice(0, 2000) });
-            // Cap history at 10 turns (20 messages) to prevent context overflow
-            if (conversationHistory.length > 20) {
-              conversationHistory.splice(0, conversationHistory.length - 20);
-            }
+        } else if (event.type === 'tool_call_result') {
+          const result = (event as any).result as { tool?: string; output?: string; exitCode?: number } | undefined;
+          activeTool = {
+            tool: result?.tool ?? 'unknown',
+            status: 'completed',
+            startedAt: Date.now(),
+          };
+          // Update the matching tool-call indicator on the last assistant message
+          const lastMsg = currentMessages[currentMessages.length - 1];
+          if (lastMsg?.role === 'assistant' && lastMsg.toolCalls) {
+            const updatedCalls = lastMsg.toolCalls.map((tc) =>
+              tc.name === result?.tool && tc.status === 'running'
+                ? { ...tc, status: 'completed' as const, result: result?.exitCode !== undefined ? `exit ${result.exitCode}` : undefined }
+                : tc
+            );
+            currentMessages = [
+              ...currentMessages.slice(0, -1),
+              { ...lastMsg, toolCalls: updatedCalls },
+            ];
           }
-
-          // Refresh cost and sessions after task completes
-          currentCostData = buildLiveCostData();
-          tui.update({
-            costData: currentCostData,
-            tokenUsage: computeTokenUsage(),
-            diffFiles: currentDiffFiles,
-            sessions: await loadSessions(),
-          });
-        } catch (err) {
-          const errorMsg = formatProviderError(err);
-
-          // Show the error as an assistant message so the user sees it in chat
-          currentMessages = [...currentMessages, {
-            id: Math.random().toString(36).slice(2),
-            role: 'assistant',
-            content: `Error: ${errorMsg}`,
-            timestamp: Date.now(),
-          }];
-
-          currentEvents = [...currentEvents, {
-            id: Math.random().toString(36).slice(2),
-            timestamp: Date.now(),
-            type: 'error',
-            message: errorMsg,
-          }];
-          tui.update({ messages: currentMessages, events: currentEvents });
         }
-      },
-      onModeChange: (mode) => {
-        currentMode = mode;
-        ctx.toolExecutor.setPermissionEngine(buildPermissionEngine(mode, false, true));
-        tui.update({ mode: currentMode });
-      },
-      onPresetChange: (preset) => {
-        currentPreset = preset;
-        tui.update({ preset: currentPreset });
-      },
-      onSessionSelect: async (id) => {
-        try {
-          const cp = await this.sessionStore.load(id);
-          if (cp) {
-            currentMode = cp.mode;
-            ctx.toolExecutor.setPermissionEngine(buildPermissionEngine(cp.mode, false, true));
-            // Append a system message indicating resume
+
+        // ── Live cost from the tracker ──────────────────────────────────
+        currentCostData = buildLiveCostData();
+        if (event.type === 'cost_alert') {
+          // Update cost data from orchestrator
+          currentCostData = buildLiveCostData();
+        }
+
+        // ── Deliberation result (detailed analysis) ────────────────────
+        if (event.type === 'deliberation_result') {
+          const lastMsg = currentMessages[currentMessages.length - 1];
+          const output = (event as any).output ?? '';
+          // Only attach analysis when there is actual content to display;
+          // empty output with analysis metadata is confusing to the user.
+          const hasContent = output.trim().length > 0;
+          const analysis = hasContent ? (event as any).analysis : undefined;
+
+          if (lastMsg && lastMsg.role === 'assistant') {
+            currentMessages = [
+              ...currentMessages.slice(0, -1),
+              { ...lastMsg, content: output, analysis }
+            ];
+          } else {
             currentMessages = [...currentMessages, {
               id: Math.random().toString(36).slice(2),
-              role: 'system',
-              content: `Session ${id} loaded: ${cp.task.slice(0, 80)}`,
-              timestamp: Date.now(),
+              role: 'assistant',
+              content: output,
+              analysis,
+              timestamp: Date.now()
             }];
-            tui.update({ mode: cp.mode, messages: currentMessages });
           }
-        } catch (err) {
-          const msg = err instanceof Error ? err.message : String(err);
-          tui.update({ messages: [{ id: Math.random().toString(36).slice(2), role: 'system', content: `Failed to load session: ${msg}`, timestamp: Date.now() }] });
-        }
-      },
-      onSessionDelete: async (id) => {
-        try {
-          await this.sessionStore.delete(id);
-          tui.update({ sessions: await loadSessions() });
-        } catch (err) {
-          const msg = err instanceof Error ? err.message : String(err);
-          tui.update({ messages: [{ id: Math.random().toString(36).slice(2), role: 'system', content: `Failed to delete session: ${msg}`, timestamp: Date.now() }] });
-        }
-      },
-      onExit: () => {
-        tui.cleanup();
-        return this.exitAfterLspShutdown();
-      },
-    });
-
-    // Subscribe to events and update TUI state
-    orchestrator.getEventStream().subscribe('*', (event) => {
-      // ── Events log ──────────────────────────────────────────────────
-      currentEvents = [...currentEvents, {
-        id: Math.random().toString(36).slice(2),
-        timestamp: Date.now(),
-        type: event.type,
-        message: 'text' in event ? (event as any).text : event.type,
-        data: event as unknown as Record<string, unknown>
-      }].slice(-50);
-
-      // ── Agent lifecycle ─────────────────────────────────────────────
-      if (event.type === 'agent_spawned') {
-        currentAgents = [...currentAgents, {
-          id: event.agentId,
-          role: event.role as AgentRole,
-          provider: event.provider,
-          model: event.model,
-          status: 'running' as const,
-          tokenUsage: { input: 0, output: 0 }
-        }];
-      } else if (event.type === 'verified' || event.type === 'challenged') {
-        currentAgents = currentAgents.map(a =>
-          a.id === event.agentId ? { ...a, status: 'completed' as const } : a
-        );
-      } else if (event.type === 'patch_proposed') {
-        // Surface proposed changes in the DiffViewer (/diff, Ctrl+D).
-        const files = (event as any).files as string[] | undefined;
-        currentDiffFiles = collectDiffFiles(files);
-      }
-
-      // ── Workflow dispatch lifecycle ────────────────────────────────
-      if (event.type === 'workflow_dispatched') {
-        const e = event as any;
-        currentMessages = [...currentMessages, {
-          id: Math.random().toString(36).slice(2),
-          role: 'system',
-          content: `Workflow "${e.workflowName}" queued (run: ${e.workflowRunId})`,
-          timestamp: Date.now()
-        }];
-        tui.update({ messages: currentMessages });
-      } else if (event.type === 'workflow_run_completed') {
-        const e = event as any;
-        currentMessages = [...currentMessages, {
-          id: Math.random().toString(36).slice(2),
-          role: 'system',
-          content: `Workflow "${e.name}" ${e.status} (${e.durationMs}ms, ${e.stepCount} steps)`,
-          timestamp: Date.now()
-        }];
-        tui.update({ messages: currentMessages });
-      } else if (event.type === 'workflow_dispatch_failed') {
-        const e = event as any;
-        currentMessages = [...currentMessages, {
-          id: Math.random().toString(36).slice(2),
-          role: 'system',
-          content: `Workflow "${e.workflowName}" failed: ${e.error}`,
-          timestamp: Date.now()
-        }];
-        tui.update({ messages: currentMessages });
-      }
-
-      // ── Tool activity (live indicator) ──────────────────────────────
-      if (event.type === 'tool_call_requested') {
-        const call = (event as any).call as { tool?: string; args?: Record<string, unknown> } | undefined;
-        activeTool = {
-          tool: call?.tool ?? 'unknown',
-          args: call?.args ? JSON.stringify(call.args).slice(0, 40) : undefined,
-          status: 'running',
-          startedAt: Date.now(),
-        };
-        // Also push a tool-call indicator onto the current/last assistant message
-        const lastMsg = currentMessages[currentMessages.length - 1];
-        if (lastMsg?.role === 'assistant') {
-          currentMessages = [
-            ...currentMessages.slice(0, -1),
-            {
-              ...lastMsg,
-              toolCalls: [
-                ...(lastMsg.toolCalls ?? []),
-                { name: call?.tool ?? 'unknown', status: 'running' as const, args: call?.args ? JSON.stringify(call.args).slice(0, 60) : undefined },
-              ],
-            },
-          ];
-        }
-      } else if (event.type === 'tool_call_result') {
-        const result = (event as any).result as { tool?: string; output?: string; exitCode?: number } | undefined;
-        activeTool = {
-          tool: result?.tool ?? 'unknown',
-          status: 'completed',
-          startedAt: Date.now(),
-        };
-        // Update the matching tool-call indicator on the last assistant message
-        const lastMsg = currentMessages[currentMessages.length - 1];
-        if (lastMsg?.role === 'assistant' && lastMsg.toolCalls) {
-          const updatedCalls = lastMsg.toolCalls.map((tc) =>
-            tc.name === result?.tool && tc.status === 'running'
-              ? { ...tc, status: 'completed' as const, result: result?.exitCode !== undefined ? `exit ${result.exitCode}` : undefined }
-              : tc
-          );
-          currentMessages = [
-            ...currentMessages.slice(0, -1),
-            { ...lastMsg, toolCalls: updatedCalls },
-          ];
-        }
-      }
-
-      // ── Live cost from cost_alert events ────────────────────────────
-      if (event.type === 'cost_alert') {
-        // Update cost data from orchestrator
-        currentCostData = buildLiveCostData();
-      }
-
-      // ── Deliberation result (detailed analysis) ────────────────────
-      if (event.type === 'deliberation_result') {
-        const lastMsg = currentMessages[currentMessages.length - 1];
-        const output = (event as any).output ?? '';
-        // Only attach analysis when there is actual content to display;
-        // empty output with analysis metadata is confusing to the user.
-        const hasContent = output.trim().length > 0;
-        const analysis = hasContent ? (event as any).analysis : undefined;
-
-        if (lastMsg && lastMsg.role === 'assistant') {
-          currentMessages = [
-            ...currentMessages.slice(0, -1),
-            { ...lastMsg, content: output, analysis }
-          ];
-        } else {
-          currentMessages = [...currentMessages, {
-            id: Math.random().toString(36).slice(2),
-            role: 'assistant',
-            content: output,
-            analysis,
-            timestamp: Date.now()
-          }];
-        }
-      }
-
-      // ── Final response ──────────────────────────────────────────────
-      if (event.type === 'final_response') {
-        const lastMsg = currentMessages[currentMessages.length - 1];
-        const eventOutput = (event as any).output;
-        const content = (eventOutput && eventOutput.trim().length > 0)
-          ? eventOutput
-          : (lastMsg?.role === 'assistant' ? lastMsg.content : 'Task completed.');
-
-        // Update cost from the final_response cost field
-        if ((event as any).cost !== undefined) {
-          currentCostData = buildLiveCostData();
         }
 
-        if (lastMsg && lastMsg.role === 'assistant') {
-          // Preserve analysis from deliberation_result if content is the same
-          // (avoids overwriting analysis with undefined when both events fire)
-          const contentChanged = content !== lastMsg.content;
-          currentMessages = [
-            ...currentMessages.slice(0, -1),
-            {
-              ...lastMsg,
+        // ── Final response ──────────────────────────────────────────────
+        if (event.type === 'final_response') {
+          const lastMsg = currentMessages[currentMessages.length - 1];
+          const eventOutput = (event as any).output;
+          const content = (eventOutput && eventOutput.trim().length > 0)
+            ? eventOutput
+            : (lastMsg?.role === 'assistant' ? lastMsg.content : `No response (status: ${(event as any).status ?? 'unknown'}).`);
+
+          // Update cost from the final_response cost field
+          if ((event as any).cost !== undefined) {
+            currentCostData = buildLiveCostData();
+          }
+
+          if (lastMsg && lastMsg.role === 'assistant') {
+            // Preserve analysis from deliberation_result if content is the same
+            // (avoids overwriting analysis with undefined when both events fire)
+            const contentChanged = content !== lastMsg.content;
+            currentMessages = [
+              ...currentMessages.slice(0, -1),
+              {
+                ...lastMsg,
+                content,
+                // Only clear analysis if content actually changed and event has no analysis
+                analysis: contentChanged ? (lastMsg.analysis ?? undefined) : lastMsg.analysis,
+                timestamp: Date.now(),
+              }
+            ];
+          } else {
+            currentMessages = [...currentMessages, {
+              id: Math.random().toString(36).slice(2),
+              role: 'assistant',
               content,
-              // Only clear analysis if content actually changed and event has no analysis
-              analysis: contentChanged ? (lastMsg.analysis ?? undefined) : lastMsg.analysis,
-              timestamp: Date.now(),
-            }
-          ];
-        } else {
-          currentMessages = [...currentMessages, {
-            id: Math.random().toString(36).slice(2),
-            role: 'assistant',
-            content,
-            timestamp: Date.now()
-          }];
+              timestamp: Date.now()
+            }];
+          }
+
+          // Clear active tool when task finishes
+          activeTool = undefined;
         }
 
-        // Clear active tool when task finishes
-        activeTool = undefined;
-      }
-
-      tui.update({
-        events: currentEvents,
-        agents: currentAgents,
-        messages: currentMessages,
-        costData: currentCostData,
-        tokenUsage: computeTokenUsage(),
-        diffFiles: currentDiffFiles,
-        activeTool,
-      });
-    });
-
-    if (initialTask) {
-      // Trigger initial task
-      currentMessages = [...currentMessages, {
-        id: Math.random().toString(36).slice(2),
-        role: 'user',
-        content: initialTask,
-        timestamp: Date.now()
-      }];
-      tui.update({ messages: currentMessages });
-
-      await orchestrator.execute({
-        task: initialTask,
-        mode: initialMode,
-        providers: { writer, reviewer, ...(challenger ? { challenger } : {}) },
-        preset: currentPreset,
+        tui.update({
+          events: currentEvents,
+          agents: currentAgents,
+          messages: currentMessages,
+          costData: currentCostData,
+          tokenUsage: computeTokenUsage(),
+          diffFiles: currentDiffFiles,
+          activeTool,
+        });
       });
 
-      // Refresh cost after initial task
-      currentCostData = buildLiveCostData();
-      tui.update({ costData: currentCostData, sessions: await loadSessions() });
+      if (initialTask) await onSendMessage(initialTask);
+      await tui.waitUntilExit();
+    } finally {
+      await shutdown();
     }
-
-    await tui.waitUntilExit();
   }
+
 
   private async executeWorkflowDefinition(
     definition: import('@chimera/core').WorkflowDefinition,
@@ -1585,13 +1645,15 @@ export class CliRouter {
     mode: Mode,
     eventStream?: EventStream,
   ) {
-    const context = await this.buildRunContext(mode);
-    return runWorkflowInContext(definition, context, {
-      inputs, mode, workspaceRoot: process.cwd(),
-      sessionId: this.sessionStore.generateSessionId(),
-      eventStream: eventStream ?? context.orchestrator.getEventStream(),
-      costTracker: context.orchestrator.getCostTracker(),
-    });
+    const context = await this.buildRunContext(mode, { yolo: this.program.opts().yolo === true, interactive: process.stdin.isTTY === true });
+    try {
+      return await runWorkflowInContext(definition, context, {
+        inputs, mode, workspaceRoot: process.cwd(),
+        sessionId: this.sessionStore.generateSessionId(),
+        eventStream: eventStream ?? context.orchestrator.getEventStream(),
+        costTracker: context.orchestrator.getCostTracker(),
+      });
+    } finally { context.orchestrator.dispose(); }
   }
 
   private async runNamedWorkflow(name: string, args: string, mode: Mode) {
@@ -1901,8 +1963,10 @@ export class CliRouter {
     }
   }
 
-  private async executeGoal(goal: string, verificationCommands: string[] = []): Promise<OrchestratorResult> {
-    const context = await this.buildRunContext('code', {
+  private async executeGoal(goal: string, verificationCommands: string[] = [], options?: {
+    context?: RunContext; signal?: AbortSignal; mode?: Mode; preset?: DeliberationMode;
+  }): Promise<OrchestratorResult> {
+    const context = options?.context ?? await this.buildRunContext(options?.mode ?? 'code', {
       yolo: this.program.opts().yolo === true || process.argv.includes('--yolo'),
       interactive: process.stdin.isTTY === true,
     });
@@ -1910,10 +1974,10 @@ export class CliRouter {
     const writerProvider = mapped.writer ?? mapped.fallback[0];
     const reviewerProvider = mapped.reviewer ?? writerProvider;
     if (!writerProvider || !reviewerProvider || writerProvider.getModel().provider === 'mock' || reviewerProvider.getModel().provider === 'mock') {
-      context.orchestrator.dispose();
+      if (!options?.context) context.orchestrator.dispose();
       throw new Error('Goal execution requires a configured real provider. Run `chimera setup` first.');
     }
-    const signal = AbortSignal.timeout(5 * 60_000);
+    const signal = AbortSignal.any([AbortSignal.timeout(5 * 60_000), ...(options?.signal ? [options.signal] : [])]);
     let providerCalls = 0;
     const budgetError = new Error('Goal provider call limit of 20 exceeded.');
     const boundedProvider = (provider: ModelProvider) => {
@@ -1936,22 +2000,23 @@ export class CliRouter {
         preset: DeliberationMode; costCap: number;
         verificationCommands?: string[]; signal?: AbortSignal;
       }) => Promise<OrchestratorResult>;
-      const result = await withAbort(() => execute.call(context.orchestrator, {
+      const execution = execute.call(context.orchestrator, {
         task: goal,
-        mode: 'code',
+        mode: options?.mode ?? 'code',
         providers: { writer, reviewer },
-        preset: 'solo',
+        preset: options?.preset ?? 'solo',
         costCap: 10,
         ...(verificationCommands.length ? { verificationCommands } : {}),
         signal,
-      }), signal);
+      });
+      const result = await execution;
       signal.throwIfAborted();
       if (providerCalls > 20) throw budgetError;
       return result;
     } catch (err) {
       throw err;
     } finally {
-      context.orchestrator.dispose();
+      if (!options?.context) context.orchestrator.dispose();
     }
   }
 
