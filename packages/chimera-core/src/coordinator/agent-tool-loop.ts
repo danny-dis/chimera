@@ -134,7 +134,7 @@ export interface RunAgentToolLoopParams {
   initialContent: string;
   /** Tool calls from the most recent response (the loop driver). */
   initialToolCalls: ToolCall[];
-  /** Max loop iterations (solo: maxDepth, trio: 1, spawner: 3). */
+  /** Max follow-up completions; drain the final emitted tool batch without another completion. */
   maxRounds: number;
   mode?: AgentToolLoopMode;
   // ── Force-min-files gate (solo only) ──
@@ -163,7 +163,7 @@ export interface RunAgentToolLoopResult {
   toolCalls: ToolCall[];
   /** Full transcript including appended assistant/tool/nudge messages. */
   messages: LoopChatMessage[];
-  /** Number of loop iterations that ran (0 if no tool calls to start with). */
+  /** Number of tool batches executed, including a drained final response. */
   round: number;
   /** Count of `write_file` calls seen across the loop + force gate. */
   wroteFileCount: number;
@@ -342,6 +342,7 @@ export async function runAgentToolLoop(
   let lastContent = initialContent;
   let round = 0;
   let wroteFileCount = 0;
+  const fileMutationTools = new Set(['write_file', 'edit_file', 'edit_block', 'search_replace', 'apply_patch']);
   let inputTokens = 0;
   let outputTokens = 0;
 
@@ -376,7 +377,7 @@ export async function runAgentToolLoop(
     }
   };
 
-  while (canLoop && currentToolCalls.length > 0 && round < maxRounds) {
+  while (canLoop && currentToolCalls.length > 0 && maxRounds > 0 && round <= maxRounds) {
     round++;
 
     repairWriteTargets(currentToolCalls);
@@ -387,7 +388,7 @@ export async function runAgentToolLoop(
     // `done`. ponytail: ground truth is disk state, not tool-call count.
     const preStat = new Map<string, { mtime: number; size: number } | null>();
     for (const tc of currentToolCalls) {
-      if (tc && typeof tc.name === 'string' && (tc.name === 'write_file' || tc.name === 'edit_file')) {
+      if (tc && fileMutationTools.has(tc.name)) {
         const p = (tc.arguments as { path?: string } | undefined)?.path;
         if (typeof p === 'string') preStat.set(p, statFile(workspaceRoot!, p));
       }
@@ -410,7 +411,7 @@ export async function runAgentToolLoop(
     // Count only write/edit tool calls whose target file actually changed on
     // disk (created, or mtime/size differs from the pre-execution snapshot).
     for (const tc of currentToolCalls) {
-      if (tc && typeof tc.name === 'string' && (tc.name === 'write_file' || tc.name === 'edit_file')) {
+      if (tc && fileMutationTools.has(tc.name)) {
         const p = (tc.arguments as { path?: string } | undefined)?.path;
         if (typeof p === 'string') {
           const before = preStat.get(p) ?? null;
@@ -434,6 +435,10 @@ export async function runAgentToolLoop(
         } as any);
       }
     }
+
+    // The last allowed completion still owns executable calls; do not discard
+    // them or replace them with a disconnected force-write conversation.
+    if (round > maxRounds) { currentToolCalls = []; break; }
 
     const nudge = mode === 'trio'
       ? CONTINUE_NUDGE
@@ -527,7 +532,7 @@ export async function runAgentToolLoop(
           // mutations (a no-op/failed forced write must NOT count as landed).
           const forcedPre = new Map<string, { mtime: number; size: number } | null>();
           for (const tc of forced.toolCalls) {
-            if (tc.name === 'write_file' || tc.name === 'edit_file') {
+            if (fileMutationTools.has(tc.name)) {
               const p = (tc.arguments as { path?: string } | undefined)?.path;
               if (typeof p === 'string') forcedPre.set(p, statFile(workspaceRoot!, p));
             }
@@ -542,7 +547,7 @@ export async function runAgentToolLoop(
             signal: params.signal,
           });
           for (const tc of forced.toolCalls) {
-            if (tc.name === 'write_file' || tc.name === 'edit_file') {
+            if (fileMutationTools.has(tc.name)) {
               const p = (tc.arguments as { path?: string } | undefined)?.path;
               if (typeof p === 'string') {
                 const before = forcedPre.get(p) ?? null;

@@ -41,7 +41,7 @@ function execute(args, cwd, env, { timeoutMs = 180000, runId = null } = {}) {
     const timer = setTimeout(() => {
       timedOut = true;
       if (process.platform === 'win32') {
-        try { execFileSync('taskkill.exe', ['/PID', String(child.pid), '/T', '/F'], { stdio: 'ignore' }); } catch { child.kill(); }
+        try { execFileSync('taskkill.exe', ['/PID', String(child.pid), '/T', '/F'], { stdio: 'ignore', timeout: 2000 }); } catch { child.kill(); }
       } else child.kill();
     }, timeoutMs);
     child.once('error', error => { clearTimeout(timer); reject(error); });
@@ -51,6 +51,13 @@ function execute(args, cwd, env, { timeoutMs = 180000, runId = null } = {}) {
 if (require.main === module) (async () => {
   const feature = process.argv.includes('--repo-feature') ? require('./live-repo-feature.cjs') : null;
   const rows = [], selected = combos.filter(row => !process.env.COMBO || `${row.mode}/${row.preset}` === process.env.COMBO);
+  const reportFile = path.join(destination, feature ? 'repo-feature-results.json' : 'results.json');
+  const runId = require('node:crypto').randomUUID();
+  const persist = (error) => fs.writeFileSync(reportFile, JSON.stringify({ runId, complete: !error && rows.length === selected.length && selected.length > 0,
+    expected: selected.length, passed: !error && rows.length === selected.length && rows.length > 0 && rows.every(item => item.passed),
+    ...(error ? { error: redact(`${error.name}: ${error.message}`) } : {}), rows }, null, 2));
+  persist();
+  try {
   assert.ok(selected.length, 'Unknown mode/preset');
   if (feature) assert.ok(process.env.COMBO && selected.every(row => ['code', 'auto'].includes(row.mode)), '--repo-feature requires one code/* or auto/* COMBO');
   req('dotenv').config({ path: path.join(repo, '.env'), quiet: true });
@@ -70,7 +77,9 @@ if (require.main === module) (async () => {
     const verifier = "const a=require('node:assert/strict'),{add}=require('./sum.js');a.equal(add(2,3),5);a.equal(add(-2,3),1);a.equal(add(0,0),0);a.equal(add(12,-5),7);";
     const coding = !!feature || ['code', 'debug', 'oal'].includes(mode);
     let fixture;
-    let row;
+    let row = {
+      mode, preset, passed: false,
+    };
     try {
       execFileSync('git', ['init', root], { stdio: 'ignore' });
       fs.mkdirSync(path.join(root, '.chimera'));
@@ -79,7 +88,7 @@ if (require.main === module) (async () => {
       if (feature) fixture = await feature.prepareFeature(root);
       if (mode === 'debug') fs.writeFileSync(path.join(root, 'sum.js'), 'exports.add=(a,b)=>a-b;\n');
       let seedFailed = false;
-      if (coding) { try { execFileSync(process.execPath, ['verify.cjs'], { cwd: root, stdio: 'pipe' }); } catch { seedFailed = true; } }
+      if (coding) { try { execFileSync(process.execPath, ['verify.cjs'], { cwd: root, stdio: 'pipe', timeout: 5000, killSignal: 'SIGKILL' }); } catch (error) { seedFailed = error.status === 1 && !error.signal && !error.code; } }
       const task = fixture?.prompt ?? (mode === 'debug' ? 'Fix sum.js: add(a,b) must add numbers, not subtract them. Edit the implementation; never modify verify.cjs.' : coding ? 'Create sum.js as a CommonJS module exporting add(a,b) that adds numbers. Use write_file. Never modify verify.cjs.' : mode === 'plan' ? 'Plan a Node.js CLI that prints hello; explain implementation and verification. Do not edit any files.' : mode === 'review' ? 'Review this code for bugs: function divide(a,b){return a*b;}. Identify the wrong arithmetic. Do not edit any files.' : 'Reply with exactly the single word: PONG');
       const options = { preset, json: true, yolo: true, verifyInput: ['verify.cjs'] };
       // auto has no public one-shot command; exercise the same built CLI host run seam.
@@ -89,7 +98,7 @@ if (require.main === module) (async () => {
       let parsed; try { parsed = JSON.parse(result.stdout.trim()); } catch {}
       const verifierBefore = fs.existsSync(path.join(root, 'verify.cjs')) && fs.readFileSync(path.join(root, 'verify.cjs'), 'utf8') === (fixture?.verifier ?? verifier);
       let artifactVerified = false;
-      if (coding && !fixture && verifierBefore) { try { execFileSync(process.execPath, ['verify.cjs'], { cwd: root, stdio: 'pipe' }); artifactVerified = true; } catch {} }
+      if (coding && !fixture && verifierBefore) { try { execFileSync(process.execPath, ['verify.cjs'], { cwd: root, stdio: 'pipe', timeout: 5000, killSignal: 'SIGKILL' }); artifactVerified = true; } catch {} }
       const verifierUntouched = verifierBefore && fs.existsSync(path.join(root, 'verify.cjs')) && fs.readFileSync(path.join(root, 'verify.cjs'), 'utf8') === (fixture?.verifier ?? verifier);
       const contentVerified = coding ? artifactVerified && parsed?.verification?.verified === true : mode === 'ask' || mode === 'auto' ? /PONG/.test(parsed?.output ?? '') : mode === 'review' ? /multip|divid|division|\*/i.test(parsed?.output ?? '') : hasUsefulPlan(parsed?.output);
       row = { mode, preset, surface: mode === 'auto' ? 'built-cli-host' : 'public-cli', exitCode: result.code, timedOut: result.timedOut, elapsedMs: Date.now() - started, status: parsed?.status, seedFailed: coding ? seedFailed : undefined, artifactVerified: coding ? artifactVerified : undefined, verifierUntouched, contentVerified, passed: result.code === 0 && !result.timedOut && parsed?.status === 'done' && contentVerified && verifierUntouched && (!coding || seedFailed) };
@@ -99,8 +108,13 @@ if (require.main === module) (async () => {
       }
       row.logFile = `${mode}-${preset}${fixture ? '-' + fixture.runId : ''}.log`;
       fs.writeFileSync(path.join(destination, row.logFile), redact((fixture ? JSON.stringify({ runId: fixture.runId, provenance: fixture.provenance }) + '\n' : '') + result.stdout + '\n' + result.stderr));
-    } finally { fs.rmSync(root, { recursive: true, force: true, maxRetries: 5 }); }
-    rows.push(row); fs.writeFileSync(path.join(destination, feature ? 'repo-feature-results.json' : 'results.json'), JSON.stringify({ complete: rows.length === selected.length, expected: selected.length, passed: rows.every(item => item.passed), rows }, null, 2)); console.log(JSON.stringify(row));
+    } catch (error) { row = { ...row, passed: false, error: redact(`${error.name}: ${error.message}`) }; }
+    finally {
+      try { fs.rmSync(root, { recursive: true, force: true, maxRetries: 5 }); }
+      catch (error) { row = { ...row, passed: false, cleanupError: redact(`${error.name}: ${error.message}`) }; }
+    }
+    rows.push(row); persist(); console.log(JSON.stringify(row));
   }
   process.exitCode = rows.every(row => row.passed) ? 0 : 1;
+  } catch (error) { persist(error); throw error; }
 })().catch(error => { console.error(redact(`${error.name}: ${error.message}`)); process.exitCode = 1; });

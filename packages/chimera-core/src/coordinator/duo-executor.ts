@@ -282,7 +282,7 @@ export class DuoExecutor {
     const r = await withAbort(() => withRetry(() => withAbort(() => provider.complete(
       [{ role: 'user', content: prompt }],
       { signal: this.signal, temperature: config.temperature, maxTokens: config.maxCompletionTokens, ...(config.reasoning !== undefined ? { reasoning: config.reasoning } : {}),
-        ...(role === 'writer' && this.readOnly && this.toolRegistry ? { tools: this.toolRegistry.getAll().map(t => ({ name: t.name, description: t.description, parameters: zodToJsonSchema(t.parameters as any) })) } : {}) }
+        ...(role === 'writer' && this.toolRegistry ? { tools: this.toolRegistry.getAll().map(t => ({ name: t.name, description: t.description, parameters: zodToJsonSchema(t.parameters as any) })), toolChoice: 'auto' as const } : {}) }
     ), this.signal), { maxRetries: 2, baseDelayMs: 3000, maxDelayMs: 20000 }), this.signal);
     this.signal?.throwIfAborted();
 
