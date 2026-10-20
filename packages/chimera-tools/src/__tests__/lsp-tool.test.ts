@@ -10,7 +10,7 @@ import { disposeAllLspServices } from '../lsp-registry.js';
 let workspaceRoot: string;
 let service: ChimeraLspService;
 
-const tsLspBin = path.join(__dirname, '..', '..', 'node_modules', '.bin', 'typescript-language-server.CMD');
+const tsLspBin = path.join(__dirname, '..', '..', 'node_modules', '.bin', process.platform === 'win32' ? 'typescript-language-server.CMD' : 'typescript-language-server');
 
 async function testConnectionFactory(
   child: ChildProcessWithoutNullStreams,
