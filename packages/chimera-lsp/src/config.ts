@@ -1,6 +1,6 @@
 import { promises as fs } from 'fs';
 import path from 'path';
-import YAML from 'yaml';
+
 import { z } from 'zod';
 import type { LspWorkspaceConfig } from './types.js';
 
@@ -37,6 +37,7 @@ export async function loadLspConfig(
 ): Promise<LspWorkspaceConfig> {
   try {
     const raw = await fs.readFile(configPath, 'utf-8');
+    const YAML = await import('yaml');
     const parsed = YAML.parse(raw) as { lsp?: unknown } | null;
     const value = parsed?.lsp ?? parsed ?? {};
     return LspConfigSchema.parse(value);

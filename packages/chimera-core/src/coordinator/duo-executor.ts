@@ -6,11 +6,12 @@ import type { CostTracker } from '../cost-tracker.js';
 import { ResponseSynthesizer, type SynthesisInput } from './response-synthesizer.js';
 import { sanitizeWriterOutput, sanitizeReviewerOutput } from './output-sanitizer.js';
 import { TaskRouter } from '../task-router.js';
-import { runAgentToolLoop, countSourceFiles } from './agent-tool-loop.js';
+import { runAgentToolLoop, countSourceFiles, type LoopChatMessage } from './agent-tool-loop.js';
 import { executeProseActions } from './file-write-fallback.js';
 import { taskWantsFiles, snapshotTarget, targetChanged } from './path-from-task.js';
 import { zodToJsonSchema } from '../zod-json.js';
 import { withAbort } from '../utils/abort.js';
+import { compactAgentPrompt } from '../prompts.js';
 import type {
   DuoConfig,
   DuoContext,
@@ -278,9 +279,14 @@ export class DuoExecutor {
     const prompt = role === 'writer'
       ? this.buildPeerPrompt(role, task, config.context)
       : this.buildReviewPrompt(task, draft!, config.context);
+    const messages: LoopChatMessage[] = [];
+    if (role === 'writer' && !this.readOnly && this.toolRegistry) {
+      messages.push({ role: 'system', content: compactAgentPrompt('writer') });
+    }
+    messages.push({ role: 'user', content: prompt });
 
     const r = await withAbort(() => withRetry(() => withAbort(() => provider.complete(
-      [{ role: 'user', content: prompt }],
+      messages,
       { signal: this.signal, temperature: config.temperature, maxTokens: config.maxCompletionTokens, ...(config.reasoning !== undefined ? { reasoning: config.reasoning } : {}),
         ...(role === 'writer' && this.toolRegistry ? { tools: this.toolRegistry.getAll().map(t => ({ name: t.name, description: t.description, parameters: zodToJsonSchema(t.parameters as any) })), toolChoice: 'auto' as const } : {}) }
     ), this.signal), { maxRetries: 2, baseDelayMs: 3000, maxDelayMs: 20000 }), this.signal);
@@ -294,7 +300,7 @@ export class DuoExecutor {
       try {
         const loop = await runAgentToolLoop({
           provider,
-          messages: [{ role: 'user', content: prompt }],
+          messages,
           options: { temperature: config.temperature, maxTokens: config.maxCompletionTokens },
           toolExecutor: this.toolExecutor,
           toolRegistry: this.toolRegistry,
@@ -303,7 +309,7 @@ export class DuoExecutor {
           sessionId: `duo-${modelId}`,
           initialContent: r.content,
           initialToolCalls: r.toolCalls ?? [],
-          maxRounds: Math.max(1, config.maxDepth ?? 4),
+          maxRounds: Math.max(1, config.maxToolRounds ?? config.maxDepth ?? 4),
           mode: 'solo',
           forceMinFiles: 1,
           wantsFiles,

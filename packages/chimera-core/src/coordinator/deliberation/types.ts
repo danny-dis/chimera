@@ -52,6 +52,7 @@ export interface DeliberationConfigBase {
   budgetUsd?: number;
   /** Max recursion depth. Default 1. */
   maxDepth?: number;
+  maxToolRounds?: number;
   /** Reasoning config (passed through to provider). */
   reasoning?: Record<string, unknown>;
 }

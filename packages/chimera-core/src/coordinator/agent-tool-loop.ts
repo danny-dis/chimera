@@ -482,16 +482,18 @@ export async function runAgentToolLoop(
     const MAX_FORCE = forceMinFiles ?? 3;
     let forceAttempts = 0;
     const targetExists = !!workspaceRoot && !!targetPath && existsSync(join(workspaceRoot, targetPath));
+    if (systemPrompt && !messages.some(message => message.role === 'system')) {
+      messages.unshift({ role: 'system', content: systemPrompt });
+    }
+    if (lastContent && currentToolCalls.length === 0) messages.push({ role: 'assistant', content: lastContent });
     while ((!fileLandedOnDisk(task ?? '', workspaceRoot!) || !targetChanged(task ?? '', workspaceRoot!, targetBefore) || wroteFileCount === 0) && forceAttempts < MAX_FORCE) {
       forceAttempts++;
-      const forceMessages: LoopChatMessage[] = [];
-      if (systemPrompt) forceMessages.push({ role: 'system', content: systemPrompt });
       const targetLine = targetPath
         ? targetExists
           ? `You MUST call write_file with \`overwrite: true\` to MODIFY the EXISTING file \`${targetPath}\` — it already exists and must be overwritten. Do not merely narrate the change. `
           : `You MUST call write_file to CREATE the new file \`${targetPath}\`; do not merely narrate the change. `
         : 'You MUST call write_file or edit_file to apply the fix to the file the task names; do not merely narrate the change. ';
-      forceMessages.push({
+      messages.push({
         role: 'user',
         content:
           'Your previous response did not create or modify any files (it only described what you would do). ' +
@@ -505,7 +507,7 @@ export async function runAgentToolLoop(
       try {
         const forced = await completeWithRetry(
           provider,
-          forceMessages,
+          messages,
           {
             ...options,
             ...(toolDefs ? { tools: toolDefs } : {}),
@@ -526,8 +528,9 @@ export async function runAgentToolLoop(
         inputTokens += (forced as any).usage?.inputTokens ?? 0;
         outputTokens += (forced as any).usage?.outputTokens ?? 0;
         lastContent = forcedContent;
+        repairWriteTargets(forced.toolCalls ?? []);
+        messages.push(assistantMessage(mode, forcedContent, forced.toolCalls ?? []));
         if (forced.toolCalls && forced.toolCalls.length > 0) {
-          repairWriteTargets(forced.toolCalls);
           // Disk-verify forced writes too: snapshot targets, count only real
           // mutations (a no-op/failed forced write must NOT count as landed).
           const forcedPre = new Map<string, { mtime: number; size: number } | null>();
@@ -537,7 +540,7 @@ export async function runAgentToolLoop(
               if (typeof p === 'string') forcedPre.set(p, statFile(workspaceRoot!, p));
             }
           }
-          await runToolCalls({
+          const forcedResults = await runToolCalls({
             toolCalls: forced.toolCalls,
             toolExecutor: toolExecutor ?? null,
             toolRegistry: toolRegistry ?? null,
@@ -546,6 +549,7 @@ export async function runAgentToolLoop(
             sessionId,
             signal: params.signal,
           });
+          for (const result of forcedResults) messages.push(toolResultMessage(mode, result));
           for (const tc of forced.toolCalls) {
             if (fileMutationTools.has(tc.name)) {
               const p = (tc.arguments as { path?: string } | undefined)?.path;

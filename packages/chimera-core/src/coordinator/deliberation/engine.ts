@@ -7,9 +7,8 @@
  * `TrioExecutor`, `FusionExecutor`, `ResultAggregator`) and normalizes
  * the result to the unified `DeliberationResult` shape.
  *
- * Determinism: the engine adds no new side effects. All events emitted
- * are produced by the underlying executors; the engine only routes and
- * normalizes. All 9 fusion safety-net patterns (defensive safeEmit,
+ * The engine records completed dispatches; executors own task-side effects.
+ * All 9 fusion safety-net patterns (defensive safeEmit,
  * factory injection, cost tracking, recursion guard, degraded fallback,
  * 5-field analysis shape, defensive usage access, test coverage) are
  * inherited from the executors themselves.
@@ -115,29 +114,33 @@ export class DeliberationEngine {
     if (TaskRouter.isConversationalTask(config.task)) {
       return this.runConversational(config);
     }
+    let result: DeliberationResult;
     switch (config.mode) {
       case 'solo':
-        return this.runSolo(config);
+        result = await this.runSolo(config); break;
       case 'duo':
-        return this.runDuo(config);
+        result = await this.runDuo(config); break;
       case 'trio':
-        return this.runTrio(config);
+        result = await this.runTrio(config); break;
       case 'fusion':
-        return this.runFusion(config);
+        result = await this.runFusion(config); break;
       case 'merge':
-        return this.runMerge(config);
+        result = await this.runMerge(config); break;
       case 'hive':
-        return this.runHive(config);
+        result = await this.runHive(config); break;
       case 'swarm':
-        return this.runSwarm(config);
+        result = await this.runSwarm(config); break;
       case 'auto':
-        return this.runAuto(config);
+        result = await this.runAuto(config); break;
       default: {
         // Exhaustiveness check — if a new mode is added, TS will flag this.
         const _exhaustive: never = config;
         throw new Error(`unknown deliberation mode: ${String(_exhaustive)}`);
       }
     }
+    this.deps.eventStream.append({ type: 'deliberation_executed', mode: this.deps.mode,
+      preset: config.mode, resultMode: result.mode, degraded: result.degraded });
+    return result;
   }
 
   // ── Preset: solo ──────────────────────────────────────────────────
@@ -159,12 +162,14 @@ export class DeliberationEngine {
 
     const soloConfig: SoloConfig = {
       model: cfg.model,
+      ...(cfg.context !== undefined ? { context: cfg.context } : {}),
       ...(cfg.temperature !== undefined ? { temperature: cfg.temperature } : {}),
       ...(cfg.maxCompletionTokens !== undefined
         ? { maxCompletionTokens: cfg.maxCompletionTokens }
         : {}),
       ...(cfg.budgetUsd !== undefined ? { budgetUsd: cfg.budgetUsd } : {}),
       ...(cfg.maxDepth !== undefined ? { maxDepth: cfg.maxDepth } : {}),
+      ...(cfg.maxToolRounds !== undefined ? { maxToolRounds: cfg.maxToolRounds } : {}),
       ...(cfg.reasoning !== undefined
         ? { reasoning: cfg.reasoning as { effort?: 'low' | 'medium' | 'high'; maxTokens?: number } }
         : {}),
@@ -265,12 +270,14 @@ export class DeliberationEngine {
     const duoConfig: DuoConfig = {
       modelA: cfg.modelA,
       modelB: cfg.modelB,
+      ...(cfg.context !== undefined ? { context: cfg.context } : {}),
       ...(cfg.temperature !== undefined ? { temperature: cfg.temperature } : {}),
       ...(cfg.maxCompletionTokens !== undefined
         ? { maxCompletionTokens: cfg.maxCompletionTokens }
         : {}),
       ...(cfg.budgetUsd !== undefined ? { budgetUsd: cfg.budgetUsd } : {}),
       ...(cfg.maxDepth !== undefined ? { maxDepth: cfg.maxDepth } : {}),
+      ...(cfg.maxToolRounds !== undefined ? { maxToolRounds: cfg.maxToolRounds } : {}),
       ...(cfg.reasoning !== undefined
         ? { reasoning: cfg.reasoning as { effort?: 'low' | 'medium' | 'high'; maxTokens?: number } }
         : {}),
@@ -309,6 +316,7 @@ export class DeliberationEngine {
     const trioConfig: TrioConfig = {
       writer: cfg.writer,
       reviewer: cfg.reviewer,
+      ...(cfg.context !== undefined ? { context: cfg.context } : {}),
       ...(cfg.challenger !== undefined ? { challenger: cfg.challenger } : {}),
       ...(cfg.synthesizer !== undefined ? { synthesizer: cfg.synthesizer } : {}),
       ...(cfg.temperature !== undefined ? { temperature: cfg.temperature } : {}),
@@ -317,6 +325,7 @@ export class DeliberationEngine {
         : {}),
       ...(cfg.budgetUsd !== undefined ? { budgetUsd: cfg.budgetUsd } : {}),
       ...(cfg.maxDepth !== undefined ? { maxDepth: cfg.maxDepth } : {}),
+      ...(cfg.maxToolRounds !== undefined ? { maxToolRounds: cfg.maxToolRounds } : {}),
       ...(cfg.isolateWorktree !== undefined ? { isolateWorktree: cfg.isolateWorktree } : {}),
       ...(cfg.parallel !== undefined ? { parallel: cfg.parallel } : {}),
       ...(cfg.reasoning !== undefined
@@ -357,15 +366,18 @@ export class DeliberationEngine {
 
     const fusionConfig: FusionConfig = {
       analysisModels: cfg.analysisModels,
+      ...(cfg.context !== undefined ? { context: cfg.context } : {}),
       panelSize: cfg.panelSize,
       preferLocal: cfg.preferLocal,
       adversarialRound: cfg.adversarialRound,
       diversePerspectives: cfg.diversePerspectives,
       judgeModel: cfg.judgeModel,
+      judgeFailover: cfg.judgeFailover,
       temperature: cfg.temperature,
       maxCompletionTokens: cfg.maxCompletionTokens,
       budgetUsd: cfg.budgetUsd,
       maxDepth: cfg.maxDepth,
+      ...(cfg.maxToolRounds !== undefined ? { maxToolCalls: cfg.maxToolRounds } : {}),
       reasoning: cfg.reasoning as any,
     };
 
@@ -373,7 +385,7 @@ export class DeliberationEngine {
       cfg.task,
       fusionConfig,
       this.deps.providerFactory,
-      { depth: cfg.maxDepth ?? 0 }
+      { depth: this.deps.context?.depth ?? 0 }
     );
 
     return {
@@ -755,7 +767,7 @@ export class DeliberationEngine {
     preset: DeliberationMode,
     autoCfg: AutoDeliberationConfig,
   ): DeliberationConfig {
-    const base = { task: autoCfg.task, context: autoCfg.context, temperature: autoCfg.temperature, maxCompletionTokens: autoCfg.maxCompletionTokens, budgetUsd: autoCfg.budgetUsd, maxDepth: autoCfg.maxDepth, reasoning: autoCfg.reasoning };
+    const base = { task: autoCfg.task, context: autoCfg.context, temperature: autoCfg.temperature, maxCompletionTokens: autoCfg.maxCompletionTokens, budgetUsd: autoCfg.budgetUsd, maxDepth: autoCfg.maxDepth, maxToolRounds: autoCfg.maxToolRounds, reasoning: autoCfg.reasoning };
 
     // Placeholder complexity for model selection (0.5 = medium)
     const placeholderComplexity = {

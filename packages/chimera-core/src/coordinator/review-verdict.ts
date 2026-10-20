@@ -9,7 +9,7 @@
  *   - confidence must be a finite number in [0,1] (else NEEDS_REVISION)
  *   - findings must be an array of {description,severity,evidence} strings with
  *     severity in high|med|low; any non-array/malformed entry rejects the record
- *   - non-JSON / empty content -> NEEDS_REVISION with no findings
+ *   - one whole-response JSON fence is allowed; other non-JSON / empty content rejects
  */
 export type ReviewVerdictValue = 'PASS' | 'FAIL' | 'NEEDS_REVISION';
 
@@ -56,7 +56,8 @@ function asFindings(value: unknown): ReviewFinding[] | null {
 export function parseReviewVerdict(content: string): ParsedReview {
   let parsed: Record<string, unknown> | null = null;
   try {
-    const obj = JSON.parse(content);
+    const envelope = content.trim().match(/^```(?:json)?[\t ]*\r?\n([\s\S]*?)\r?\n```$/i);
+    const obj = JSON.parse(envelope ? envelope[1] : content);
     if (obj && typeof obj === 'object' && !Array.isArray(obj)) parsed = obj as Record<string, unknown>;
   } catch {
     parsed = null;

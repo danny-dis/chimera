@@ -66,7 +66,38 @@ async function prepareFeature(root) {
       helperHash: hash(fs.readFileSync(__filename)), taskSuiteHash: hash(fs.readFileSync(path.join(__dirname, 'task-suite.mjs'))) } };
 }
 
-function assessFeature(root, fixture, result, parsed, requested) {
+function assessCoverage(parsed, requested, { release = false, coding = false } = {}) {
+  const events = Array.isArray(parsed?.events) ? parsed.events : [];
+  const attempt = events.slice(events.findLastIndex(event => event.type === 'verification_repair_started') + 1);
+  const resolutions = (release ? attempt : events).filter(event => event.type === 'mode_preset_resolved');
+  const last = release ? resolutions.at(-1) : resolutions.length === 1 ? resolutions[0] : null;
+  const resolution = last ? { mode: last.mode, preset: last.preset } : null;
+  const expectedRemap = requested.preset === 'swarm' ? { from: 'swarm', to: 'trio', when: 'resolved mode code/debug', observed: resolution?.preset === 'trio' && ['code', 'debug'].includes(resolution?.mode) } : null;
+  const tail = last ? attempt.slice(attempt.lastIndexOf(last) + 1) : [];
+  const completions = tail.filter(event => event.type === 'deliberation_executed');
+  const leaf = completions.filter(event => event.preset !== 'auto').at(-1);
+  const selection = tail.filter(event => event.type === 'auto_preset_selected').at(-1);
+  const autoRoot = resolution?.preset === 'auto' || !!selection || completions.some(event => event.preset === 'auto');
+  const completed = event => event?.mode === resolution?.mode && event?.degraded === false && event?.resultMode === event?.preset;
+  const root = completions.at(-1);
+  const expected = autoRoot ? selection?.selectedPreset : resolution?.preset;
+  const proven = !!(release && resolution && leaf && completed(leaf) && leaf.preset === expected
+    && ['solo', 'duo', 'trio', 'fusion', 'merge', 'hive', 'swarm'].includes(leaf.preset)
+    && (requested.mode === 'auto' || requested.mode === resolution.mode)
+    && (!coding || ['code', 'debug', 'oal'].includes(resolution.mode))
+    && (requested.preset === 'auto' || resolution.preset === (expectedRemap?.observed ? 'trio' : requested.preset))
+    && (autoRoot ? requested.preset === 'auto' && selection && tail.indexOf(selection) < tail.indexOf(leaf)
+      && root?.preset === 'auto' && completed(root) : root === leaf));
+  return { requested, resolved: resolution, executed: release && leaf ? { mode: leaf.mode, preset: leaf.preset } : null,
+    expectedRemap, resolutionEvidence: resolution ? 'result.events.mode_preset_resolved (not execution proof)' : 'missing or ambiguous',
+    executionEvidence: proven ? 'result.events.deliberation_executed (completed non-degraded handler)' : 'missing or mismatched completion',
+    nativePresetProven: proven && requested.preset === leaf.preset && !expectedRemap?.observed,
+    autoCodingProven: proven && coding && requested.mode === 'auto', passed: !release || proven,
+    ceiling: release ? 'Handler execution is not provider-quality certification; remapped presets are not native strategy proof.'
+      : 'No executed-preset telemetry established by this slice; fixture success is not native strategy or live coding readiness.' };
+}
+
+function assessFeature(root, fixture, result, parsed, requested, { release = false } = {}) {
   const afterChild = snapshot(root);
   const mutation = auditMutations(fixture.before, afterChild, ['ask', 'plan', 'review'].includes(requested.mode), true);
   const verifierUntouched = afterChild['verify.cjs'] === fixture.before['verify.cjs'];
@@ -80,22 +111,17 @@ function assessFeature(root, fixture, result, parsed, requested) {
   }
   const afterVerifier = snapshot(root);
   const verifierMutation = auditMutations(afterChild, afterVerifier, true);
-  const resolved = (Array.isArray(parsed?.events) ? parsed.events : []).filter(event => event.type === 'mode_preset_resolved');
-  const resolution = resolved.length === 1 ? { mode: resolved[0].mode, preset: resolved[0].preset } : null;
-  const expectedRemap = requested.preset === 'swarm' ? { from: 'swarm', to: 'trio', when: 'resolved mode code/debug', observed: resolution?.preset === 'trio' && ['code', 'debug'].includes(resolution?.mode) } : null;
+  const coverage = assessCoverage(parsed, requested, { release, coding: true });
   const identityMatches = typeof fixture.runId === 'string' && result.runId === fixture.runId;
   const passed = result.code === 0 && result.signal === null && !result.timedOut && identityMatches && parsed?.status === 'done'
     && parsed?.verification?.verified === true && fixture.seedFailed && artifactVerified && verifierUntouched
-    && mutation.allowed && mutation.intendedFilesChanged && verifierMutation.allowed;
+    && mutation.allowed && mutation.intendedFilesChanged && verifierMutation.allowed && coverage.passed;
   return { scenario: 'existing-commonjs-feature', runId: fixture.runId, identityMatches, provenance: fixture.provenance,
     exitCode: result.code, signal: result.signal, timedOut: result.timedOut, pid: result.pid,
     artifactVerified, verifierExit, verifierTimedOut, verifierUntouched, mutation, verifierMutation,
     snapshots: { before: fixture.before, afterChild, afterVerifier },
-    coverage: { requested, resolved: resolution, executed: null, expectedRemap,
-      resolutionEvidence: resolved.length === 1 ? 'result.events.mode_preset_resolved (not execution proof)' : 'missing or ambiguous',
-      nativePresetProven: false, autoCodingProven: false,
-      ceiling: 'No executed-preset telemetry established by this slice; fixture success is not native strategy or live coding readiness.' },
+    coverage,
     passed: !!passed };
 }
 
-module.exports = { prepareFeature, assessFeature, snapshot, auditMutations };
+module.exports = { prepareFeature, assessFeature, assessCoverage, snapshot, auditMutations };

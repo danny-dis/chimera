@@ -49,9 +49,10 @@ function execute(args, cwd, env, { timeoutMs = 180000, runId = null } = {}) {
   });
 }
 if (require.main === module) (async () => {
-  const feature = process.argv.includes('--repo-feature') ? require('./live-repo-feature.cjs') : null;
+  const release = process.argv.includes('--release');
+  const feature = release || process.argv.includes('--repo-feature') ? require('./live-repo-feature.cjs') : null;
   const rows = [], selected = combos.filter(row => !process.env.COMBO || `${row.mode}/${row.preset}` === process.env.COMBO);
-  const reportFile = path.join(destination, feature ? 'repo-feature-results.json' : 'results.json');
+  const reportFile = path.join(destination, release ? 'release-results.json' : feature ? 'repo-feature-results.json' : 'results.json');
   const runId = require('node:crypto').randomUUID();
   const persist = (error) => fs.writeFileSync(reportFile, JSON.stringify({ runId, complete: !error && rows.length === selected.length && selected.length > 0,
     expected: selected.length, passed: !error && rows.length === selected.length && rows.length > 0 && rows.every(item => item.passed),
@@ -59,7 +60,7 @@ if (require.main === module) (async () => {
   persist();
   try {
   assert.ok(selected.length, 'Unknown mode/preset');
-  if (feature) assert.ok(process.env.COMBO && selected.every(row => ['code', 'auto'].includes(row.mode)), '--repo-feature requires one code/* or auto/* COMBO');
+  if (feature && !release) assert.ok(process.env.COMBO && selected.every(row => ['code', 'auto'].includes(row.mode)), '--repo-feature requires one code/* or auto/* COMBO');
   req('dotenv').config({ path: path.join(repo, '.env'), quiet: true });
   const loader = req('./dist/config-loader.js');
   const roles = loader.getProvidersByRole(loader.loadConfig(repo));
@@ -75,7 +76,7 @@ if (require.main === module) (async () => {
   for (const { mode, preset } of selected) {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'chimera-mode-'));
     const verifier = "const a=require('node:assert/strict'),{add}=require('./sum.js');a.equal(add(2,3),5);a.equal(add(-2,3),1);a.equal(add(0,0),0);a.equal(add(12,-5),7);";
-    const coding = !!feature || ['code', 'debug', 'oal'].includes(mode);
+    const coding = (feature && !release) || ['code', 'debug', 'oal'].includes(mode) || (release && mode === 'auto');
     let fixture;
     let row = {
       mode, preset, passed: false,
@@ -85,16 +86,18 @@ if (require.main === module) (async () => {
       fs.mkdirSync(path.join(root, '.chimera'));
       fs.writeFileSync(path.join(root, '.chimera/config.yaml'), JSON.stringify({ providers, defaults: { preset } }));
       fs.writeFileSync(path.join(root, 'verify.cjs'), verifier);
-      if (feature) fixture = await feature.prepareFeature(root);
-      if (mode === 'debug') fs.writeFileSync(path.join(root, 'sum.js'), 'exports.add=(a,b)=>a-b;\n');
+      if (feature && coding) fixture = await feature.prepareFeature(root);
+      if (mode === 'debug' && !fixture) fs.writeFileSync(path.join(root, 'sum.js'), 'exports.add=(a,b)=>a-b;\n');
+      const before = release && !coding ? feature.snapshot(root) : null;
+      const childRunId = fixture?.runId ?? (release ? require('node:crypto').randomUUID() : null);
       let seedFailed = false;
       if (coding) { try { execFileSync(process.execPath, ['verify.cjs'], { cwd: root, stdio: 'pipe', timeout: 5000, killSignal: 'SIGKILL' }); } catch (error) { seedFailed = error.status === 1 && !error.signal && !error.code; } }
       const task = fixture?.prompt ?? (mode === 'debug' ? 'Fix sum.js: add(a,b) must add numbers, not subtract them. Edit the implementation; never modify verify.cjs.' : coding ? 'Create sum.js as a CommonJS module exporting add(a,b) that adds numbers. Use write_file. Never modify verify.cjs.' : mode === 'plan' ? 'Plan a Node.js CLI that prints hello; explain implementation and verification. Do not edit any files.' : mode === 'review' ? 'Review this code for bugs: function divide(a,b){return a*b;}. Identify the wrong arithmetic. Do not edit any files.' : 'Reply with exactly the single word: PONG');
       const options = { preset, json: true, yolo: true, verifyInput: ['verify.cjs'] };
       // auto has no public one-shot command; exercise the same built CLI host run seam.
-      const autoDriver = `const {CliRouter}=require(${JSON.stringify(path.join(repo, 'packages/chimera-cli/dist/cli-router.js'))});const r=new CliRouter();r.noLearn=true;r.initializeRuntime();r.run('auto',${JSON.stringify(task)},${JSON.stringify(preset)},${JSON.stringify(feature ? ['node verify.cjs'] : [])},${JSON.stringify(options)}).catch(e=>{console.error(e);process.exitCode=1});`;
+      const autoDriver = `const {CliRouter}=require(${JSON.stringify(path.join(repo, 'packages/chimera-cli/dist/cli-router.js'))});const r=new CliRouter();r.noLearn=true;r.initializeRuntime();r.run('auto',${JSON.stringify(task)},${JSON.stringify(preset)},${JSON.stringify(fixture ? ['node verify.cjs'] : [])},${JSON.stringify(options)}).catch(e=>{console.error(e);process.exitCode=1});`;
       const args = mode === 'auto' ? ['-e', autoDriver] : [path.join(repo, 'packages/chimera-cli/dist/index.js'), '--no-learn', mode, task, '--preset', preset, '--json', '--yolo', ...(coding ? ['--verify', 'node verify.cjs', '--verify-input', 'verify.cjs'] : [])];
-      const started = Date.now(), result = await execute(args, root, env, { runId: fixture?.runId ?? null });
+      const started = Date.now(), result = await execute(args, root, env, { runId: childRunId });
       let parsed; try { parsed = JSON.parse(result.stdout.trim()); } catch {}
       const verifierBefore = fs.existsSync(path.join(root, 'verify.cjs')) && fs.readFileSync(path.join(root, 'verify.cjs'), 'utf8') === (fixture?.verifier ?? verifier);
       let artifactVerified = false;
@@ -103,8 +106,15 @@ if (require.main === module) (async () => {
       const contentVerified = coding ? artifactVerified && parsed?.verification?.verified === true : mode === 'ask' || mode === 'auto' ? /PONG/.test(parsed?.output ?? '') : mode === 'review' ? /multip|divid|division|\*/i.test(parsed?.output ?? '') : hasUsefulPlan(parsed?.output);
       row = { mode, preset, surface: mode === 'auto' ? 'built-cli-host' : 'public-cli', exitCode: result.code, timedOut: result.timedOut, elapsedMs: Date.now() - started, status: parsed?.status, seedFailed: coding ? seedFailed : undefined, artifactVerified: coding ? artifactVerified : undefined, verifierUntouched, contentVerified, passed: result.code === 0 && !result.timedOut && parsed?.status === 'done' && contentVerified && verifierUntouched && (!coding || seedFailed) };
       if (fixture) {
-        const acceptance = feature.assessFeature(root, fixture, result, parsed, { mode, preset });
+        const acceptance = feature.assessFeature(root, fixture, result, parsed, { mode, preset }, { release });
         row = { ...row, ...acceptance, contentVerified: acceptance.artifactVerified && parsed?.verification?.verified === true };
+      }
+      if (release && !coding) {
+        const mutation = feature.auditMutations(before, feature.snapshot(root), true, true);
+        const coverage = feature.assessCoverage(parsed, { mode, preset }, { release });
+        const identityMatches = result.runId === childRunId;
+        row = { ...row, runId: childRunId, identityMatches, signal: result.signal, mutation, coverage,
+          passed: row.passed && result.signal === null && identityMatches && mutation.allowed && coverage.passed };
       }
       row.logFile = `${mode}-${preset}${fixture ? '-' + fixture.runId : ''}.log`;
       fs.writeFileSync(path.join(destination, row.logFile), redact((fixture ? JSON.stringify({ runId: fixture.runId, provenance: fixture.provenance }) + '\n' : '') + result.stdout + '\n' + result.stderr));

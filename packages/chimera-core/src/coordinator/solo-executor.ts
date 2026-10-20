@@ -209,13 +209,13 @@ export class SoloExecutor {
       let currentToolCalls = res.toolCalls;
       let lastContent = res.content;
       let draftContentForLoop = draftContent;
-      const MAX_TOOL_ROUNDS = Math.max(1, config.maxDepth ?? 4);
+      const MAX_TOOL_ROUNDS = Math.max(1, config.maxToolRounds ?? config.maxDepth ?? 4);
       let round = 0;
 
       // Shared bounded LLM→tool→feedback loop (single source of truth).
       const loop = await runAgentToolLoop({
         provider: providerFactory(config.model),
-        messages: [{ role: 'user', content: task }],
+        messages: res.messages,
         options: { temperature: config.temperature, maxTokens: config.maxCompletionTokens },
         toolExecutor: this.toolExecutor,
         toolRegistry: this.toolRegistry,
@@ -384,7 +384,7 @@ export class SoloExecutor {
     draft?: string,
     thought?: string,
     tools?: Array<{ name: string; description: string; parameters: Record<string, unknown> }>,
-  ): Promise<{ content: string; inputTokens: number; outputTokens: number; durationMs: number; toolCalls?: import('../types/agent.js').ToolCall[] }> {
+  ): Promise<{ content: string; inputTokens: number; outputTokens: number; durationMs: number; toolCalls?: import('../types/agent.js').ToolCall[]; messages: Array<{ role: 'system' | 'user'; content: string }> }> {
     const start = Date.now();
     const provider = providerFactory(modelId);
     let prompt: string;
@@ -417,6 +417,7 @@ export class SoloExecutor {
       outputTokens: r.usage?.outputTokens ?? 0,
       durationMs: Date.now() - start,
       toolCalls: r.toolCalls,
+      messages,
     };
   }
 

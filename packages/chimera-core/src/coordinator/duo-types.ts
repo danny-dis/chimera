@@ -30,6 +30,7 @@ export interface DuoConfig {
   budgetUsd?: number;
   /** Maximum recursion depth. Default 1. */
   maxDepth?: number;
+  maxToolRounds?: number;
   /** Force the executor to run even when the request looks simple. */
   forceInvocation?: boolean;
   /** Optional context (file contents, project info, etc.) injected into prompts. */

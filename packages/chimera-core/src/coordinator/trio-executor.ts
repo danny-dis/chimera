@@ -230,7 +230,7 @@ export class TrioExecutor {
           sessionId: `trio-${config.writer}`,
           initialContent: draftResult.content,
           initialToolCalls: draftToolCalls,
-          maxRounds: Math.max(1, config.maxDepth ?? 4),
+          maxRounds: Math.max(1, config.maxToolRounds ?? config.maxDepth ?? 4),
           mode: 'trio',
           forceMinFiles: 1,
           wantsFiles: !this.readOnly && taskWantsFiles(task),
@@ -410,14 +410,8 @@ export class TrioExecutor {
         );
       }
 
-      // If parallel review failed, run sequential review+challenge to avoid
-      // discarding the draft that already completed.
-      if (!parallelReviewSucceeded) {
-        // Fall through to sequential block below.
-      } else {
-        // Parallel succeeded — skip sequential.
-      }
-    } else {
+    }
+    if (!parallelReviewSucceeded) {
       // ── Sequential path (fallback) ─────────────────────────────────
       if (parallelReviewSucceeded) {
         // Parallel succeeded — sequential already captured above.
@@ -545,16 +539,16 @@ export class TrioExecutor {
         const det = this.safeDeterministicSynthesis(task, draftStage, reviewStage, challengeStage);
         analysis = det.analysis;
         finalResponse = det.output;
-        needsUserEscalation = det.needsUserEscalation;
-        escalationReason = det.escalationReason;
+        needsUserEscalation ||= det.needsUserEscalation;
+        escalationReason ??= det.escalationReason;
       }
     } else {
       // Deterministic synthesis (no LLM call)
       const det = this.safeDeterministicSynthesis(task, draftStage, reviewStage, challengeStage);
       analysis = det.analysis;
       finalResponse = det.output;
-      needsUserEscalation = det.needsUserEscalation;
-      escalationReason = det.escalationReason;
+      needsUserEscalation ||= det.needsUserEscalation;
+      escalationReason ??= det.escalationReason;
     }
 
     if (this.isOverBudget(config, totalCostUsd)) {
@@ -780,15 +774,16 @@ export class TrioExecutor {
 
   private buildReviewPrompt(task: string, draft: string, context?: string): string {
     const contextBlock = context ? `\n\n[!] PROJECT CONTEXT [!]\n${context}` : '';
+    const contract = 'Return only valid JSON matching {"verdict":"PASS"|"FAIL"|"NEEDS_REVISION","confidence":number 0-1,"findings":[{"description":string,"severity":"high"|"med"|"low","evidence":string}]}. Use findings: [] when there are no findings.\n\n';
     if (TaskRouter.isConversationalTask(task)) {
-      return `[!] CONVERSATIONAL REVIEW [!]\n` +
+      return contract + `[!] CONVERSATIONAL REVIEW [!]\n` +
         `This is a conversational/general question, NOT a code task.\n` +
         `Do NOT apply code-review criteria (race conditions, input validation, architectural coupling, etc.).\n` +
         `Evaluate ONLY: factual accuracy, completeness, and clarity.\n` +
         `Default to PASS unless the answer is factually incorrect.\n\n` +
         `## Task\n${task}\n\n## Draft\n${draft}${contextBlock}`;
     }
-    return `You are a code reviewer. Review the following draft against the task.\n\n## Task\n${task}\n\n## Draft\n${draft}${contextBlock}`;
+    return contract + `You are a code reviewer. Review the following draft against the task.\n\n## Task\n${task}\n\n## Draft\n${draft}${contextBlock}`;
   }
 
   private buildChallengePrompt(task: string, draft: string, review: string, context?: string): string {

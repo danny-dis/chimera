@@ -1,7 +1,6 @@
 import path from 'path';
 import { spawn, type ChildProcessWithoutNullStreams } from 'child_process';
-import { createMessageConnection, type MessageConnection, type Disposable } from 'vscode-jsonrpc/node';
-import { StreamMessageReader, StreamMessageWriter } from 'vscode-jsonrpc/node';
+import type { MessageConnection, Disposable } from 'vscode-jsonrpc/node';
 import type { LspServerConfig } from './types.js';
 import { ownedWindowsProcess } from './windows-owned-process.js';
 import { captureLspProcessTree, terminateWindowsProcessTree } from './windows-process-tree.js';
@@ -51,6 +50,7 @@ export class JsonRpcLspConnection implements LspConnection {
 export async function createJsonRpcConnection(
   child: ChildProcessWithoutNullStreams,
 ): Promise<JsonRpcLspConnection> {
+  const { createMessageConnection, StreamMessageReader, StreamMessageWriter } = require('vscode-jsonrpc/node') as typeof import('vscode-jsonrpc/node');
   const connection = createMessageConnection(
     new StreamMessageReader(child.stdout),
     new StreamMessageWriter(child.stdin),

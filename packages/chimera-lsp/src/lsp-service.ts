@@ -1,31 +1,19 @@
 import { promises as fs } from 'fs';
 import path from 'path';
 import type { ChildProcessWithoutNullStreams } from 'child_process';
-import {
-  DefinitionRequest,
-  DidChangeTextDocumentNotification,
-  DidOpenTextDocumentNotification,
-  DocumentSymbolRequest,
-  ExitNotification,
-  HoverRequest,
-  InitializedNotification,
-  InitializeRequest,
-  PublishDiagnosticsNotification,
-  ReferencesRequest,
-  ShutdownRequest,
-  WorkspaceSymbolRequest,
-  type DocumentSymbol,
-  type Hover,
-  type InitializeParams,
-  type InitializeResult,
-  type Location,
-  type LocationLink,
-  type MarkedString,
-  type Position,
-  type PublishDiagnosticsParams,
-  type Range,
-  type SymbolInformation,
-  type WorkspaceSymbol,
+import type {
+  DocumentSymbol,
+  Hover,
+  InitializeParams,
+  InitializeResult,
+  Location,
+  LocationLink,
+  MarkedString,
+  Position,
+  PublishDiagnosticsParams,
+  Range,
+  SymbolInformation,
+  WorkspaceSymbol,
 } from 'vscode-languageserver-protocol';
 import { DEFAULT_LSP_CONFIG, loadLspConfig, mergeLspConfig } from './config.js';
 import { normalizeDiagnostics } from './diagnostics.js';
@@ -35,6 +23,7 @@ import { captureLspProcessTree } from './windows-process-tree.js';
 import { serverMatchesFile } from './server-config.js';
 import type { LspDiagnostic, LspDocumentSymbol, LspHover, LspLocation, LspOperationResult, LspServerConfig, LspServerStatus, LspService, LspWorkspaceConfig, LspWorkspaceSymbol } from './types.js';
 import { pathToUri, relativePath, toAbsolutePath, uriToPath } from './uri.js';
+const protocol = () => require('vscode-languageserver-protocol') as typeof import('vscode-languageserver-protocol');
 
 interface ManagedServer {
   name: string;
@@ -147,7 +136,7 @@ export class ChimeraLspService implements LspService {
     const server = await this.ensureFile(filePath);
     const uri = pathToUri(filePath, this.workspaceRoot);
     const result = await server.connection!.sendRequest<Location[] | Location | LocationLink[] | null>(
-      DefinitionRequest.method,
+      protocol().DefinitionRequest.method,
       { textDocument: { uri }, position: toPosition(line, character) },
     );
     return normalizeLocations(result, this.workspaceRoot);
@@ -162,7 +151,7 @@ export class ChimeraLspService implements LspService {
     const server = await this.ensureFile(filePath);
     const uri = pathToUri(filePath, this.workspaceRoot);
     const result = await server.connection!.sendRequest<Location[] | null>(
-      ReferencesRequest.method,
+      protocol().ReferencesRequest.method,
       { textDocument: { uri }, position: toPosition(line, character), context: { includeDeclaration } },
     );
     return normalizeLocations(result ?? [], this.workspaceRoot);
@@ -172,7 +161,7 @@ export class ChimeraLspService implements LspService {
     const server = await this.ensureFile(filePath);
     const uri = pathToUri(filePath, this.workspaceRoot);
     const result = await server.connection!.sendRequest<Hover | null>(
-      HoverRequest.method,
+      protocol().HoverRequest.method,
       { textDocument: { uri }, position: toPosition(line, character) },
     );
     if (!result?.contents) return null;
@@ -186,7 +175,7 @@ export class ChimeraLspService implements LspService {
     const server = await this.ensureFile(filePath);
     const uri = pathToUri(filePath, this.workspaceRoot);
     const result = await server.connection!.sendRequest<DocumentSymbol[] | SymbolInformation[] | null>(
-      DocumentSymbolRequest.method,
+      protocol().DocumentSymbolRequest.method,
       { textDocument: { uri } },
     );
     return normalizeDocumentSymbols(result ?? [], this.workspaceRoot, uri);
@@ -207,7 +196,7 @@ export class ChimeraLspService implements LspService {
     const results: LspWorkspaceSymbol[] = [];
     for (const server of ready) {
       const result = await server.connection!.sendRequest<WorkspaceSymbol[] | null>(
-        WorkspaceSymbolRequest.method,
+        protocol().WorkspaceSymbolRequest.method,
         { query },
       );
       results.push(...normalizeWorkspaceSymbols(result ?? [], this.workspaceRoot));
@@ -284,12 +273,12 @@ export class ChimeraLspService implements LspService {
       });
       server.child = child;
       server.connection = connection;
-      connection.onNotification(PublishDiagnosticsNotification.method, (params) => {
+      connection.onNotification(protocol().PublishDiagnosticsNotification.method, (params) => {
         this.handleDiagnostics(params as PublishDiagnosticsParams);
       });
-      await connection.sendRequest<InitializeResult>(InitializeRequest.method, this.initializeParams(server.config));
+      await connection.sendRequest<InitializeResult>(protocol().InitializeRequest.method, this.initializeParams(server.config));
       if (this.disposed) throw new Error('LSP service disposed');
-      await connection.sendNotification(InitializedNotification.method, {});
+      await connection.sendNotification(protocol().InitializedNotification.method, {});
       server.status = 'ready';
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
@@ -349,7 +338,7 @@ export class ChimeraLspService implements LspService {
     const text = await fs.readFile(absolute, 'utf-8');
     if (!server.openDocuments.has(uri)) {
       const version = (this.documentVersions.get(uri) ?? 0) + 1;
-      await server.connection.sendNotification(DidOpenTextDocumentNotification.method, {
+      await server.connection.sendNotification(protocol().DidOpenTextDocumentNotification.method, {
         textDocument: {
           uri,
           languageId: languageIdForPath(absolute),
@@ -367,7 +356,7 @@ export class ChimeraLspService implements LspService {
     // maps; no new sync machinery.
     if (this.documentTexts.get(uri) !== text) {
       const version = (this.documentVersions.get(uri) ?? 0) + 1;
-      await server.connection.sendNotification(DidChangeTextDocumentNotification.method, {
+      await server.connection.sendNotification(protocol().DidChangeTextDocumentNotification.method, {
         textDocument: { uri, version },
         contentChanges: [{ text }],
       });
@@ -393,11 +382,11 @@ export class ChimeraLspService implements LspService {
       }
       if (connection) {
         try {
-          await connection.sendRequest(ShutdownRequest.method);
+          await connection.sendRequest(protocol().ShutdownRequest.method);
         } catch {
           // Ignore shutdown failures during cleanup.
         }
-        try { await connection.sendNotification(ExitNotification.method); }
+        try { await connection.sendNotification(protocol().ExitNotification.method); }
         finally {
           connection.dispose();
           if (server.connection === connection) server.connection = undefined;
