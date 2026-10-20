@@ -9,13 +9,100 @@ actual artifacts rather than model/reviewer prose.
 
 Repository: `C:/Users/pc/Documents/projects/chimera`.
 Branch at handover: `feat/chimera-next-generation-coding-agent`.
-Parent revision of the completed stability checkpoint: `ea996f3`.
-The stability checkpoint saves independently reviewed executor, deferred LSP loading
-and acceptance work. Mixed CLI/orchestrator/provider integration files, their dependent
-regressions/drivers, unfinished Windows shell work and the pending Hive worker-budget
-regression remain uncommitted. Older sections below are historical, not current status.
+Parent revision of the latest integration checkpoint: `904efe3`.
+Completed local integration checkpoint: `ba2cb7c`.
+The checkpoint saves reviewed provider identity, limits, history, Hive and local
+provider-cancellation repairs. Windows shell changes remain uncommitted and native
+reliability is not certified. Read the consolidation continuation before historical sections.
 
-## Current checkpoint (2026-10-20)
+## Consolidation continuation (2026-10-20; partial checkpoint)
+
+- All local and remote-tracking branch tips are ancestors of `904efe3`; no live
+  stashes exist. The archived stash-style recovery ref `2f8437b` has no missing
+  product delta: 20 files match and 12 have newer root implementations.
+- Read-only reconciliation covered all 67 worktree entries and 627 root untracked
+  artifacts. Forty lane-only evidence files need archival preservation, not older
+  source copied over newer root code. Worktrees and recovery refs remain intact.
+- All 20 staged blobs matched the completed alias-review/build receipts. Those
+  completed receipts supersede the pending wording below; they do not certify native
+  reliability. A fresh review found a noncooperative provider could wedge public
+  core execution. The new `provider-deadline.test.ts` reproduced cancellation RED;
+  the shared provider guard now reuses `withAbort`. Fresh follow-up review passed;
+  53 tests / 11 files, core/CLI builds, 80-read recovery, four controlled restart
+  scenarios and scoped lint passed (0 errors / 19 warnings). All seven checks exited
+  0. Commit `ba2cb7c` contains the 21 exact tested staged blobs. The index and those
+  paths are clean; all 631 preserved WIP file hashes matched after the commit.
+  The entire worktree is not clean and this is not clean-install certification.
+- Staged-only change analysis covered 21 files / 70 symbols / 107 affected flows,
+  with CRITICAL aggregate impact. The narrow provider fix had LOW upstream impact
+  (one direct caller). Existing broad reviews plus the focused follow-up cover this
+  local checkpoint, not all affected runtime flows or unattended release acceptance.
+- Fresh native repeat: **16 passed / 15 failed across five files**. Positive startup,
+  timing, quoting and environment cases failed under unchanged deadlines; the
+  native exit-code driver received -1 instead of 7. Controlled shell-failure and
+  lightweight-load checks passed. The owner-death driver hung and its exact owned
+  validation process was stopped. Its log ended with EPERM during fixture removal;
+  do not count it as PASS, retry the denied deletion or remove locked fixtures.
+- Timing isolation: direct Node 4283ms, owned host 9285ms, shell module load 2457ms.
+  First registered shell sample timed out at its 10000ms deadline; the second
+  returned the correct exit code 7 in 5828ms. This is variable-startup evidence,
+  not a fix, a resource-only diagnosis, or native ownership certification.
+- Current evidence: profile scratch `chimera-consolidate-20261020-153041/` contains
+  `continued-verification/`, `native-timing.json`, and the completed
+  `deadline-verification/` checks. Reconciliation receipt:
+  `chimera-reconciliation-audit-20261020.json`. Keep automation paused.
+- Durable recovery archive: `.git/chimera-recovery/consolidation-20261020.zip`;
+  all 704 entries were SHA-256 read-back verified. It preserves the original bundle,
+  root/worktree WIP and lane-only evidence outside auto-pruned scratch. No worktree,
+  branch or recovery ref was removed. Nothing was pushed, released or resumed.
+
+## Next-phase progress (2026-10-20; uncommitted)
+
+- The user authorized execution of the saved next-phase plan after `904efe3`.
+  Role routing, goal deadline settlement, delegated repair context, Hive worker
+  round forwarding and blank tool-draft evidence have implementation/regression
+  changes in the working tree. These are not fresh live-completion certification.
+- A quality review reproduced two additional blockers: role-prefix/alias handle
+  collisions and dialogue eviction by restored tool observations. Both went RED
+  before repair. All seven boundary cases now pass, covering the five history
+  builders through one shared selector/formatter. Tool observations remain
+  explicitly untrusted; the original history limits and two-message floor remain.
+- Frozen working-tree run: **244 tests passed / 46 files**; core/CLI emit,
+  daemon/TUI typechecks, the 80-read loop, controlled restart and offline feature/
+  mode/coverage checks passed. Scoped lint: **0 errors / 21 warnings**. This run
+  includes preserved Windows WIP and is not a clean committed-snapshot verdict.
+- Revised specification review passed and all 20 recorded file hashes matched.
+  Quality revision closed those two blockers but found stale pre-alias TaskRouter
+  handles against the post-alias factory. A new controlled Auto/Duo regression went
+  RED because the resolved reviewer was never called. The existing registration
+  block was moved after alias resolution; fresh tests/build/reviews are pending in
+  `alias-refresh/`. The 244-test result predates this latest repair. No new
+  integration commit is certified yet; preserve both earlier quality FAIL reports.
+- Native suite: **30 passed / 1 failed** in five files. Both quoting cases and all
+  four orphan-ownership cases passed. The unchanged `trust-boundary.test.ts`
+  cancellation case exceeded its 5000ms test limit and cleanup reported `EBUSY`.
+  The test includes cancellation plus a fresh Windows `tasklist` shell command;
+  the timeout phase has not been isolated. Do not remove checks or relax deadlines.
+- Memory rose to 92.6% with 599 MiB available. The owned validation runner was
+  paused, then cancelled only after its native-test child had settled; no unrelated
+  process was stopped. With a 128 MiB Node heap cap, shell-failure, lightweight-load
+  and native-shell drivers passed. The owner-death driver hung and its owned job
+  was stopped; its exit was nonzero and cleanup reported `EPERM`. Previously
+  observed owned Node PIDs were absent afterward. Do not count that driver as PASS
+  or retry deletion of the denied/locked fixture as a workaround.
+- Evidence directory:
+  `C:/Users/pc/AppData/Local/hermes/profiles/chimera/cache/scratch/chimera-next-phase-001/`.
+  Read `candidate.json`, `candidate-alias-refresh.json`, `spec-revision.json`,
+  `quality-revision.json`, pending `spec-alias-refresh.json`,
+  `final/verification.json`, `final/native-tests.log` and
+  `final/native-tail-verification.json` together. The main final pipeline was
+  cancelled, not passed; completed per-check records remain valid for their hashes.
+- No fresh live slice/full matrix or multi-day soak has run in this next phase.
+  The latest complete live matrix remains the historical **18/29** below. Auto
+  correctness, Hive/Trio accepted completion and native reliability remain open.
+  Nothing was pushed, merged, released or resumed; keep automation paused.
+
+## Completed checkpoint 904efe3 (2026-10-20; historical)
 
 - The saved full live matrix is COMPLETE: **18/29 passed, 11 needs_user**. Run ID:
   `00a47797-0577-4d75-9f06-87f599bad7b2`; report:
