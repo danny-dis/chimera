@@ -1,6 +1,6 @@
 {
   "name": "@chimera/providers",
-  "version": "0.5.7",
+  "version": "0.6.0",
   "description": "Provider abstraction layer with LiteLLM integration and fallback chains",
   "license": "MIT",
   "engines": { "node": ">=22.13.0" },

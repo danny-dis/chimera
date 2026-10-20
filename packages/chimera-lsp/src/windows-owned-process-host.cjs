@@ -14,6 +14,17 @@ try {
   // The host alone owns the non-inheritable handle; OS exit closes it and reaps every descendant.
   // https://learn.microsoft.com/en-us/windows/win32/procthread/job-objects
   if (!job || !limit(job, 9, info, info.length) || !assign(job, current())) throw new Error('Job ownership unavailable');
+  const open = kernel.func('void * __stdcall OpenProcess(uint32_t access, int inherit, uint32_t pid)');
+  const times = kernel.func('int __stdcall GetProcessTimes(void * process, void * creation, void * exit, void * kernel, void * user)');
+  const wait = kernel.func('uint32_t __stdcall WaitForSingleObject(void * handle, uint32_t milliseconds)');
+  const parent = open(0x101000, 0, process.ppid);
+  const parentBirth = Buffer.alloc(8), hostBirth = Buffer.alloc(8);
+  if (!parent
+    || !times(parent, parentBirth, Buffer.alloc(8), Buffer.alloc(8), Buffer.alloc(8))
+    || !times(current(), hostBirth, Buffer.alloc(8), Buffer.alloc(8), Buffer.alloc(8))
+    || parentBirth.readBigUInt64LE() > hostBirth.readBigUInt64LE()
+    || wait(parent, 0) !== 258) throw new Error('Caller lifetime unavailable');
+  setInterval(() => { if (wait(parent, 0) !== 258) process.exit(1); }, 100).unref();
   const payload = JSON.parse(process.argv[2]);
   if (typeof payload.command !== 'string' || !Array.isArray(payload.args) || payload.args.some(arg => typeof arg !== 'string')) throw new Error('Invalid process request');
   const env = { ...process.env };

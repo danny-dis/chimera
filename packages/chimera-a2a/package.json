@@ -1,6 +1,6 @@
 {
   "name": "@chimera/a2a",
-  "version": "0.5.7",
+  "version": "0.6.0",
   "description": "A2A (Agent-to-Agent) adapter — external agent participation as workers/reviewers",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",

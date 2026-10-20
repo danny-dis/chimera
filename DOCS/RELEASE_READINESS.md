@@ -1,6 +1,93 @@
-# Next release readiness
+# v0.6.0 release readiness
 
-Status: BLOCKED — current package version is 0.5.7; no release has been published.
+Status: release preparation in progress. The candidate package version is 0.6.0.
+No release is published. Current local checks and historical checkpoints are
+reported separately.
+
+## Current local candidate
+
+The working-tree candidate passed the serial 20-package build, workspace
+typecheck, lint and build-integrity check on Node.js 24.15.0. The full test run
+reported 2,772 passed and one skipped, with all 20 package outcomes accounted for.
+Turbo replayed cached tasks where valid; this is not a fresh execution of every
+unchanged test. Build integrity checked 1,520 artifacts.
+
+The focused checks passed 13 LSP cases and 40 Core cases, including cancellation
+usage settlement and the corrected strict-review fixture. The complete Tools
+suite passed its unchanged Windows caller-death, natural-orphan and quoting
+checks. Earlier startup and suite failures remain in the historical record.
+
+All 14 runtime packages packed and installed in a fresh consumer. Version,
+installed command shim, separate-project launcher, help, sessions, workflow
+listing and the required 10-second real shell check passed. A local runtime
+archive and SHA-256 checksum were generated. The documentation-only repack and
+independent extracted-bundle check passed, including a frozen dependency install,
+installed command, separate-project launcher, real shell output and unchanged
+consumer manifests. Release regressions, 33 offline coverage cases and smoke
+regressions passed. The fresh production audit reported no known vulnerabilities.
+
+These local checks do not establish a public release or green remote CI result.
+Commit and push are authorized; publication remains separate. Previously committed
+real credentials still need owner revocation; deleting files leaves Git history
+intact.
+
+A live PONG check through the accepted extracted bundle failed with
+`ProviderUnavailableError`; the public CLI returned `needs_user` and exit 1.
+The conditional coding case was not run. All three resolved role endpoints use
+local port 47113, which refused connections on the follow-up health check. Its
+earlier HTTP 200 response is historical, not current availability. No provider
+settings or external service were changed. Fresh live coding and all 29
+mode/preset combinations remain blocked; unattended reliability is not certified.
+
+## Earlier v0.6.0 preparation checkpoints
+
+
+These earlier checkpoints preceded the current local candidate. Their failed
+runs are preserved below; use the current section for the latest local status.
+
+- Removed obsolete merge snapshots, scratch fixtures and credential-bearing
+  diagnostics after byte-verifying a private recovery archive. Any real keys
+  committed previously need revocation; deleting files leaves Git history intact.
+  Existing regression diagnostics and unfinished research remain preserved.
+- The installer checks Node 22.13 and pnpm 11.0.8, uses frozen installs and links
+  the CLI package. Full source-install acceptance remains pending.
+- Frozen installation, an uncached 20-package build, full lint with warnings and
+  a production audit reporting zero vulnerabilities passed. After the lifetime
+  repair, workspace typecheck passed across 20 packages; build integrity passed
+  for 1,520 artifacts. The full test run stopped at two LSP cleanup-test failures
+  (101 other LSP tests passed), leaving later packages uncleared. Unchanged narrow
+  repeats passed on Node 26.7.0. They do not establish the cause of the original
+  Node 24 failure or replace full-suite acceptance. No LSP test or deadline changed.
+- The Windows host pins its actual caller handle, checks full creation ticks and
+  liveness before target startup, and closes its private job after caller death.
+  A real-caller differential probe left the original child alive beyond 1,500 ms;
+  the repair reaped it in 807 ms with over 44 seconds left on its finite watchdog.
+  Its longer diagnostic startup allowance does not satisfy native acceptance.
+- Native shell results were 5/7: three caller-death variants and both quoting
+  cases passed. Two natural-orphan cases failed their unchanged 5-second startup
+  checks, including an isolated repeat. Static revision review approved all six
+  current runtime source hashes. The startup failures remain unresolved.
+- All 14 runtime packages packed with content checks. A fresh online consumer
+  installed and passed version, command-shim, project-launcher, help, sessions and
+  workflow-list checks, then failed its required 10-second shell check. No release
+  archive was emitted. First-time consumer resolution now uses normal registry
+  access; a frozen workspace install does not supply every required metadata entry.
+- The harness now supplies a real caller-owned verifier and protects its bytes
+  plus the deterministic grading runner. Its original missing-verifier run was
+  correctly rejected. The repaired in-repo run passed with executed verification,
+  `status=done` and all seven grading checks, without relaxing the completion gate.
+- Release publication now pins the validated commit with a non-force tag push
+  after package acceptance, then requires an exact or peeled remote SHA match.
+  Both successful and failed pushes require that final check. In-repo regressions
+  passed nine valid and 16 invalid versions, six early-tag cases, 16 late-pin cases,
+  two producer interleavings and real local Git positive/conflict cases. Downloads
+  remain independent of optional npm publication. No public tag was created.
+- Credential-free E2E uses deterministic checks. Unavailable-network and zero-pass
+  live smoke runs fail. Five smoke regressions, 33 offline coverage cases and the
+  source-driver check for 29 combinations passed. These do not certify live coding.
+
+A complete workspace run, unchanged native deadlines, extracted/downloaded bundle
+acceptance and the live contract below must pass before this release is certified.
 
 ## Acceptance contract
 

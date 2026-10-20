@@ -7,53 +7,29 @@ on:
     branches: [main]
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
   smoke-test:
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        mode: [ask, plan, code, debug, review, oal]
-        preset: [solo, duo, trio, fusion]
-
+    timeout-minutes: 30
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
         with:
           node-version: 22
-
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v4
-
+      - uses: pnpm/action-setup@v4
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
-
       - name: Build
-        run: pnpm build
-
-      - name: Smoke test ${{ matrix.mode }}/${{ matrix.preset }}
-        run: node scripts/smoke-test.js --mode ${{ matrix.mode }} --preset ${{ matrix.preset }}
-        env:
-          GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
-          CHIMERA_CHEAP_API_KEY: ${{ secrets.CHIMERA_CHEAP_API_KEY }}
-          CHIMERA_CHEAP_BASE_URL: ${{ secrets.CHIMERA_CHEAP_BASE_URL }}
-          CHIMERA_CHEAP_MODEL: ${{ secrets.CHIMERA_CHEAP_MODEL }}
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-
-  # Summary job — fails if any matrix job failed
-  smoke-summary:
-    needs: smoke-test
-    runs-on: ubuntu-latest
-    if: always()
-    steps:
-      - name: Check results
+        run: pnpm exec turbo run build --concurrency=1
+      - name: Deterministic harness acceptance (no provider calls)
+        run: pnpm smoke:harness
+      - name: Reject false-positive smoke and release results
         run: |
-          if [ "${{ needs.smoke-test.result }}" != "success" ]; then
-            echo "Some smoke tests failed"
-            exit 1
-          fi
-          echo "All smoke tests passed"
+          node scripts/test-smoke-test.cjs
+          node scripts/check-release-coverage.cjs
+          node scripts/check-live-mode-presets.cjs
+          node scripts/check-live-repo-feature.cjs
+          node scripts/check-acceptance-accounting.cjs

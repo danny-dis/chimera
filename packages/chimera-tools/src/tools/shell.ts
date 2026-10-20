@@ -1,6 +1,5 @@
 import { z } from 'zod';
-import type { execa } from 'execa';
-import { spawnSync } from 'node:child_process';
+import { spawnCaptured } from '../sandbox/captured-process.js';
 import path from 'path';
 import type { ToolDefinition, ToolContext } from '../tool-schema.js';
 import { MAX_OUTPUT_SIZE, DEFAULT_SHELL_TIMEOUT, MAX_SHELL_TIMEOUT } from '../tool-schema.js';
@@ -106,18 +105,15 @@ function buildChildEnv(explicit: Record<string, string>): Record<string, string>
 // ── run_shell_command ────────────────────────────────────────────────────────
 
 /**
- * Reap a finished/timed-out/cancelled subprocess tree by exact owned PID.
- * execa's cancelSignal/timeout only signals the direct child (cmd.exe on
- * Windows), so grandchildren are reparented and survive. On Windows we run the
- * child in its own process group (detached) and taskkill that group `/T`;
- * elsewhere we kill the owned process group. Never a global name kill.
+ * Reap the owned Job Object host on Windows, or the detached POSIX process group.
+ * Killing the Windows host closes its job handle and reaps descendants.
+ * Never a global name kill.
  */
-function ownedTreeKill(subprocess: { pid?: number }): void {
+function ownedTreeKill(subprocess: { pid?: number; kill(signal: 'SIGKILL'): boolean }): void {
   const pid = subprocess.pid;
   if (pid === undefined) return;
   if (process.platform === 'win32') {
-    try { spawnSync('taskkill.exe', ['/PID', String(pid), '/T', '/F'], { windowsHide: true }); }
-    catch { /* best-effort reaping; the process may already be gone */ }
+    subprocess.kill('SIGKILL');
     return;
   }
   try { process.kill(-pid, 'SIGKILL'); }
@@ -169,44 +165,61 @@ export const runShellCommandTool: ToolDefinition<typeof RunShellCommandParamsSch
     const startTime = Date.now();
 
     let result: { stdout: string; stderr: string; exitCode: number };
-    let subprocess: ReturnType<typeof execa> | undefined;
+    let subprocess: ReturnType<typeof spawnCaptured>['child'] | undefined;
 
     try {
-      const { execa } = require('execa') as typeof import('execa');
       const isWindows = process.platform === 'win32';
       const shellBin = isWindows ? 'cmd.exe' : 'bash';
-      const shellArgs = isWindows ? ['/c', params.command] : ['-c', params.command];
-      subprocess = execa(shellBin, shellArgs, {
+      const shellArgs = isWindows ? ['/d', '/s', '/c', `"${params.command}"`] : ['-c', params.command];
+      const nodeOptionsKey = Object.keys(childEnv).find(key => key.toUpperCase() === 'NODE_OPTIONS');
+      const hostEnv = isWindows ? Object.fromEntries(Object.entries(childEnv).filter(([key]) => key.toUpperCase() !== 'NODE_OPTIONS')) : childEnv;
+      const owned = isWindows
+        ? (require('@chimera/lsp/dist/windows-owned-process.js') as typeof import('@chimera/lsp/dist/windows-owned-process.js')).ownedWindowsProcess(shellBin, shellArgs, true, nodeOptionsKey ? childEnv[nodeOptionsKey] : undefined)
+        : { command: shellBin, args: shellArgs, windowsVerbatimArguments: false };
+      if (context.signal?.aborted) throw Object.assign(new Error('Command cancelled'), { isCanceled: true });
+      if (Date.now() - startTime >= timeout) throw Object.assign(new Error('Command timed out during startup'), { timedOut: true });
+      const started = spawnCaptured(owned.command, owned.args, {
         cwd: workingDir,
-        maxBuffer: MAX_OUTPUT_SIZE,
-        env: childEnv,
-        reject: false,
+        env: hostEnv,
         windowsHide: isWindows,
-        extendEnv: false,
+        windowsVerbatimArguments: owned.windowsVerbatimArguments,
         detached: !isWindows,
-      });
-      // execa only signals the direct child (cmd.exe); its descendants are
-      // reparented and survive. Reap the whole owned tree by exact PID the
-      // moment the shell is cancelled/timed out — before awaiting, or an
-      // orphaned grandchild holding the stdout pipe blocks the await.
-      // We do NOT pass execa's own `timeout` option: it would kill cmd.exe
-      // at `timeout` ms, before this timer fires at `timeout + 150`, losing
-      // the shell PID and leaving descendants unreapable. This timer is the
-      // single deadline owner.
+      }, MAX_OUTPUT_SIZE, () => treeKill());
+      subprocess = started.child;
+      // One deadline owner kills the whole tree before waiting for inherited pipes.
       let cancelled = context.signal?.aborted ?? false;
       let timedOut = false;
-      const treeKill = () => ownedTreeKill(subprocess!);
+      const closed = new Promise<void>(resolve => subprocess!.once('close', () => resolve()));
+      let cleanupTimer: ReturnType<typeof setTimeout> | undefined;
+      let rejectCleanup!: (error: Error) => void;
+      const cleanupDeadline = new Promise<never>((_resolve, reject) => { rejectCleanup = reject; });
+      const treeKill = () => {
+        try { ownedTreeKill(subprocess!); }
+        catch { rejectCleanup(new Error('Owned process cleanup failed')); }
+        cleanupTimer ??= setTimeout(() => rejectCleanup(new Error('Owned process did not settle after cancellation')), 1000);
+        cleanupTimer.unref();
+      };
       const onAbort = () => { cancelled = true; treeKill(); };
-      if (context.signal && !cancelled) {
+      if (cancelled) treeKill();
+      else if (context.signal) {
         context.signal.addEventListener('abort', onAbort, { once: true });
       }
-      const timer = setTimeout(() => { timedOut = true; treeKill(); }, timeout + 150);
+      const timer = setTimeout(() => { timedOut = true; treeKill(); }, Math.max(1, timeout - (Date.now() - startTime)));
       try {
-        const execResult = (await subprocess) as {
+        const settled = await Promise.race([
+          started.result.then(result => ({ result }), error => ({ error })).then(async outcome => { await closed; return outcome; }),
+          cleanupDeadline,
+        ]);
+        if ('error' in settled) throw settled.error;
+        const execResult = settled.result as {
           stdout: string;
           stderr: string;
           exitCode?: number;
           isCanceled?: boolean;
+          failed?: boolean;
+          isMaxBuffer?: boolean;
+          signal?: string;
+          shortMessage?: string;
         };
         if (cancelled || execResult.isCanceled) {
           treeKill();
@@ -227,11 +240,13 @@ export const runShellCommandTool: ToolDefinition<typeof RunShellCommandParamsSch
         }
         result = {
           stdout: execResult.stdout,
-          stderr: execResult.stderr,
-          exitCode: execResult.exitCode ?? 0,
+          stderr: execResult.stderr || (execResult.failed || execResult.isMaxBuffer || execResult.signal ? execResult.shortMessage || 'Command failed' : ''),
+          exitCode: execResult.failed || execResult.isMaxBuffer || execResult.signal
+            ? execResult.exitCode || -1 : execResult.exitCode ?? -1,
         };
       } finally {
         clearTimeout(timer);
+        if (cleanupTimer) clearTimeout(cleanupTimer);
         context.signal?.removeEventListener('abort', onAbort);
       }
     } catch (err: unknown) {

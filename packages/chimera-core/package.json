@@ -1,6 +1,6 @@
 {
   "name": "@chimera/core",
-  "version": "0.5.7",
+  "version": "0.6.0",
   "description": "Core orchestrator, event stream, and agent mesh coordination",
   "license": "MIT",
   "engines": { "node": ">=22.13.0" },

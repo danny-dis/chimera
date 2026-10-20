@@ -1,6 +1,6 @@
 {
   "name": "@chimera/agent-pc",
-  "version": "0.5.7",
+  "version": "0.6.0",
   "description": "Per-agent personal computer — isolated workspace, browser, and process for DMR-X agents",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",

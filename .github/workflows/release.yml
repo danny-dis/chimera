@@ -6,12 +6,17 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'Version to release (e.g., 0.1.5)'
+        description: 'Version to release (e.g., 0.6.0)'
         required: true
+      publish_npm:
+        description: 'Also publish runtime packages to npm (requires NPM_TOKEN)'
+        type: boolean
+        default: false
 
 jobs:
   release:
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     permissions:
       contents: write
       id-token: write
@@ -32,19 +37,10 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Build all packages
-        run: pnpm build
+      - name: Audit production dependencies
+        run: pnpm audit --prod --audit-level high
 
-      - name: Lint
-        run: pnpm lint
-
-      - name: Typecheck
-        run: pnpm typecheck
-
-      - name: Run tests
-        run: pnpm test
-
-      - name: Sync version
+      - name: Validate release version
         id: version
         run: |
           node -e '
@@ -56,21 +52,59 @@ jobs:
             }
             for (const file of ["package.json", ...fs.readdirSync("packages").filter((name) => name.startsWith("chimera-")).map((name) => `packages/${name}/package.json`)]) {
               const pkg = JSON.parse(fs.readFileSync(file, "utf8"));
-              pkg.version = version;
-              fs.writeFileSync(file, `${JSON.stringify(pkg, null, 2)}\n`);
+              if (pkg.version !== version) throw new Error("Release version must match committed manifests");
             }
-            console.log(`Synchronized package versions to ${version}`);
+            require("./scripts/release-tag.cjs")(version, process.env.GITHUB_SHA);
+            console.log(`Validated committed package versions: ${version}`);
             fs.appendFileSync(process.env.GITHUB_OUTPUT, `version=${version}\n`);
           '
         env:
           VERSION: ${{ github.event.inputs.version || github.ref_name }}
 
+      - name: Build all packages
+        run: pnpm exec turbo run build --concurrency=1
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Run tests
+        run: pnpm exec turbo run test --concurrency=1 -- --maxWorkers=1 --minWorkers=1
+
+      - name: Release regression guards
+        run: |
+          node scripts/test-release-workflow.mjs
+          node scripts/check-release-coverage.cjs
+          node scripts/test-smoke-test.cjs
       - name: Clean package consumer smoke
         run: pnpm smoke:package
         env:
-          CHIMERA_PACKAGE_OFFLINE: '1'
+          CHIMERA_RELEASE_DIR: ${{ github.workspace }}/release-artifacts
+
+      - name: Pin release tag
+        run: |
+          node -e 'require("./scripts/release-tag.cjs")(process.env.VERSION, process.env.GITHUB_SHA, { pin: true })'
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          target_commitish: ${{ github.sha }}
+          tag_name: "v${{ steps.version.outputs.version }}"
+          name: "v${{ steps.version.outputs.version }}"
+          draft: false
+          prerelease: false
+          fail_on_unmatched_files: true
+          files: |
+            release-artifacts/*-runtime.tar.gz
+            release-artifacts/SHA256SUMS
 
       - name: Publish runtime packages to npm
+        if: github.event_name == 'workflow_dispatch' && inputs.publish_npm
         run: |
           for package in \
             @chimera/paths \
@@ -91,11 +125,3 @@ jobs:
           done
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
-        with:
-          generate_release_notes: true
-          target_commitish: ${{ github.sha }}
-          tag_name: "v${{ steps.version.outputs.version }}"
-          name: "v${{ steps.version.outputs.version }}"

@@ -25,7 +25,7 @@ The core differentiator is **one coding agent, many brains**:
 
 The existing repository already contains useful foundations including AgentMesh, TaskRouter, SessionOrchestrator, Context/Relay Racing, provider integrations, cost tracking, workflows, worktree isolation, LSP integration, daemon/JSON-RPC, evaluation, TUI, VS Code integration, memory, and security/audit work.
 
-The repository also contains accumulated implementation-plan and merge artifacts. In particular, `.merge-patches/` contains conflict/patch snapshots and working files, while several historical plans and agent briefs overlap. Cleanup and consolidation are part of this effort; do not preserve stale artifacts merely because they exist.
+The repository also contains accumulated implementation-plan and merge artifacts. Obsolete conflict snapshots and scratch fixtures have been removed from product source; substantive plans and agent briefs remain. Cleanup and consolidation are part of this effort; do not preserve stale artifacts merely because they exist.
 
 The existing SessionOrchestrator is too central and should be decomposed behind stable interfaces. Do not perform a blind rewrite: first characterize current behavior with characterization tests, then incrementally extract subsystems.
 
@@ -164,7 +164,7 @@ Before major architecture changes, establish a reliable baseline.
 2. Record current behavior of the CLI, TUI, provider selection, tool loop, worktrees, workflows, sessions, relay racing, memory, and VS Code/daemon paths.
 3. Add characterization tests around SessionOrchestrator public behavior.
 4. Identify duplicate/obsolete plans and agent briefs.
-5. Remove or archive stale `.merge-patches/` conflict artifacts and generated working files from source control where they are not intentionally part of the product.
+5. Keep conflict snapshots and generated working files out of product source control. Preserve any unreconciled work before cleanup.
 6. Consolidate implementation plans into this roadmap plus small feature-specific execution specs.
 7. Establish CI gates: typecheck, unit tests, integration tests, package build, smoke test.
 8. Establish a compatibility matrix for Node, pnpm, supported OSes and provider adapters.

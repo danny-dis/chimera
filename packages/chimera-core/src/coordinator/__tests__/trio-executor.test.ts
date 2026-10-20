@@ -76,7 +76,8 @@ describe('TrioExecutor — smoke', () => {
     ]);
     const reviewerFactory = () => makeMockProvider([
       { match: 'You are a code reviewer', content: JSON.stringify({
-        verdict: 'pass',
+        verdict: 'PASS',
+        confidence: 0.7,
         issues: [],
         commentary: 'looks good',
       }) },

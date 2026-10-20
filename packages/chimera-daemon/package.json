@@ -1,6 +1,6 @@
 {
   "name": "@chimera/daemon",
-  "version": "0.5.7",
+  "version": "0.6.0",
   "description": "Chimera daemon process — JSON-RPC stdio server wrapping the core orchestrator",
   "license": "MIT",
   "repository": {

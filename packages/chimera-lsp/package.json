@@ -1,6 +1,6 @@
 {
   "name": "@chimera/lsp",
-  "version": "0.5.7",
+  "version": "0.6.0",
   "description": "Language Server Protocol service for Chimera",
   "license": "MIT",
   "engines": {

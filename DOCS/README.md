@@ -1,46 +1,51 @@
-# Chimera Documentation
+# Chimera documentation
 
-Chimera is an independent, terminal-native coding agent: one coherent agent experience backed internally by a dynamic portfolio of models, providers, specialist workers, tools, and verification.
+For installation and a first task, start with the [repository README](../README.md).
+The [CLI guide](../packages/chimera-cli/README.md) covers configuration, presets,
+verification inputs, and permission limits.
 
-## Source of truth
+Chimera is experimental and is not certified for unattended use. Public v0.6.0
+downloads have not been published.
 
-| Document | Purpose |
+## Status and test evidence
+
+- [Release readiness](RELEASE_READINESS.md): acceptance requirements, historical
+  results, and unresolved release blockers.
+- [Daily-driver status](DAILY_DRIVER_STATUS.md): earlier hardening checkpoints and
+  remaining work.
+- [Daily-driver handover](DAILY_DRIVER_HANDOVER.md): detailed run evidence and
+  preserved work in progress.
+
+These records apply to the revisions and environments they name. Historical
+passes do not certify the current checkout, every mode/preset combination,
+Windows process cleanup, crash recovery, or sustained unattended operation.
+Read the failures and limitations alongside the passing checks.
+
+## Design and implementation plans
+
+These documents describe intended behavior and implementation direction. They
+are not release acceptance reports. For example, design documents describe
+`auto` as the desired default, while the current `code` command defaults to `solo`.
+Use the CLI source and usage guide for current command behavior.
+
+| Document | Subject |
 |---|---|
-| `README.md` | Product overview, install, quick start |
-| `DOCS/PRODUCT.md` | Product contract, principles, UX and non-goals |
-| `DOCS/ARCHITECTURE.md` | Target architecture and subsystem boundaries |
-| `DOCS/TRIO_AND_COST.md` | Trio Mode, adaptive execution and cost-per-success optimization |
-| `DOCS/ROADMAP.md` | Implementation phases and acceptance gates |
-| `DOCS/MIGRATION.md` | Migration from the current repository to the target architecture |
-| `plans/CHIMERA_NEXT_GENERATION_CODING_AGENT.md` | Main implementation blueprint for coding agents |
-| `plans/TRIO_COST_SUCCESS_IMPLEMENTATION.md` | Detailed Trio/cost-per-success implementation plan |
+| [Product contract](PRODUCT.md) | Product goals, UX principles, and non-goals |
+| [Architecture](ARCHITECTURE.md) | Target subsystem boundaries |
+| [Deliberation modes](DELIBERATION_MODES.md) | Strategy design goals |
+| [Trio and cost](TRIO_AND_COST.md) | Role selection, budgets, and cost goals |
+| [Roadmap](ROADMAP.md) | Implementation phases and acceptance requirements |
+| [Migration](MIGRATION.md) | Migration toward the target architecture |
+| [Coding-agent blueprint](../plans/CHIMERA_NEXT_GENERATION_CODING_AGENT.md) | Implementation plan |
+| [Trio/cost implementation plan](../plans/TRIO_COST_SUCCESS_IMPLEMENTATION.md) | Detailed strategy and cost work |
 
-## Source-of-truth rules
+## Maintaining the docs
 
-1. Prefer these canonical documents over historical plans.
-2. Documentation must describe implemented behavior accurately; planned behavior must be explicitly marked planned.
-3. Product docs must not imply a dependency on ATHENA, DMR-X, Ghost Factory, Sovereign Mind/SMS, or another external project.
-4. MCP and A2A are interoperability adapters, not Chimera's internal architecture.
-5. Examples must use provider-neutral names unless a provider is specifically being documented.
-6. Do not keep duplicate implementation roadmaps in tool-generated plan directories.
-7. Historical research may be retained as reference, but it is not implementation authority.
-8. When architecture changes, update the canonical docs and implementation blueprint in the same change.
-9. Every major new execution strategy must document its quality, cost, latency and verification behavior.
+Describe implemented behavior separately from planned work. Check commands and
+configuration examples against the CLI source before changing them. Keep test
+results tied to their revision and environment, and preserve failed runs.
 
-## Documentation hierarchy
-
-```text
-README.md
-   |
-   +-- DOCS/PRODUCT.md
-   +-- DOCS/ARCHITECTURE.md
-   +-- DOCS/TRIO_AND_COST.md
-   +-- DOCS/ROADMAP.md
-   +-- DOCS/MIGRATION.md
-   +-- plans/CHIMERA_NEXT_GENERATION_CODING_AGENT.md
-   `-- plans/TRIO_COST_SUCCESS_IMPLEMENTATION.md
-```
-
-## What Chimera is not
-
-Chimera is not a generic agent runtime, personal assistant, or sovereign orchestrator. It is a coding agent that may expose APIs and adapters so other systems can use it.
+Chimera supports multiple providers without requiring a particular external
+orchestration project. MCP and A2A are interoperability adapters. Provider-specific
+examples belong in provider-specific guidance. Keep one implementation roadmap
+rather than copying plans into generated directories.

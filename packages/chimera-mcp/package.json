@@ -1,6 +1,6 @@
 {
   "name": "@chimera/mcp",
-  "version": "0.5.7",
+  "version": "0.6.0",
   "description": "MCP (Model Context Protocol) adapter — tool/resource/prompt discovery and execution",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",

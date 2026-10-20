@@ -1,6 +1,6 @@
 {
   "name": "@chimera/paths",
-  "version": "0.5.7",
+  "version": "0.6.0",
   "description": "Cross-cutting utilities: pino logger with lazy-init, path resolution (future)",
   "license": "MIT",
   "engines": { "node": ">=22.13.0" },

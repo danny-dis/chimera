@@ -56,7 +56,6 @@ import { runCompactionPipeline, runMicroCompactOnly, MICROCOMPACT_TOKEN_THRESHOL
 import { RateLimiter, type ModelRegistry } from '@chimera/providers';
 import { executeProseActions, parseProseActions } from './coordinator/file-write-fallback.js';
 
-import type { UserSkillModel } from '@chimera/learning';
 import type { OutputStyle } from './output-styles/index.js';
 import { discoverInstructions, buildInstructionContext } from './instruction-discovery.js';
 import { detectProjectContext } from './project-detection.js';
@@ -756,7 +755,7 @@ export class SessionOrchestrator {
     maxToolRounds?: number;
     timeoutMs?: number;
     conversationHistory?: Array<{ role: string; content: string }>;
-    skillModel?: UserSkillModel;
+    skillModel?: unknown;
     /** Already-resolved output style (CLI layer owns `learning`). core does not import `learning`. */
     style?: OutputStyle;
     signal?: AbortSignal;
@@ -833,7 +832,7 @@ export class SessionOrchestrator {
   }
 
   private async executeRun(params: Parameters<SessionOrchestrator['execute']>[0], verificationInputs: VerificationInputs = {}, repairContext?: string): Promise<OrchestratorResult> {
-    const { task, mode, preset, presetAliases, conversationHistory, skillModel, style } = params;
+    const { task, mode, preset, presetAliases, conversationHistory, style } = params;
     const taskBudget = this._taskBudget;
     const costCap = taskBudget?.costCap ?? params.costCap ?? 10;
     this._costCap = costCap;
@@ -872,10 +871,12 @@ export class SessionOrchestrator {
         admit();
         const signal = options?.signal ? composeAbortSignals([executeSignal, options.signal]) : executeSignal;
         signal.throwIfAborted();
-        const result = await withAbort(() => target.complete(messages, { ...options, signal }), signal);
-        const cost = this.estimateCost(result.usage, target);
-        completion.providerSpend += cost;
-        if (taskBudget) taskBudget.providerSpend += cost;
+        const result = await withAbort(() => target.complete(messages, { ...options, signal }).then(result => {
+          const cost = this.estimateCost(result.usage, target);
+          completion.providerSpend += cost;
+          if (taskBudget) taskBudget.providerSpend += cost;
+          return result;
+        }), signal);
         if (executeSignal.aborted) { completion.stopReason = 'Aborted'; throw new Error('Aborted'); }
         signal.throwIfAborted();
         for (const call of result.toolCalls ?? []) completion.pendingTools.set(call.name, (completion.pendingTools.get(call.name) ?? 0) + 1);
