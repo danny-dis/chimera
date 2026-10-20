@@ -156,6 +156,12 @@ export interface RunContext {
   toolExecutor: ToolExecutor;
 }
 
+type GoalExecutionOptions = {
+  context?: RunContext; signal?: AbortSignal; mode?: Mode; preset?: DeliberationMode;
+  timeoutMs?: number; maxToolRounds?: number; maxProviderCalls?: number;
+  verificationInputs?: string[]; verificationOutputs?: string[];
+};
+
 export class CliRouter {
   private program: Command;
   private verbose = false;
@@ -815,14 +821,20 @@ export class CliRouter {
       .command('goal <description...>')
       .description('Run until a goal is achieved')
       .option('--verify <command>', 'verification command (repeatable)', collectVerification, [])
-      .action(async (descParts: string[], options: { verify: string[] }) => {
+      .option('--verify-input <path>', 'protect an existing caller-owned verifier file (repeatable)', collectVerification, [])
+      .option('--verify-output <path>', 'allow caller-declared generated output (repeatable)', collectVerification, [])
+      .option('--timeout-ms <ms>', 'absolute task deadline in milliseconds', '300000')
+      .option('--max-calls <n>', 'shared provider-call budget across all roles', '20')
+      .option('--max-tool-rounds <n>', 'tool follow-ups per model stage (1–1000)', '4')
+      .option('--preset <mode>', 'deliberation preset', 'solo')
+      .action(async (descParts: string[], options: { verify: string[]; verifyInput: string[]; verifyOutput: string[]; timeoutMs: string; maxCalls: string; maxToolRounds: string; preset: string }) => {
         this.verbose = this.program.opts().verbose ?? false;
         const goal = descParts.join(' ');
         if (!goal) {
           console.error('\n✗ Goal description required.\n');
           process.exit(1);
         }
-        await this.runGoal(goal, options.verify);
+        await this.runGoal(goal, options.verify, { timeoutMs: Number(options.timeoutMs), maxProviderCalls: Number(options.maxCalls), maxToolRounds: Number(options.maxToolRounds), preset: options.preset as DeliberationMode, verificationInputs: options.verifyInput, verificationOutputs: options.verifyOutput });
       });
 
     this.program
@@ -861,7 +873,7 @@ export class CliRouter {
           return;
         }
 
-        const orchestrator = await this.initOrchestrator(checkpoint.mode);
+        const orchestrator = await this.initOrchestrator(checkpoint.mode, { yolo: this.program.opts().yolo === true, interactive: false });
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         await (orchestrator as any).restoreState(checkpoint as any);
         console.log(
@@ -881,7 +893,10 @@ export class CliRouter {
             ? (checkpoint as any).messages.filter(
                 (m: { role: string }) => m.role === 'user' || m.role === 'assistant',
               )
-            : undefined;
+            : [];
+          for (const observation of (checkpoint as any).toolCallHistory ?? []) {
+            priorHistory.push({ role: 'tool', content: JSON.stringify(observation) });
+          }
           const result = await orchestrator.execute({
             task: checkpoint.task,
             mode: checkpoint.mode,
@@ -1950,10 +1965,10 @@ export class CliRouter {
     }
   }
 
-  private async runGoal(goal: string, verificationCommands: string[] = []): Promise<void> {
+  private async runGoal(goal: string, verificationCommands: string[] = [], options?: GoalExecutionOptions): Promise<void> {
     console.log(`\n◎ Chimera goal — "${goal}"\n`);
     try {
-      const result = await this.executeGoal(goal, verificationCommands);
+      const result = await this.executeGoal(goal, verificationCommands, options);
       this.printResult(result);
       if (result.status !== 'done') process.exitCode = 1;
       else if (!verificationCommands.length) console.log('  Note: completed without caller-supplied verification; not independently verified.');
@@ -1963,9 +1978,11 @@ export class CliRouter {
     }
   }
 
-  private async executeGoal(goal: string, verificationCommands: string[] = [], options?: {
-    context?: RunContext; signal?: AbortSignal; mode?: Mode; preset?: DeliberationMode;
-  }): Promise<OrchestratorResult> {
+  private async executeGoal(goal: string, verificationCommands: string[] = [], options?: GoalExecutionOptions): Promise<OrchestratorResult> {
+    const maxProviderCalls = options?.maxProviderCalls ?? 20;
+    const timeoutMs = options?.timeoutMs ?? 5 * 60_000;
+    if (!Number.isSafeInteger(maxProviderCalls) || maxProviderCalls < 1 || maxProviderCalls > 10000) throw new Error('maxProviderCalls must be an integer from 1 to 10000');
+    if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 2147483647) throw new Error('timeoutMs must be an integer from 1 to 2147483647');
     const context = options?.context ?? await this.buildRunContext(options?.mode ?? 'code', {
       yolo: this.program.opts().yolo === true || process.argv.includes('--yolo'),
       interactive: process.stdin.isTTY === true,
@@ -1977,41 +1994,48 @@ export class CliRouter {
       if (!options?.context) context.orchestrator.dispose();
       throw new Error('Goal execution requires a configured real provider. Run `chimera setup` first.');
     }
-    const signal = AbortSignal.any([AbortSignal.timeout(5 * 60_000), ...(options?.signal ? [options.signal] : [])]);
+    const signal = AbortSignal.any([AbortSignal.timeout(timeoutMs), ...(options?.signal ? [options.signal] : [])]);
     let providerCalls = 0;
-    const budgetError = new Error('Goal provider call limit of 20 exceeded.');
+    const budgetError = new Error(`Goal provider call limit of ${maxProviderCalls} exceeded.`);
     const boundedProvider = (provider: ModelProvider) => {
       const adapted = adaptProvider(provider);
       return {
         ...adapted,
         async complete(...args: Parameters<typeof adapted.complete>) {
-          signal.throwIfAborted();
-          if (++providerCalls > 20) throw budgetError;
-          return withAbort(() => adapted.complete(...args), signal);
+          const callSignal = args[1]?.signal ? AbortSignal.any([signal, args[1].signal]) : signal;
+          callSignal.throwIfAborted();
+          if (++providerCalls > maxProviderCalls) throw budgetError;
+          return withAbort(() => adapted.complete(args[0], { ...args[1], signal: callSignal }), callSignal);
         },
       };
     };
     const writer = boundedProvider(writerProvider);
     const reviewer = boundedProvider(reviewerProvider);
-    console.log(`  Progress: bounded to 20 provider calls and 5 minutes; verification checks: ${verificationCommands.length}.`);
+    const challenger = mapped.challenger ? boundedProvider(mapped.challenger) : undefined;
+    console.log(`  Progress: bounded to ${maxProviderCalls} provider calls and ${timeoutMs} ms; verification checks: ${verificationCommands.length}.`);
     try {
       const execute = context.orchestrator.execute as unknown as (params: {
-        task: string; mode: Mode; providers: { writer: typeof writer; reviewer: typeof reviewer };
+        task: string; mode: Mode; providers: { writer: typeof writer; reviewer: typeof reviewer; challenger?: typeof writer };
         preset: DeliberationMode; costCap: number;
-        verificationCommands?: string[]; signal?: AbortSignal;
+        timeoutMs?: number; maxToolRounds?: number;
+        verificationCommands?: string[]; verificationInputs?: string[]; verificationOutputs?: string[]; signal?: AbortSignal;
       }) => Promise<OrchestratorResult>;
       const execution = execute.call(context.orchestrator, {
         task: goal,
         mode: options?.mode ?? 'code',
-        providers: { writer, reviewer },
+        providers: { writer, reviewer, ...(challenger ? { challenger } : {}) },
         preset: options?.preset ?? 'solo',
         costCap: 10,
+        timeoutMs,
+        ...(options?.maxToolRounds !== undefined ? { maxToolRounds: options.maxToolRounds } : {}),
         ...(verificationCommands.length ? { verificationCommands } : {}),
+        ...(options?.verificationInputs ? { verificationInputs: [...options.verificationInputs] } : {}),
+        ...(options?.verificationOutputs ? { verificationOutputs: [...options.verificationOutputs] } : {}),
         signal,
       });
       const result = await execution;
       signal.throwIfAborted();
-      if (providerCalls > 20) throw budgetError;
+      if (providerCalls > maxProviderCalls) throw budgetError;
       return result;
     } catch (err) {
       throw err;

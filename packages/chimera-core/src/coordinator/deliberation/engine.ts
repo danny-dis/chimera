@@ -534,6 +534,7 @@ export class DeliberationEngine {
         signal: this.deps.signal,
         mode,
         toolContext: this.deps.toolContext,
+        ...(cfg.maxToolRounds !== undefined ? { maxIterations: cfg.maxToolRounds } : {}),
       },
     });
     const aggregated = await coordinator.execute(cfg.task, cfg.context, subTasks);

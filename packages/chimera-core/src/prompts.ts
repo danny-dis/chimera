@@ -15,6 +15,7 @@
 //      agent ever stops emitting it.
 
 import type { AgentRole, Mode } from './types/agent.js';
+import { selectConversationHistory, formatHistoryMessage } from './conversation-history.js';
 import { buildStylePrompt, type OutputStyle } from './output-styles/index.js';
 
 // ---------------------------------------------------------------------------
@@ -1417,20 +1418,13 @@ export function buildConversationalMessages(
 
   // Add conversation history for context
   if (conversationHistory && conversationHistory.length > 0) {
-    const MAX_HISTORY_TURNS = 10;
-    const MAX_HISTORY_CHARS = 32000;
-    let historyMessages = conversationHistory.slice(-MAX_HISTORY_TURNS * 2);
-    let totalChars = historyMessages.reduce((sum, m) => sum + m.content.length, 0);
-    while (totalChars > MAX_HISTORY_CHARS && historyMessages.length > 2) {
-      const removed = historyMessages.shift()!;
-      totalChars -= removed.content.length;
-    }
+    const historyMessages = selectConversationHistory(conversationHistory);
 
     const historyBlock = [
       '--- PREVIOUS CONVERSATION CONTEXT ---',
       'Use this context to understand what the user has been discussing.',
       'Do NOT repeat information already provided. Build on previous answers.',
-      ...historyMessages.map(m => `[${m.role === 'user' ? 'User' : 'Assistant'}]: ${m.content.slice(0, 500)}`),
+      ...historyMessages.map(formatHistoryMessage),
       '--- END PREVIOUS CONVERSATION ---',
       '',
     ].join('\n');

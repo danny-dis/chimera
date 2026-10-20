@@ -1,7 +1,12 @@
 import type { Message, ModelProvider } from '@chimera/providers';
 import type { LLMProvider } from './session-orchestrator.js';
 
-type ProviderBridge = Pick<ModelProvider, 'complete'> & Partial<Pick<ModelProvider, 'getCost' | 'getPricing'>>;
+type ProviderBridge = Pick<ModelProvider, 'complete'> & Partial<Pick<ModelProvider, 'getCost' | 'getPricing' | 'getModel'>>;
+
+export function getProviderModelId(provider: LLMProvider): string | undefined {
+  const model = provider.getModel?.();
+  return provider.getModelId?.() ?? model?.id ?? model?.model ?? model?.name;
+}
 
 function parseArguments(value: unknown): Record<string, unknown> {
   let parsed = value;
@@ -16,6 +21,7 @@ function parseArguments(value: unknown): Record<string, unknown> {
 
 export function adaptProvider(provider: ProviderBridge): LLMProvider {
   return {
+    getModel: provider.getModel?.bind(provider),
     getCost: provider.getCost?.bind(provider),
     getPricing: provider.getPricing?.bind(provider),
     async complete(messages, options) {

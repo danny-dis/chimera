@@ -655,6 +655,14 @@ export async function runAgentToolLoop(
     }
   }
 
+  if (!lastContent.trim()) {
+    const observed = messages.slice(params.messages.length).filter(message => message.role === 'tool').map(message => {
+      const result = JSON.parse(message.content);
+      return { tool: message.toolName, success: result.success === true,
+        ...(typeof result.data?.exitCode === 'number' ? { exitCode: result.data.exitCode } : {}) };
+    });
+    if (observed.length) lastContent = 'Observed tool outcomes (not independent verification):\n' + JSON.stringify(observed);
+  }
   return {
     content: lastContent,
     toolCalls: currentToolCalls,
