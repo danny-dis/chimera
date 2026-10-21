@@ -46,6 +46,10 @@ jobs:
       - name: Typecheck
         run: pnpm typecheck
 
+      - name: Diagnose Windows sandbox startup
+        if: matrix.os == 'windows-latest'
+        run: node scripts/diagnose-windows-sandbox.cjs
+
       - name: Test
         run: pnpm exec turbo run test --concurrency=1 -- --maxWorkers=1 --minWorkers=1
 
