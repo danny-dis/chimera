@@ -73,17 +73,17 @@ if (availableProviders.length === 0) {
   console.log('\n  ⚠ No API keys found in environment. Set at least one of:');
   console.log('    ANTHROPIC_API_KEY, OPENAI_API_KEY, GOOGLE_API_KEY');
   console.log('    CHIMERA_CHEAP_API_KEY + CHIMERA_CHEAP_BASE_URL\n');
-  console.log('  Running offline mock tests only...\n');
+  console.log('  Live smoke requires configured providers; missing credentials are not a passing test.\n');
 }
 
 // Detect available modes/presets by checking what the system supports
 const SUPPORTED_PRESETS_PER_MODE = {
-  ask: ['solo', 'duo', 'trio', 'fusion'],
-  plan: ['solo', 'duo', 'trio', 'fusion'],
+  ask: ['solo'],
+  plan: ['solo', 'duo'],
   code: ['solo', 'duo', 'trio', 'fusion'],
   debug: ['solo', 'duo', 'trio', 'fusion'],
-  review: ['solo', 'duo', 'trio', 'fusion'],
-  oal: ['solo', 'duo', 'trio', 'fusion'],
+  review: ['duo', 'trio', 'fusion'],
+  oal: ['solo'],
 };
 
 const results = { passed: 0, failed: 0, skipped: 0, failures: [] };
@@ -170,13 +170,10 @@ for (const mode of modes) {
       const stderr = err.stderr || '';
       const stdout = err.stdout || '';
 
-      // Mock provider fallback is acceptable for CI without keys
-      if (stdout.includes('MockProvider') || stdout.includes('offline') || stdout.includes('No API keys')) {
-        results.passed++;
-        console.log(`  ✓ ${mode}/${preset} — OK (mock fallback)`);
-      } else if (stderr.includes('ENOTFOUND') || stderr.includes('ECONNREFUSED')) {
-        results.skipped++;
-        console.log(`  ⊘ ${mode}/${preset} — skipped (network unavailable)`);
+      if (stderr.includes('ENOTFOUND') || stderr.includes('ECONNREFUSED')) {
+        results.failed++;
+        results.failures.push(`${mode}/${preset}: network unavailable`);
+        console.log(`  ✗ ${mode}/${preset} — network unavailable`);
       } else if (err.code === 'ETIMEDOUT' || err.signal === 'SIGTERM') {
         // Distinguish "took too long" from "crashed" — conflating the two is
         // what made the previous 0/24 result impossible to act on.
@@ -208,4 +205,4 @@ if (results.failures.length > 0) {
 
 console.log('══════════════════════════════════════════════');
 
-process.exit(results.failed > 0 ? 1 : 0);
+process.exit(results.failed > 0 || results.passed === 0 ? 1 : 0);

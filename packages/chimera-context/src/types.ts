@@ -127,6 +127,7 @@ export type ChimeraEvent =
   | { type: 'auto_preset_selected'; task: string; complexity: number; selectedPreset: 'solo' | 'duo' | 'trio' | 'fusion' | 'merge' | 'hive' | 'swarm' | 'auto'; taskType: string; timestamp: number }
   | { type: 'mode_preset_warning'; mode: string; preset: string; resolvedPreset: string; reason: string }
   | { type: 'mode_preset_resolved'; mode: string; preset: string; complexity?: number; task?: string; timestamp?: number }
+  | { type: 'deliberation_executed'; mode?: string; preset: string; resultMode: string; degraded: boolean }
   | { type: 'error'; message: string }
   | { type: 'fusion_started'; task: string; models: string[]; judge: string }
   | { type: 'fusion_completed'; task: string; durationMs: number; totalCostUsd: number }

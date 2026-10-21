@@ -1,0 +1,38 @@
+import { afterEach, expect, it, vi } from 'vitest';
+import { CliRouter } from '../cli-router.js';
+const previous = process.exitCode;
+afterEach(() => { process.exitCode = previous; vi.restoreAllMocks(); });
+it('continues the restored instance with caller verification and returns nonzero when blocked', async () => {
+  const router = new CliRouter() as any;
+  const checkpoint = { task: 'original task', mode: 'code', messages: [], verificationContract: { commands: ['node verify.cjs'], generatedOutputs: ['dist'] }, metadata: { status: 'active', turnCount: 1 } };
+  const orchestrator = { restoreState: vi.fn(), execute: vi.fn(async () => ({ status: 'needs_user', output: 'budget exhausted' })), exportState: vi.fn(() => checkpoint) };
+  const provider = { getModel: () => ({ provider: 'mock', model: 'test' }), getPricing: () => ({ inputPerMillion: 0, outputPerMillion: 0 }), complete: vi.fn() };
+  vi.spyOn(router, 'initializeRuntime').mockImplementation(() => {});
+  router.sessionStore = { load: vi.fn(async () => checkpoint), save: vi.fn() };
+  vi.spyOn(router, 'initOrchestrator').mockResolvedValue(orchestrator);
+  vi.spyOn(router, 'getRoleMappedProviders').mockResolvedValue({ writer: provider, reviewer: provider, fallback: [provider] });
+  vi.spyOn(router, 'printResult').mockImplementation(() => {});
+  await router.program.parseAsync(['node','chimera','resume','active']);
+  expect(orchestrator.restoreState).toHaveBeenCalledWith(checkpoint);
+  expect(orchestrator.execute).toHaveBeenCalledWith(expect.objectContaining({ task: checkpoint.task, verificationCommands: ['node verify.cjs'], verificationOutputs: ['dist'] }));
+  expect(process.exitCode).toBe(1);
+});
+it.each(['done', 'needs_user'] as const)('persists %s continuation before the next resume', async status => {
+  const router = new CliRouter() as any;
+  let checkpoint = { sessionId: 'active', task: 'original task', mode: 'code', messages: [], costSpend: {}, metadata: { status: 'active', turnCount: 1 } };
+  const continued = { ...checkpoint, costSpend: { writer: 2 }, metadata: { status: status === 'done' ? 'completed' : 'failed', turnCount: 2 } };
+  const orchestrator = { restoreState: vi.fn(), execute: vi.fn(async () => ({ status, output: 'result' })), exportState: vi.fn(() => continued) };
+  const provider = { getModel: () => ({ provider: 'mock', model: 'test' }), getPricing: () => ({ inputPerMillion: 0, outputPerMillion: 0 }), complete: vi.fn() };
+  vi.spyOn(router, 'initializeRuntime').mockImplementation(() => {});
+  router.sessionStore = { load: vi.fn(async () => checkpoint), save: vi.fn(async saved => { checkpoint = saved; }) };
+  vi.spyOn(router, 'initOrchestrator').mockResolvedValue(orchestrator);
+  vi.spyOn(router, 'getRoleMappedProviders').mockResolvedValue({ writer: provider, reviewer: provider, fallback: [provider] });
+  vi.spyOn(router, 'printResult').mockImplementation(() => {});
+  vi.spyOn(console, 'log').mockImplementation(() => {});
+  await router.program.parseAsync(['node', 'chimera', 'resume', 'active']);
+  expect(orchestrator.exportState).toHaveBeenCalledWith('active', checkpoint.task, checkpoint.mode);
+  expect(router.sessionStore.save).toHaveBeenCalledWith(continued);
+  await router.program.parseAsync(['node', 'chimera', 'resume', 'active']);
+  expect(orchestrator.execute).toHaveBeenCalledTimes(status === 'done' ? 1 : 2);
+  if (status !== 'done') expect(orchestrator.restoreState).toHaveBeenLastCalledWith(continued);
+});

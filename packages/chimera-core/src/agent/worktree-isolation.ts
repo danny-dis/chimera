@@ -43,7 +43,11 @@ export class WorktreeIsolation {
     this.worktreesDir = resolve(this.gitRoot, '..', '.chimera-worktrees');
   }
 
-  async createIsolatedWorktree(agentId: string): Promise<WorktreeInfo> {
+  async createIsolatedWorktree(agentId: string, options: {
+    signal?: AbortSignal;
+    onAllocated?: (worktree: WorktreeInfo) => void;
+  } = {}): Promise<WorktreeInfo> {
+    options.signal?.throwIfAborted();
     const slug = agentId.slice(0, 8);
     // ponytail: agentId is truncated to 8 chars for the branch name, so two
     // concurrent agents whose ids share a prefix (e.g. `task-1` / `task-10`,
@@ -63,11 +67,16 @@ export class WorktreeIsolation {
     // never re-derive; trust the injected root.
     const gitRoot = this.gitRoot;
 
-    await git(['worktree', 'add', worktreePath, '-b', branch], gitRoot);
-
-    const { stdout: headCommit } = await git(['rev-parse', 'HEAD'], worktreePath);
-
-    return { worktreePath, branch, headCommit, gitRoot };
+    const { stdout } = await execFileAsync('git', ['rev-parse', 'HEAD'], { cwd: gitRoot, signal: options.signal });
+    options.signal?.throwIfAborted();
+    const info = { worktreePath, branch, headCommit: stdout.trim(), gitRoot };
+    // Report the allocation before side effects; cancellation may leave a partial worktree.
+    options.onAllocated?.(info);
+    options.signal?.throwIfAborted();
+    await execFileAsync('git', ['worktree', 'add', worktreePath, '-b', branch, info.headCommit], {
+      cwd: gitRoot, signal: options.signal,
+    });
+    return info;
   }
 
   async cleanupWorktree(worktree: WorktreeInfo, hasChanges: boolean): Promise<void> {
@@ -115,6 +124,8 @@ export class WorktreeIsolation {
   }
 
   async hasWorktreeChanges(worktreePath: string, sinceCommit: string): Promise<boolean> {
+    const { stdout } = await git(['status', '--porcelain', '--untracked-files=all'], worktreePath);
+    if (stdout) return true;
     const code = await gitExitCode(['diff', '--quiet', sinceCommit, 'HEAD'], worktreePath);
     return code !== 0;
   }

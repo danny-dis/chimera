@@ -63,7 +63,7 @@ Multiple agents work this repo in parallel.
 | tokenrouter | Empty `TOKENROUTER_API_KEY=` in .env | Set a key or remove the provider |
 
 **Gateway:** `http://127.0.0.1:47113/v1` | **Auth:** `Bearer dmrx-local-admin-key-2026`
-**Script:** `test_all_providers.py` | **Payload:** `{model, messages:[{role:"user",content:"ping"}], max_tokens:5}`
+**Historical probe (removed from product source):** `test_all_providers.py` | **Payload:** `{model, messages:[{role:"user",content:"ping"}], max_tokens:5}`
 
 | Provider | Model | Status | Latency | Response |
 |----------|-------|--------|---------|----------|

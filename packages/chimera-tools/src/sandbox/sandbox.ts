@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { execa } from 'execa';
+
 import os from 'node:os';
 import { PTYExecutor } from './pty-executor.js';
 import { EnvironmentFilter } from './env-filter.js';
@@ -156,10 +156,12 @@ export class Sandbox {
 
     try {
       const shell = isWindows ? 'powershell' : 'bash';
+      const { execa } = require('execa') as typeof import('execa');
       const result = await execa(shell, shellArgs, {
         cwd: options.cwd,
         timeout: options.timeout,
         env: options.env,
+        extendEnv: false,
         reject: false,
         killSignal: 'SIGTERM',
       });
@@ -261,13 +263,17 @@ ${networkRule}
 (allow sysctl-read)`;
 
     const profilePath = `/tmp/chimera-sandbox-${Date.now()}.sb`;
+    const { execa } = require('execa') as typeof import('execa');
     try {
-      await execa('bash', ['-c', `echo '${profile.replace(/'/g, "'\"'\"'")}' > ${profilePath}`]);
+      await execa('bash', ['-c', `echo '${profile.replace(/'/g, "'\"'\"'")}' > ${profilePath}`], {
+        env: options.env, extendEnv: false,
+      });
 
       const result = await execa('sandbox-exec', ['-f', profilePath, 'bash', '-c', command], {
         cwd: options.cwd,
         timeout: options.timeout,
         env: options.env,
+        extendEnv: false,
         reject: false,
         killSignal: 'SIGTERM',
       });
@@ -284,7 +290,7 @@ ${networkRule}
       return this.executeProcessTier(command, options);
     } finally {
       try {
-        await execa('rm', ['-f', profilePath]);
+        await execa('rm', ['-f', profilePath], { env: options.env, extendEnv: false });
       } catch {
         // ignore cleanup errors
       }
@@ -296,6 +302,7 @@ ${networkRule}
     options: { cwd: string; timeout: number; maxMemoryMB: number; networkEgress: boolean; env: Record<string, string> },
   ): Promise<SandboxResult> {
     try {
+      const { execa } = require('execa') as typeof import('execa');
       const bwrapArgs = [
         '--bind', '/', '/',
         '--bind', options.cwd, options.cwd,
@@ -314,6 +321,7 @@ ${networkRule}
         cwd: options.cwd,
         timeout: options.timeout,
         env: options.env,
+        extendEnv: false,
         reject: false,
         killSignal: 'SIGTERM',
       });
@@ -341,6 +349,7 @@ ${networkRule}
     const mountMode = 'ro';
 
     try {
+      const { execa } = require('execa') as typeof import('execa');
       const runResult = await execa('docker', [
         'run', '--rm',
         '--name', containerName,
@@ -356,6 +365,7 @@ ${networkRule}
       ], {
         timeout: options.timeout + 5000,
         env: options.env,
+        extendEnv: false,
         reject: false,
         killSignal: 'SIGTERM',
       });

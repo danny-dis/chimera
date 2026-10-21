@@ -29,6 +29,7 @@ import type {
 } from '../session-orchestrator.js';
 import type { ToolCall } from '../types/agent.js';
 import { runToolCalls } from './tool-execution-helper.js';
+import { zodToJsonSchema } from '../zod-json.js';
 import { expectedPathFromTask, fileLandedOnDisk, snapshotTarget, targetChanged } from './path-from-task.js';
 
 /** Disk state of a file: mtime+size, or null if missing. Used to verify a
@@ -133,7 +134,7 @@ export interface RunAgentToolLoopParams {
   initialContent: string;
   /** Tool calls from the most recent response (the loop driver). */
   initialToolCalls: ToolCall[];
-  /** Max loop iterations (solo: maxDepth, trio: 1, spawner: 3). */
+  /** Max follow-up completions; drain the final emitted tool batch without another completion. */
   maxRounds: number;
   mode?: AgentToolLoopMode;
   // ── Force-min-files gate (solo only) ──
@@ -152,6 +153,7 @@ export interface RunAgentToolLoopParams {
   toolDefs?: Array<{ name: string; description: string; parameters: Record<string, unknown> }>;
   /** Optional content sanitizer applied to follow-up / force content (solo: sanitizeWriterOutput). */
   sanitize?: (s: string) => string;
+  signal?: AbortSignal;
 }
 
 export interface RunAgentToolLoopResult {
@@ -161,7 +163,7 @@ export interface RunAgentToolLoopResult {
   toolCalls: ToolCall[];
   /** Full transcript including appended assistant/tool/nudge messages. */
   messages: LoopChatMessage[];
-  /** Number of loop iterations that ran (0 if no tool calls to start with). */
+  /** Number of tool batches executed, including a drained final response. */
   round: number;
   /** Count of `write_file` calls seen across the loop + force gate. */
   wroteFileCount: number;
@@ -234,8 +236,7 @@ const FILE_NUDGE =
 // task with no recovery. `completeWithRetry` wraps `provider.complete` with a
 // bounded exponential backoff so one transient error can't kill a task.
 // ponytail: one global retry budget; if per-model 429 budgets ever matter,
-// move the cap into provider config. NOT retried on AbortSignal — out of
-// scope here; add a signal passthrough only if the loop gains cancellation.
+// move the cap into provider config.
 const LLM_MAX_RETRIES = 3;
 const LLM_BASE_BACKOFF_MS = 800;
 const LLM_MAX_BACKOFF_MS = 8000;
@@ -246,12 +247,17 @@ async function completeWithRetry(
   options: Record<string, unknown>,
   eventStream: EventStream,
   label: string,
+  signal?: AbortSignal,
 ): Promise<any> {
   let attempt = 0;
   for (;;) {
+    if (signal?.aborted) throw new Error('Aborted');
     try {
-      return await provider.complete(messages as any, options as any);
+      // Forward the owned run signal so the provider adapter can abort an
+      // in-flight request (not only the retry loop below).
+      return await provider.complete(messages as any, { ...options, ...(signal ? { signal } : {}) } as any);
     } catch (err) {
+      if (signal?.aborted || (err as Error)?.name === 'AbortError') throw err;
       if (attempt >= LLM_MAX_RETRIES) throw err;
       const backoff = Math.min(LLM_BASE_BACKOFF_MS * 2 ** attempt, LLM_MAX_BACKOFF_MS);
       eventStream.append({
@@ -262,7 +268,18 @@ async function completeWithRetry(
         error: String((err as Error)?.message ?? err),
         backoffMs: backoff,
       } as any);
-      await new Promise((r) => setTimeout(r, backoff));
+      await new Promise<void>((resolve, reject) => {
+        const onAbort = () => {
+          clearTimeout(timer);
+          reject(new Error('Aborted'));
+        };
+        const timer = setTimeout(() => {
+          signal?.removeEventListener('abort', onAbort);
+          resolve();
+        }, backoff);
+        signal?.addEventListener('abort', onAbort, { once: true });
+        if (signal?.aborted) onAbort();
+      });
       attempt++;
     }
   }
@@ -304,18 +321,28 @@ export async function runAgentToolLoop(
     wantsFiles,
     task,
     systemPrompt,
-    toolDefs,
+    toolDefs: rawToolDefs,
     sanitize,
   } = params;
 
+  const toolDefs = rawToolDefs?.map(tool => ({
+    ...tool,
+    parameters: tool.parameters?._def ? zodToJsonSchema(tool.parameters as any) : tool.parameters,
+  }));
   const sanitizeFn = sanitize ?? ((s: string) => s);
   const messages: LoopChatMessage[] = seedMessages.map((m) => ({ ...m }));
+
+  // A pre-aborted run must not execute the initial tool call (or any other
+  // side effect). The loop entry guard below only stops the *provider*
+  // follow-up; this catches cancellation before the first tool batch runs.
+  if (params.signal?.aborted) throw new Error('Aborted');
 
   let currentToolCalls: ToolCall[] = initialToolCalls ?? [];
   let assistantContent = initialContent;
   let lastContent = initialContent;
   let round = 0;
   let wroteFileCount = 0;
+  const fileMutationTools = new Set(['write_file', 'edit_file', 'edit_block', 'search_replace', 'apply_patch']);
   let inputTokens = 0;
   let outputTokens = 0;
 
@@ -350,7 +377,7 @@ export async function runAgentToolLoop(
     }
   };
 
-  while (canLoop && currentToolCalls.length > 0 && round < maxRounds) {
+  while (canLoop && currentToolCalls.length > 0 && maxRounds > 0 && round <= maxRounds) {
     round++;
 
     repairWriteTargets(currentToolCalls);
@@ -361,7 +388,7 @@ export async function runAgentToolLoop(
     // `done`. ponytail: ground truth is disk state, not tool-call count.
     const preStat = new Map<string, { mtime: number; size: number } | null>();
     for (const tc of currentToolCalls) {
-      if (tc && typeof tc.name === 'string' && (tc.name === 'write_file' || tc.name === 'edit_file')) {
+      if (tc && fileMutationTools.has(tc.name)) {
         const p = (tc.arguments as { path?: string } | undefined)?.path;
         if (typeof p === 'string') preStat.set(p, statFile(workspaceRoot!, p));
       }
@@ -376,6 +403,7 @@ export async function runAgentToolLoop(
       eventStream,
       workspaceRoot: workspaceRoot!,
       sessionId,
+      signal: params.signal,
     });
 
     for (const tr of toolResults) messages.push(toolResultMessage(mode, tr));
@@ -383,7 +411,7 @@ export async function runAgentToolLoop(
     // Count only write/edit tool calls whose target file actually changed on
     // disk (created, or mtime/size differs from the pre-execution snapshot).
     for (const tc of currentToolCalls) {
-      if (tc && typeof tc.name === 'string' && (tc.name === 'write_file' || tc.name === 'edit_file')) {
+      if (tc && fileMutationTools.has(tc.name)) {
         const p = (tc.arguments as { path?: string } | undefined)?.path;
         if (typeof p === 'string') {
           const before = preStat.get(p) ?? null;
@@ -408,12 +436,19 @@ export async function runAgentToolLoop(
       }
     }
 
+    // The last allowed completion still owns executable calls; do not discard
+    // them or replace them with a disconnected force-write conversation.
+    if (round > maxRounds) { currentToolCalls = []; break; }
+
     const nudge = mode === 'trio'
       ? CONTINUE_NUDGE
-      : (wroteFileCount === 0 ? FILE_NUDGE : CONTINUE_NUDGE);
+      : (wantsFiles && wroteFileCount === 0 ? FILE_NUDGE : CONTINUE_NUDGE);
     messages.push({ role: 'user', content: nudge });
 
-    const r = await completeWithRetry(provider, messages, options, eventStream, 'loop');
+    const r = await completeWithRetry(provider, messages, {
+      ...options,
+      ...(toolDefs?.length ? { tools: toolDefs, toolChoice: options.toolChoice ?? 'auto' } : {}),
+    }, eventStream, 'loop', params.signal);
     const nextContent = sanitizeFn(r.content ?? '');
     inputTokens += (r as any).usage?.inputTokens ?? 0;
     outputTokens += (r as any).usage?.outputTokens ?? 0;
@@ -447,16 +482,18 @@ export async function runAgentToolLoop(
     const MAX_FORCE = forceMinFiles ?? 3;
     let forceAttempts = 0;
     const targetExists = !!workspaceRoot && !!targetPath && existsSync(join(workspaceRoot, targetPath));
+    if (systemPrompt && !messages.some(message => message.role === 'system')) {
+      messages.unshift({ role: 'system', content: systemPrompt });
+    }
+    if (lastContent && currentToolCalls.length === 0) messages.push({ role: 'assistant', content: lastContent });
     while ((!fileLandedOnDisk(task ?? '', workspaceRoot!) || !targetChanged(task ?? '', workspaceRoot!, targetBefore) || wroteFileCount === 0) && forceAttempts < MAX_FORCE) {
       forceAttempts++;
-      const forceMessages: LoopChatMessage[] = [];
-      if (systemPrompt) forceMessages.push({ role: 'system', content: systemPrompt });
       const targetLine = targetPath
         ? targetExists
           ? `You MUST call write_file with \`overwrite: true\` to MODIFY the EXISTING file \`${targetPath}\` — it already exists and must be overwritten. Do not merely narrate the change. `
           : `You MUST call write_file to CREATE the new file \`${targetPath}\`; do not merely narrate the change. `
         : 'You MUST call write_file or edit_file to apply the fix to the file the task names; do not merely narrate the change. ';
-      forceMessages.push({
+      messages.push({
         role: 'user',
         content:
           'Your previous response did not create or modify any files (it only described what you would do). ' +
@@ -470,7 +507,7 @@ export async function runAgentToolLoop(
       try {
         const forced = await completeWithRetry(
           provider,
-          forceMessages,
+          messages,
           {
             ...options,
             ...(toolDefs ? { tools: toolDefs } : {}),
@@ -485,32 +522,36 @@ export async function runAgentToolLoop(
           },
           eventStream,
           'force',
+          params.signal,
         );
         const forcedContent = sanitizeFn(forced.content ?? '');
         inputTokens += (forced as any).usage?.inputTokens ?? 0;
         outputTokens += (forced as any).usage?.outputTokens ?? 0;
         lastContent = forcedContent;
+        repairWriteTargets(forced.toolCalls ?? []);
+        messages.push(assistantMessage(mode, forcedContent, forced.toolCalls ?? []));
         if (forced.toolCalls && forced.toolCalls.length > 0) {
-          repairWriteTargets(forced.toolCalls);
           // Disk-verify forced writes too: snapshot targets, count only real
           // mutations (a no-op/failed forced write must NOT count as landed).
           const forcedPre = new Map<string, { mtime: number; size: number } | null>();
           for (const tc of forced.toolCalls) {
-            if (tc.name === 'write_file' || tc.name === 'edit_file') {
+            if (fileMutationTools.has(tc.name)) {
               const p = (tc.arguments as { path?: string } | undefined)?.path;
               if (typeof p === 'string') forcedPre.set(p, statFile(workspaceRoot!, p));
             }
           }
-          await runToolCalls({
+          const forcedResults = await runToolCalls({
             toolCalls: forced.toolCalls,
             toolExecutor: toolExecutor ?? null,
             toolRegistry: toolRegistry ?? null,
             eventStream,
             workspaceRoot: workspaceRoot!,
             sessionId,
+            signal: params.signal,
           });
+          for (const result of forcedResults) messages.push(toolResultMessage(mode, result));
           for (const tc of forced.toolCalls) {
-            if (tc.name === 'write_file' || tc.name === 'edit_file') {
+            if (fileMutationTools.has(tc.name)) {
               const p = (tc.arguments as { path?: string } | undefined)?.path;
               if (typeof p === 'string') {
                 const before = forcedPre.get(p) ?? null;
@@ -523,7 +564,8 @@ export async function runAgentToolLoop(
           }
         }
         realFiles = countSourceFiles(workspaceRoot!);
-      } catch {
+      } catch (err) {
+        if (params.signal?.aborted || (err as Error)?.name === 'AbortError') throw err;
         /* best-effort; do not crash the run */
       }
     }
@@ -549,9 +591,11 @@ export async function runAgentToolLoop(
             eventStream,
             workspaceRoot: workspaceRoot!,
             sessionId,
+            signal: params.signal,
           });
           if (fileLandedOnDisk(targetPath, workspaceRoot!)) wroteFileCount++;
-        } catch {
+        } catch (err) {
+          if (params.signal?.aborted || (err as Error)?.name === 'AbortError') throw err;
           /* best-effort; do not crash the run */
         }
       }
@@ -590,6 +634,7 @@ export async function runAgentToolLoop(
           { ...options, tools: toolDefs, toolChoice: { type: 'function', function: { name: 'write_file' } } },
           eventStream,
           'path-fix',
+          params.signal,
         );
         if (correction.toolCalls && correction.toolCalls.length > 0) {
           await runToolCalls({
@@ -599,15 +644,25 @@ export async function runAgentToolLoop(
             eventStream,
             workspaceRoot: workspaceRoot!,
             sessionId,
+            signal: params.signal,
           });
           eventStream.append({ type: 'hallucinated_paths_corrected', file: targetPath, removed: missing } as any);
         }
       }
-    } catch {
+    } catch (err) {
+      if (params.signal?.aborted || (err as Error)?.name === 'AbortError') throw err;
       /* best-effort; do not crash the run */
     }
   }
 
+  if (!lastContent.trim()) {
+    const observed = messages.slice(params.messages.length).filter(message => message.role === 'tool').map(message => {
+      const result = JSON.parse(message.content);
+      return { tool: message.toolName, success: result.success === true,
+        ...(typeof result.data?.exitCode === 'number' ? { exitCode: result.data.exitCode } : {}) };
+    });
+    if (observed.length) lastContent = 'Observed tool outcomes (not independent verification):\n' + JSON.stringify(observed);
+  }
   return {
     content: lastContent,
     toolCalls: currentToolCalls,

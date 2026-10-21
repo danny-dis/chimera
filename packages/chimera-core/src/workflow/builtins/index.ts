@@ -45,7 +45,6 @@ const SIMPLE_ASK_STEPS: WorkflowStep[] = [
 
 const SIMPLE_PLAN_STEPS: WorkflowStep[] = [
   { id: 'planner', kind: 'llm', config: { role: 'planner', noToolLoop: true } },
-  { id: 'gate', kind: 'gate', config: { passOn: 'PASS' } },
 ];
 
 /**
@@ -72,17 +71,6 @@ export const BUILT_IN_WORKFLOWS: ReadonlyArray<WorkflowDefinition> = Object.free
     tags: ['builtin', 'default', 'code', 'debug'],
     steps: [
       { id: 'writer', kind: 'llm' as const, config: { role: 'writer', toolLoop: true } },
-      {
-        id: 'quality-gate',
-        kind: 'parallel' as const,
-        config: {
-          branches: [
-            { id: 'reviewer', kind: 'llm' as const, config: { role: 'reviewer' } },
-            { id: 'challenger', kind: 'llm' as const, config: { role: 'challenger' } },
-          ],
-        },
-      },
-      { id: 'synthesize', kind: 'tool' as const, config: { tool: 'response-synthesizer' } },
     ],
   }),
   Object.freeze({
@@ -100,9 +88,7 @@ export const BUILT_IN_WORKFLOWS: ReadonlyArray<WorkflowDefinition> = Object.free
     description: 'Decompose task → fan-out sub-agents (dependency-aware) → aggregate. Heavy fan-out.',
     tags: ['builtin', 'coordinator', 'fan-out'],
     steps: [
-      { id: 'decompose', kind: 'llm' as const, config: { role: 'decomposer' } },
-      { id: 'spawn', kind: 'parallel' as const, config: { branches: [] } },
-      { id: 'aggregate', kind: 'llm' as const, config: { role: 'aggregator' } },
+      { id: 'writer', kind: 'llm' as const, config: { role: 'writer', toolLoop: true, preset: 'hive' } },
     ],
   }),
   // -------------------------------------------------------------------------

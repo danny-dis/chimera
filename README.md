@@ -1,128 +1,106 @@
 # Chimera
 
-Terminal-native parallel multi-agent coding platform.
+Chimera is an experimental terminal coding agent. It can inspect a repository,
+edit files, and run caller-supplied checks using one model or several configured
+model roles. It supports multiple API providers and local models; it does not
+require a particular vendor or an external orchestration service.
 
-Chimera presents as a single unified agent to the user, but deploys 2-3 agents on different providers working in parallel — a cheap model for bulk work, a frontier model for verification, and an optional challenger for complex tasks.
+Chimera is not certified for unattended use. Review its changes and verification
+results before relying on them. Public v0.6.0 downloads have not been published.
+Use the source-checkout workflow below.
 
-## Features
+## Set up from source
 
-- **Parallel Multi-Agent Execution** — User sees one agent, one response. Behind the scenes, multiple agents work in parallel and in series
-- **Provider Pairing** — Cheap model + frontier model on different providers, configurable by the user
-- **Cost-Aware Routing** — Configurable cost caps (per-task, per-session, per-day), automatic model selection based on task complexity
-- **Serial Quality Gate** — Draft → verify → challenge → synthesize. Each stage uses a different model/provider
-- **Agent Relay Racing** — Monitors context fill, triggers graceful handoff before degradation hits
-- **Worktree Isolation** — Branch-level isolation for parallel agent execution with automatic cleanup
-- **Declarative Workflows** — DAG-based workflow engine with 7 node variants (command, prompt, bash, loop, approval, cancel, script)
-- **VS Code Integration** — Chat panel, config panel, and status bar for seamless IDE experience
-- **JSON-RPC Daemon** — Background service for VS Code communication and task execution
-- **LSP Code Intelligence** — Go-to-definition, find references, hover, and document symbols
-- **Structured Logging** — Pino-based logger with event tracking and log levels
-- **Session Persistence** — Conversation recovery and session management
-- **Config TUI** — Interactive setup for provider pairing, cost caps, role assignment
-
-## Architecture
-
-```
-packages/
-├── chimera-cli/        # CLI entry point and router
-├── chimera-context/    # Context engine, handoff protocol, relay racing
-├── chimera-core/       # Agent mesh, session orchestrator, task router
-├── chimera-daemon/     # JSON-RPC daemon for VS Code integration
-├── chimera-eval/       # Evaluation harness
-├── chimera-isolation/  # Worktree isolation and branch management
-├── chimera-learning/   # Learning and adaptation system
-├── chimera-lsp/        # LSP integration for code intelligence
-├── chimera-paths/      # Path utilities and pino logger
-├── chimera-providers/  # Provider integrations, cost tracking, rate limiting
-├── chimera-session/    # Session management and persistence
-├── chimera-tools/      # Tool execution, sandboxing, permissions
-├── chimera-tui/        # Terminal UI components
-├── chimera-vscode/     # VS Code extension and WebView panels
-└── chimera-workflows/  # Declarative workflow engine and DAG schema
-```
-
-## Getting Started
-
-```bash
-# One-line install
-curl -fsSL https://raw.githubusercontent.com/danny-dis/chimera/main/install.sh | bash
-
-# Or via npm
-npx @chimera/cli
-
-# Or via bun
-bunx @chimera/cli
-```
-
-### Manual Install
+You need Node.js 22.13 or newer and pnpm 11. The repository pins pnpm 11.0.8.
 
 ```bash
 git clone https://github.com/danny-dis/chimera.git
 cd chimera
-pnpm install
+npm install --global pnpm@11.0.8
+pnpm install --frozen-lockfile
 pnpm build
-pnpm chimera
 ```
 
-### VS Code Extension
+### Use Chimera in another project
 
-1. Install the extension from the marketplace
-2. Open a workspace with a `.chimera/config.yaml` file
-3. Use the Chimera panel to interact with agents
-4. Commands: `Chimera: Open Chat`, `Chimera: Open Config`, `Chimera: Execute Task`
+Change to the project you want to work on, then run the built CLI by its absolute
+path. The current directory is the workspace for configuration, file tools, and
+verification commands.
 
-## Configuration
-
-Chimera uses a `config.yaml` file for provider configuration:
-
-```yaml
-providers:
-  cheap:
-    provider: deepseek
-    model: deepseek-coder
-  frontier:
-    provider: anthropic
-    model: claude-opus-4
-  challenger:
-    provider: openai
-    model: gpt-4o
-
-cost_caps:
-  per_task: 0.50
-  per_session: 5.00
-  per_day: 20.00
+```bash
+cd /path/to/your-project
+node "/absolute/path/to/chimera/packages/chimera-cli/dist/index.js" setup
+node "/absolute/path/to/chimera/packages/chimera-cli/dist/index.js" code "fix the failing tests" --verify "pnpm test"
 ```
 
-## How It Works
+On Windows, use a quoted path such as
+`"C:/path/to/chimera/packages/chimera-cli/dist/index.js"`.
+The examples below use `pnpm chimera` inside the Chimera checkout. In your own
+project, use the absolute Node entrypoint above.
 
-1. **Task Decomposition** — Orchestrator breaks user request into subtasks
-2. **Parallel Execution** — Subagents run simultaneously on different providers
-3. **Serial Quality Gate** — Results go through draft → verify → challenge → synthesize
-4. **Response Synthesis** — Single unified response presented to user
+`setup` writes `.chimera/config.yaml` and saves supplied API keys to `.env`. It also sends small
+completion requests to test API-provider connections; those requests may incur
+charges. The wizard skips connection tests for Ollama, so configure and start the
+local server yourself. Automatic local-provider detection has not been verified
+for first-time setup. Keep `.env` and credentials out of version control.
+
+## Run a task and check the result
+
+```bash
+pnpm chimera code "fix the failing tests" --verify "pnpm test"
+```
+
+`code` defaults to the `solo` preset. Select `--preset auto` explicitly to request
+adaptive strategy selection. Other presets and command options are described in
+the [CLI guide](packages/chimera-cli/README.md).
+
+Use `--verify` for a check you choose. Repeat it to run more than one command.
+If you have an existing verifier file, declare it with `--verify-input`:
+
+```bash
+pnpm chimera code "fix src/parser.ts" --verify "node verify.cjs" --verify-input verify.cjs
+```
+
+`verify.cjs` must already exist inside the workspace. Declared verification inputs
+are checked for changes across generation, repair, and checkpoint resume. Only
+listed files are protected, and the checks do not detect transient writes that
+are restored between verification boundaries. Inspect the diff and run the
+relevant tests yourself; a completion status is not proof that the change is
+correct.
+
+## Permissions and local data
+
+- `ask`, `plan`, and `review` use read-only tool permissions. Write-capable modes
+  permit edits; interactive runs request approval for file writes. Non-interactive
+  runs can edit files without those prompts, while model-requested shell tools
+  are denied by the default edit profile.
+- `--yolo` enables tool auto-approval in write-capable modes. It is off by default
+  and does not make read-only modes writable. Use it only in a workspace you trust.
+- `--no-learn` disables automatic learning. Existing memory access and session
+  persistence remain available; this flag is not an offline or privacy mode.
+
+## Status and documentation
+
+The [release-readiness record](DOCS/RELEASE_READINESS.md) contains historical test
+results and unresolved limitations, including Windows process lifecycle,
+mode/preset acceptance, and restart reliability. Those results do not certify the
+current checkout or sustained unattended operation. Public npm installation and
+clean-consumer release readiness still require verification.
+
+The [documentation index](DOCS/README.md) separates usage guidance, design goals,
+and historical evidence. Start there for architecture and development plans.
 
 ## Development
 
 ```bash
-# Run tests
 pnpm test
-
-# Run linter
 pnpm lint
-
-# Type check
 pnpm typecheck
-
-# Dev mode
+pnpm build
 pnpm dev
 ```
 
-## Tech Stack
-
-- TypeScript
-- Node.js
-- pnpm workspaces
-- Turborepo
-- Vitest
+Run the checks relevant to your change and report failures or checks you skipped.
 
 ## License
 

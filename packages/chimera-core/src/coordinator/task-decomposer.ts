@@ -79,7 +79,7 @@ export class TaskDecomposer {
           id: st.id as string,
           description: st.description as string,
           dependencies: (st.dependencies as string[]) ?? [],
-          context: (st.context as string) ?? '',
+          context: [context, st.context as string].filter(Boolean).join('\n\n'),
           provider: this.provider,
           estimatedTokens: this.estimateTokens(st.estimatedTokens as number | string),
           type: this.validateSubTaskType(st.type as string),

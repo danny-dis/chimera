@@ -1,5 +1,4 @@
-import { useState, useCallback } from 'react';
-import { useInput } from 'ink';
+import { useState, useCallback, useEffect } from 'react';
 
 export interface FocusManager {
   /** Currently focused index. 0 = input, 1 = chat/viewport. */
@@ -9,31 +8,29 @@ export interface FocusManager {
   focusInput: () => void;
   /** Focus the chat viewport. */
   focusChat: () => void;
+  moveFocus: (direction?: number) => void;
 }
 
 /**
  * Binary focus manager for chat-primary layout.
  * 0 = input (default), 1 = chat viewport.
  */
-export function useFocus(): FocusManager {
+export function useFocus(count = 4): FocusManager {
   const [focusIndex, setFocusIndex] = useState(0);
 
   const focusInput = useCallback(() => setFocusIndex(0), []);
   const focusChat = useCallback(() => setFocusIndex(1), []);
 
-  useInput((_input, key) => {
-    if (key.tab && !key.shift) {
-      setFocusIndex((prev) => (prev + 1) % 2);
-    }
-    if (key.tab && key.shift) {
-      setFocusIndex((prev) => (prev - 1 + 2) % 2);
-    }
-  });
+  useEffect(() => setFocusIndex(previous => Math.min(previous, count - 1)), [count]);
+  const moveFocus = useCallback((direction = 1) => {
+    setFocusIndex(previous => (previous + direction + count) % count);
+  }, [count]);
 
   return {
     focusIndex,
     isFocused: (index: number) => focusIndex === index,
     focusInput,
     focusChat,
+    moveFocus,
   };
 }

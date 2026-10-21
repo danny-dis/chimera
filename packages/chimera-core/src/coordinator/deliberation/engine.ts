@@ -7,9 +7,8 @@
  * `TrioExecutor`, `FusionExecutor`, `ResultAggregator`) and normalizes
  * the result to the unified `DeliberationResult` shape.
  *
- * Determinism: the engine adds no new side effects. All events emitted
- * are produced by the underlying executors; the engine only routes and
- * normalizes. All 9 fusion safety-net patterns (defensive safeEmit,
+ * The engine records completed dispatches; executors own task-side effects.
+ * All 9 fusion safety-net patterns (defensive safeEmit,
  * factory injection, cost tracking, recursion guard, degraded fallback,
  * 5-field analysis shape, defensive usage access, test coverage) are
  * inherited from the executors themselves.
@@ -73,9 +72,35 @@ import type {
 
 export class DeliberationEngine {
   private deps: DeliberationEngineDeps;
+  private readOnly: boolean;
 
   constructor(deps: DeliberationEngineDeps) {
+    this.readOnly = deps.mode === 'ask' || deps.mode === 'plan' || deps.mode === 'review';
     this.deps = deps;
+    if (!this.readOnly) return;
+
+    const tools = (deps.toolRegistry?.getAll() ?? []).filter(tool =>
+      tool && 'permissionLevel' in tool && tool.permissionLevel === 'read');
+    const allowed = new Set(tools.map(tool => tool.name));
+    const prompt = `Operational mode: ${deps.mode}. Use read-only tools to gather evidence, then return the requested analysis or plan. Do not create, edit, or execute files; no on-disk artifact is required.`;
+    this.deps = {
+      ...deps,
+      toolRegistry: deps.toolRegistry ? { getAll: () => tools, has: name => allowed.has(name) } : undefined,
+      toolExecutor: deps.toolExecutor ? {
+        execute: async (name, params, context) => allowed.has(name)
+          ? deps.toolExecutor!.execute(name, params, { ...deps.toolContext, ...context, mode: deps.mode })
+          : { success: false, error: `Tool ${name} is unavailable in ${deps.mode} mode`, duration: 0 },
+      } : undefined,
+      providerFactory: modelId => {
+        const provider = deps.providerFactory(modelId);
+        return {
+          ...provider,
+          complete: (messages, options) => provider.complete([{ role: 'system', content: prompt }, ...messages], options),
+          ...(provider.getCost ? { getCost: provider.getCost.bind(provider) } : {}),
+          ...(provider.getPricing ? { getPricing: provider.getPricing.bind(provider) } : {}),
+        };
+      },
+    };
   }
 
   /**
@@ -89,29 +114,33 @@ export class DeliberationEngine {
     if (TaskRouter.isConversationalTask(config.task)) {
       return this.runConversational(config);
     }
+    let result: DeliberationResult;
     switch (config.mode) {
       case 'solo':
-        return this.runSolo(config);
+        result = await this.runSolo(config); break;
       case 'duo':
-        return this.runDuo(config);
+        result = await this.runDuo(config); break;
       case 'trio':
-        return this.runTrio(config);
+        result = await this.runTrio(config); break;
       case 'fusion':
-        return this.runFusion(config);
+        result = await this.runFusion(config); break;
       case 'merge':
-        return this.runMerge(config);
+        result = await this.runMerge(config); break;
       case 'hive':
-        return this.runHive(config);
+        result = await this.runHive(config); break;
       case 'swarm':
-        return this.runSwarm(config);
+        result = await this.runSwarm(config); break;
       case 'auto':
-        return this.runAuto(config);
+        result = await this.runAuto(config); break;
       default: {
         // Exhaustiveness check — if a new mode is added, TS will flag this.
         const _exhaustive: never = config;
         throw new Error(`unknown deliberation mode: ${String(_exhaustive)}`);
       }
     }
+    this.deps.eventStream.append({ type: 'deliberation_executed', mode: this.deps.mode,
+      preset: config.mode, resultMode: result.mode, degraded: result.degraded });
+    return result;
   }
 
   // ── Preset: solo ──────────────────────────────────────────────────
@@ -119,24 +148,28 @@ export class DeliberationEngine {
   private async runSolo(cfg: SoloDeliberationConfig): Promise<DeliberationResult> {
     const startTime = Date.now();
     const executor = new SoloExecutor({
+      readOnly: this.readOnly,
       eventStream: this.deps.eventStream,
       registry: this.deps.registry,
       ...(this.deps.costTracker ? { costTracker: this.deps.costTracker } : {}),
       ...(this.deps.workspaceRoot ? { workspaceRoot: this.deps.workspaceRoot } : {}),
       ...(this.deps.toolExecutor ? { toolExecutor: this.deps.toolExecutor } : {}),
       ...(this.deps.toolRegistry ? { toolRegistry: this.deps.toolRegistry } : {}),
+      ...(this.deps.signal ? { signal: this.deps.signal } : {}),
     });
 
     const isConversational = TaskRouter.isConversationalTask(cfg.task);
 
     const soloConfig: SoloConfig = {
       model: cfg.model,
+      ...(cfg.context !== undefined ? { context: cfg.context } : {}),
       ...(cfg.temperature !== undefined ? { temperature: cfg.temperature } : {}),
       ...(cfg.maxCompletionTokens !== undefined
         ? { maxCompletionTokens: cfg.maxCompletionTokens }
         : {}),
       ...(cfg.budgetUsd !== undefined ? { budgetUsd: cfg.budgetUsd } : {}),
       ...(cfg.maxDepth !== undefined ? { maxDepth: cfg.maxDepth } : {}),
+      ...(cfg.maxToolRounds !== undefined ? { maxToolRounds: cfg.maxToolRounds } : {}),
       ...(cfg.reasoning !== undefined
         ? { reasoning: cfg.reasoning as { effort?: 'low' | 'medium' | 'high'; maxTokens?: number } }
         : {}),
@@ -224,23 +257,27 @@ export class DeliberationEngine {
   private async runDuo(cfg: DuoDeliberationConfig): Promise<DeliberationResult> {
     const startTime = Date.now();
     const executor = new DuoExecutor({
+      readOnly: this.readOnly,
       eventStream: this.deps.eventStream,
       registry: this.deps.registry,
       ...(this.deps.costTracker ? { costTracker: this.deps.costTracker } : {}),
       ...(this.deps.workspaceRoot ? { workspaceRoot: this.deps.workspaceRoot } : {}),
       ...(this.deps.toolExecutor ? { toolExecutor: this.deps.toolExecutor } : {}),
       ...(this.deps.toolRegistry ? { toolRegistry: this.deps.toolRegistry } : {}),
+      ...(this.deps.signal ? { signal: this.deps.signal } : {}),
     });
 
     const duoConfig: DuoConfig = {
       modelA: cfg.modelA,
       modelB: cfg.modelB,
+      ...(cfg.context !== undefined ? { context: cfg.context } : {}),
       ...(cfg.temperature !== undefined ? { temperature: cfg.temperature } : {}),
       ...(cfg.maxCompletionTokens !== undefined
         ? { maxCompletionTokens: cfg.maxCompletionTokens }
         : {}),
       ...(cfg.budgetUsd !== undefined ? { budgetUsd: cfg.budgetUsd } : {}),
       ...(cfg.maxDepth !== undefined ? { maxDepth: cfg.maxDepth } : {}),
+      ...(cfg.maxToolRounds !== undefined ? { maxToolRounds: cfg.maxToolRounds } : {}),
       ...(cfg.reasoning !== undefined
         ? { reasoning: cfg.reasoning as { effort?: 'low' | 'medium' | 'high'; maxTokens?: number } }
         : {}),
@@ -262,6 +299,7 @@ export class DeliberationEngine {
   private async runTrio(cfg: TrioDeliberationConfig): Promise<DeliberationResult> {
     const startTime = Date.now();
     const executor = new TrioExecutor({
+      readOnly: this.readOnly,
       eventStream: this.deps.eventStream,
       registry: this.deps.registry,
       ...(this.deps.costTracker ? { costTracker: this.deps.costTracker } : {}),
@@ -272,11 +310,13 @@ export class DeliberationEngine {
       ...(this.deps.toolExecutor ? { toolExecutor: this.deps.toolExecutor } : {}),
       ...(this.deps.toolRegistry ? { toolRegistry: this.deps.toolRegistry } : {}),
       ...(this.deps.style ? { style: this.deps.style } : {}),
+      ...(this.deps.signal ? { signal: this.deps.signal } : {}),
     });
 
     const trioConfig: TrioConfig = {
       writer: cfg.writer,
       reviewer: cfg.reviewer,
+      ...(cfg.context !== undefined ? { context: cfg.context } : {}),
       ...(cfg.challenger !== undefined ? { challenger: cfg.challenger } : {}),
       ...(cfg.synthesizer !== undefined ? { synthesizer: cfg.synthesizer } : {}),
       ...(cfg.temperature !== undefined ? { temperature: cfg.temperature } : {}),
@@ -285,6 +325,7 @@ export class DeliberationEngine {
         : {}),
       ...(cfg.budgetUsd !== undefined ? { budgetUsd: cfg.budgetUsd } : {}),
       ...(cfg.maxDepth !== undefined ? { maxDepth: cfg.maxDepth } : {}),
+      ...(cfg.maxToolRounds !== undefined ? { maxToolRounds: cfg.maxToolRounds } : {}),
       ...(cfg.isolateWorktree !== undefined ? { isolateWorktree: cfg.isolateWorktree } : {}),
       ...(cfg.parallel !== undefined ? { parallel: cfg.parallel } : {}),
       ...(cfg.reasoning !== undefined
@@ -313,25 +354,30 @@ export class DeliberationEngine {
   private async runFusion(cfg: FusionDeliberationConfig): Promise<DeliberationResult> {
     const startTime = Date.now();
     const executor = new FusionExecutor({
+      readOnly: this.readOnly,
       eventStream: this.deps.eventStream,
       registry: this.deps.registry,
       ...(this.deps.costTracker ? { costTracker: this.deps.costTracker } : {}),
       ...(this.deps.workspaceRoot ? { workspaceRoot: this.deps.workspaceRoot } : {}),
       ...(this.deps.toolExecutor ? { toolExecutor: this.deps.toolExecutor } : {}),
       ...(this.deps.toolRegistry ? { toolRegistry: this.deps.toolRegistry } : {}),
+      ...(this.deps.signal ? { signal: this.deps.signal } : {}),
     });
 
     const fusionConfig: FusionConfig = {
       analysisModels: cfg.analysisModels,
+      ...(cfg.context !== undefined ? { context: cfg.context } : {}),
       panelSize: cfg.panelSize,
       preferLocal: cfg.preferLocal,
       adversarialRound: cfg.adversarialRound,
       diversePerspectives: cfg.diversePerspectives,
       judgeModel: cfg.judgeModel,
+      judgeFailover: cfg.judgeFailover,
       temperature: cfg.temperature,
       maxCompletionTokens: cfg.maxCompletionTokens,
       budgetUsd: cfg.budgetUsd,
       maxDepth: cfg.maxDepth,
+      ...(cfg.maxToolRounds !== undefined ? { maxToolCalls: cfg.maxToolRounds } : {}),
       reasoning: cfg.reasoning as any,
     };
 
@@ -339,7 +385,7 @@ export class DeliberationEngine {
       cfg.task,
       fusionConfig,
       this.deps.providerFactory,
-      { depth: cfg.maxDepth ?? 0 }
+      { depth: this.deps.context?.depth ?? 0 }
     );
 
     return {
@@ -365,7 +411,7 @@ export class DeliberationEngine {
     const provider = this.deps.providerFactory(cfg.mergeModel);
     const aggregator = new ResultAggregator(provider);
 
-    const aggregated = await aggregator.aggregate(cfg.subTaskResults);
+    const aggregated = await aggregator.aggregate(cfg.subTaskResults, this.deps.signal);
 
     // Map the merge output back into the unified 5-field analysis.
     const analysis: DeliberationAnalysis = {
@@ -449,13 +495,14 @@ export class DeliberationEngine {
       }));
     }
 
-    // File-writing sub-tasks get tool definitions so hive sub-agents emit
-    // write_file/edit_file tool_calls (landing real files) instead of
-    // narrating code as text. Conversational/analysis tasks don't need tools.
+    const mode = this.deps.mode ?? 'ask';
+    const canWrite = ['code', 'debug', 'oal'].includes(mode);
     const wantsFiles = !TaskRouter.isConversationalTask(cfg.task);
     let fileTools: Array<{ name: string; description: string; parameters: Record<string, unknown> }> = [];
     if (wantsFiles && this.deps.toolRegistry) {
-      const WRITE_EDIT = new Set(['write_file', 'edit_file', 'read_file']);
+      const WRITE_EDIT = new Set(canWrite
+        ? ['write_file', 'edit_file', 'read_file', 'run_shell_command']
+        : ['read_file']);
       for (const tool of this.deps.toolRegistry.getAll()) {
         if (WRITE_EDIT.has(tool.name)) {
           fileTools.push({
@@ -466,9 +513,15 @@ export class DeliberationEngine {
         }
       }
     }
-    if (fileTools.length > 0) {
-      subTasks = subTasks.map((st) => ({ ...st, tools: fileTools }));
-    }
+    subTasks = subTasks.map((st) => ({
+      ...st,
+      context: [
+        st.context,
+        'Parent task constraint data (applies only to the assigned subtask; do not expand scope):',
+        JSON.stringify({ task: cfg.task, context: cfg.context ?? '' }),
+      ].filter(Boolean).join('\n\n'),
+      tools: fileTools.filter(tool => !st.tools || st.tools.some(allowed => allowed.name === tool.name)),
+    }));
 
     // 4. Execute subtasks via CoordinatorEngine (decomposition already done above)
     const coordinator = new CoordinatorEngine({
@@ -478,6 +531,10 @@ export class DeliberationEngine {
         toolExecutor: this.deps.toolExecutor,
         toolRegistry: this.deps.toolRegistry,
         workspaceRoot: this.deps.workspaceRoot,
+        signal: this.deps.signal,
+        mode,
+        toolContext: this.deps.toolContext,
+        ...(cfg.maxToolRounds !== undefined ? { maxIterations: cfg.maxToolRounds } : {}),
       },
     });
     const aggregated = await coordinator.execute(cfg.task, cfg.context, subTasks);
@@ -711,7 +768,7 @@ export class DeliberationEngine {
     preset: DeliberationMode,
     autoCfg: AutoDeliberationConfig,
   ): DeliberationConfig {
-    const base = { task: autoCfg.task, context: autoCfg.context, temperature: autoCfg.temperature, maxCompletionTokens: autoCfg.maxCompletionTokens, budgetUsd: autoCfg.budgetUsd, maxDepth: autoCfg.maxDepth, reasoning: autoCfg.reasoning };
+    const base = { task: autoCfg.task, context: autoCfg.context, temperature: autoCfg.temperature, maxCompletionTokens: autoCfg.maxCompletionTokens, budgetUsd: autoCfg.budgetUsd, maxDepth: autoCfg.maxDepth, maxToolRounds: autoCfg.maxToolRounds, reasoning: autoCfg.reasoning };
 
     // Placeholder complexity for model selection (0.5 = medium)
     const placeholderComplexity = {
@@ -878,6 +935,8 @@ export class DeliberationEngine {
       durationMs: inner.durationMs ?? Date.now() - startTime,
       degraded: inner.degraded,
       ...(inner.degradationReason ? { degradationReason: inner.degradationReason } : {}),
+      ...(inner.needsUserEscalation ? { needsUserEscalation: inner.needsUserEscalation } : {}),
+      ...(inner.escalationReason ? { escalationReason: inner.escalationReason } : {}),
     };
   }
 }

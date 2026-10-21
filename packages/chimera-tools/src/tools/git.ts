@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { execa } from 'execa';
+
 import path from 'path';
 import type { ToolDefinition, ToolContext } from '../tool-schema.js';
 import { GitFileStatusSchema, GitCommitSchema, MAX_OUTPUT_SIZE } from '../tool-schema.js';
@@ -15,6 +15,7 @@ async function runGit(
     ? path.resolve(context.workspaceRoot, cwd)
     : context.workspaceRoot;
 
+  const { execa } = require('execa') as typeof import('execa');
   const result = await execa('git', args, {
     cwd: workingDir,
     timeout: 30_000,

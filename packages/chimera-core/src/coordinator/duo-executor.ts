@@ -6,9 +6,12 @@ import type { CostTracker } from '../cost-tracker.js';
 import { ResponseSynthesizer, type SynthesisInput } from './response-synthesizer.js';
 import { sanitizeWriterOutput, sanitizeReviewerOutput } from './output-sanitizer.js';
 import { TaskRouter } from '../task-router.js';
-import { runAgentToolLoop, countSourceFiles } from './agent-tool-loop.js';
+import { runAgentToolLoop, countSourceFiles, type LoopChatMessage } from './agent-tool-loop.js';
 import { executeProseActions } from './file-write-fallback.js';
 import { taskWantsFiles, snapshotTarget, targetChanged } from './path-from-task.js';
+import { zodToJsonSchema } from '../zod-json.js';
+import { withAbort } from '../utils/abort.js';
+import { compactAgentPrompt } from '../prompts.js';
 import type {
   DuoConfig,
   DuoContext,
@@ -28,6 +31,7 @@ export type {
 } from './duo-types.js';
 
 interface DuoExecutorDeps {
+  readOnly?: boolean;
   eventStream: EventStream;
   /** Model registry — used for cost lookups and (future) capability checks. */
   registry: ModelRegistry;
@@ -39,6 +43,8 @@ interface DuoExecutorDeps {
   toolExecutor?: ToolExecutorInterface;
   /** Optional tool registry — supplies tool definitions to the writer. */
   toolRegistry?: ToolRegistryInterface;
+  /** Per-run abort signal, forwarded to the writer's tool loop. */
+  signal?: AbortSignal;
 }
 
 /**
@@ -57,20 +63,24 @@ interface DuoExecutorDeps {
  * tracking, defensive usage access.
  */
 export class DuoExecutor {
+  private readOnly: boolean;
   private eventStream: EventStream;
   private registry: ModelRegistry;
   private costTracker: CostTracker | undefined;
   private workspaceRoot: string | undefined;
   private toolExecutor: ToolExecutorInterface | undefined;
   private toolRegistry: ToolRegistryInterface | undefined;
+  private signal: AbortSignal | undefined;
 
   constructor(deps: DuoExecutorDeps) {
+    this.readOnly = deps.readOnly ?? false;
     this.eventStream = deps.eventStream;
     this.registry = deps.registry;
     this.costTracker = deps.costTracker;
     this.workspaceRoot = deps.workspaceRoot;
     this.toolExecutor = deps.toolExecutor;
     this.toolRegistry = deps.toolRegistry;
+    this.signal = deps.signal;
   }
 
   /**
@@ -178,7 +188,8 @@ export class DuoExecutor {
       this.recordSpend(config.modelB, costB);
 
     } catch (err) {
-      return this.degraded(totalTokens, totalCostUsd, startTime, sources, `sequential calls failed: ${String(err)}`);
+      degraded = true;
+      degradationReason = `sequential calls failed: ${String(err)}`;
     }
 
     // Budget check after both calls
@@ -197,8 +208,8 @@ export class DuoExecutor {
     }
 
     // In sequential mode, we prefer the reviewer (Model B) if it succeeded.
-    const sourceA = sources.find(s => s.role === 'writer');
-    const sourceB = sources.find(s => s.role === 'reviewer');
+    const sourceA = validSources.find(s => s.role === 'writer');
+    const sourceB = validSources.find(s => s.role === 'reviewer');
 
     // If only writer succeeded (reviewer failed or was over budget)
     if (sourceA && !sourceB) {
@@ -237,7 +248,7 @@ export class DuoExecutor {
       confidence: sourceB ? 0.9 : 0.8,
     };
 
-    const wantsFilesFinal = taskWantsFiles(task);
+    const wantsFilesFinal = !this.readOnly && taskWantsFiles(task);
     const fileUnchanged = wantsFilesFinal && this.workspaceRoot && !targetChanged(task, this.workspaceRoot, targetBefore);
     return {
       output: finalResponse,
@@ -268,21 +279,28 @@ export class DuoExecutor {
     const prompt = role === 'writer'
       ? this.buildPeerPrompt(role, task, config.context)
       : this.buildReviewPrompt(task, draft!, config.context);
+    const messages: LoopChatMessage[] = [];
+    if (role === 'writer' && !this.readOnly && this.toolRegistry) {
+      messages.push({ role: 'system', content: compactAgentPrompt('writer') });
+    }
+    messages.push({ role: 'user', content: prompt });
 
-    const r = await withRetry(() => provider.complete(
-      [{ role: 'user', content: prompt }],
-      { temperature: config.temperature, maxTokens: config.maxCompletionTokens, ...(config.reasoning !== undefined ? { reasoning: config.reasoning } : {}) }
-    ), { maxRetries: 2, baseDelayMs: 3000, maxDelayMs: 20000 });
+    const r = await withAbort(() => withRetry(() => withAbort(() => provider.complete(
+      messages,
+      { signal: this.signal, temperature: config.temperature, maxTokens: config.maxCompletionTokens, ...(config.reasoning !== undefined ? { reasoning: config.reasoning } : {}),
+        ...(role === 'writer' && this.toolRegistry ? { tools: this.toolRegistry.getAll().map(t => ({ name: t.name, description: t.description, parameters: zodToJsonSchema(t.parameters as any) })), toolChoice: 'auto' as const } : {}) }
+    ), this.signal), { maxRetries: 2, baseDelayMs: 3000, maxDelayMs: 20000 }), this.signal);
+    this.signal?.throwIfAborted();
 
     // Writer path: route through the shared agentic tool loop so the writer
     // can actually call write_file instead of narrating the file in prose.
     // Falls back to the bare draft when tooling is unavailable (non-file tasks).
     if (role === 'writer' && this.toolExecutor && this.toolRegistry && this.workspaceRoot) {
-      const wantsFiles = taskWantsFiles(task);
+      const wantsFiles = !this.readOnly && taskWantsFiles(task);
       try {
         const loop = await runAgentToolLoop({
           provider,
-          messages: [{ role: 'user', content: prompt }],
+          messages,
           options: { temperature: config.temperature, maxTokens: config.maxCompletionTokens },
           toolExecutor: this.toolExecutor,
           toolRegistry: this.toolRegistry,
@@ -291,7 +309,7 @@ export class DuoExecutor {
           sessionId: `duo-${modelId}`,
           initialContent: r.content,
           initialToolCalls: r.toolCalls ?? [],
-          maxRounds: Math.max(1, config.maxDepth ?? 4),
+          maxRounds: Math.max(1, config.maxToolRounds ?? config.maxDepth ?? 4),
           mode: 'solo',
           forceMinFiles: 1,
           wantsFiles,
@@ -305,6 +323,7 @@ export class DuoExecutor {
               }))
             : undefined,
           sanitize: sanitizeWriterOutput,
+          signal: this.signal,
         });
         let content = loop.content || r.content;
         // Prose fallback: if the file still hasn't landed on disk, parse the
@@ -332,6 +351,7 @@ export class DuoExecutor {
           durationMs: Date.now() - start,
         };
       } catch {
+        this.signal?.throwIfAborted();
         // Tool loop failed — fall through to the bare draft below.
       }
     }

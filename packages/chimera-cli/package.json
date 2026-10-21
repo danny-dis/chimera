@@ -1,6 +1,6 @@
 {
   "name": "@chimera/cli",
-  "version": "0.5.7",
+  "version": "0.6.0",
   "description": "Chimera CLI — terminal-native parallel multi-agent coding platform",
   "license": "MIT",
   "repository": {
@@ -9,14 +9,18 @@
     "directory": "packages/chimera-cli"
   },
   "engines": {
-    "node": ">=20.0.0"
+    "node": ">=22.13.0"
   },
   "publishConfig": {
     "access": "public"
   },
   "files": [
     "dist",
-    "README.md"
+    "!dist/**/__tests__/**",
+    "!dist/**/*.test.*",
+    "!dist/**/*.spec.*",
+    "README.md",
+    "LICENSE"
   ],
   "main": "dist/index.js",
   "types": "dist/index.d.ts",

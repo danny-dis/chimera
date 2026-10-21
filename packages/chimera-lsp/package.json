@@ -1,18 +1,35 @@
 {
   "name": "@chimera/lsp",
-  "version": "0.5.7",
+  "version": "0.6.0",
   "description": "Language Server Protocol service for Chimera",
+  "license": "MIT",
+  "engines": {
+    "node": ">=22.13.0"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "files": [
+    "dist",
+    "!dist/**/__tests__/**",
+    "!dist/**/*.test.*",
+    "!dist/**/*.spec.*",
+    "README.md",
+    "LICENSE"
+  ],
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "scripts": {
-    "build": "tsc",
+    "build": "tsc && node -e \"require('fs').cpSync('src/windows-owned-process-host.cjs','dist/windows-owned-process-host.cjs')\"",
     "dev": "tsc --watch",
     "test": "vitest run",
     "lint": "eslint src/",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "cross-spawn": "^7.0.6",
     "execa": "^9.0.0",
+    "koffi": "^3.3.3",
     "vscode-jsonrpc": "^8.2.1",
     "vscode-languageserver-protocol": "^3.17.5",
     "vscode-uri": "^3.0.8",

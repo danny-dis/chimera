@@ -3,7 +3,8 @@
 // ---------------------------------------------------------------------------
 
 import path from 'path';
-import { EventStream, SessionOrchestrator, SchedulerManager, type ChimeraEvent, type ToolRegistryInterface, type ToolExecutorInterface } from '@chimera/core';
+import { EventStream, SessionOrchestrator, SchedulerManager, adaptProvider, createRuntimeMemory, withAbort, type Mode, type ChimeraEvent, type ToolRegistryInterface, type ToolExecutorInterface } from '@chimera/core';
+import { ProviderFactory } from '@chimera/providers';
 import {
   ToolRegistry,
   ToolExecutor,
@@ -33,23 +34,24 @@ interface Worker {
   task: string;
   mode: string;
   startedAt: number;
-  orchestrator: SessionOrchestrator;
+  orchestrator?: SessionOrchestrator;
+  controller: AbortController;
 }
 
 export class ChimeraDaemon {
   private workers: Map<string, Worker> = new Map();
   private workerCounter = 0;
+  private completedCost = 0;
+  private readonly completedSpend: Record<string, number> = Object.create(null);
+  private disposed = false;
   private readonly startTime = Date.now();
   private eventStream: EventStream;
-  private activeSubscriptions = new Map<string, () => void>();
+  private activeSubscriptions = new Map<string | number, () => void>();
   private scheduler: SchedulerManager;
 
   constructor() {
     this.eventStream = new EventStream();
-    // Headless schedule management. onTrigger routes scheduled work through
-    // executeTask — the daemon's single execution path. (Note: executeTask
-    // currently uses a stub writer until real provider bridging lands, so
-    // scheduled runs mirror that limitation rather than faking agents.)
+    // Scheduled work uses the same configured providers and policy as RPC tasks.
     this.scheduler = new SchedulerManager(null, this.eventStream, process.cwd());
     this.scheduler.onTrigger = (entry, _workflow) => {
       void this.executeTask({
@@ -79,6 +81,14 @@ export class ChimeraDaemon {
           return writeMessage(
             success(id, await this.executeTask(params as unknown as ExecuteTaskParams)),
           );
+
+        case 'cancel_task': {
+          const workerId = params?.workerId;
+          if (typeof workerId !== 'string') throw new Error('workerId must be a string');
+          const worker = this.workers.get(workerId);
+          worker?.controller.abort(new Error('Task cancelled by caller'));
+          return writeMessage(success(id, { cancelled: !!worker }));
+        }
 
         case 'get_state':
           return writeMessage(
@@ -111,7 +121,7 @@ export class ChimeraDaemon {
           );
 
         case 'stream_events':
-          return this.streamEvents(id as string | number);
+          return await this.streamEvents(id as string | number);
 
         // ── Scheduling ───────────────────────────────────────────────
         case 'schedule_list':
@@ -155,127 +165,147 @@ export class ChimeraDaemon {
   }
 
   private async executeTask(raw: ExecuteTaskParams): Promise<ExecuteTaskResult> {
+    if (this.disposed) throw new Error('Daemon disposed');
     const { task, mode = 'code', workspaceRoot: rawRoot } = raw;
+    if (!['ask', 'plan', 'code', 'debug', 'review', 'oal', 'auto'].includes(mode)) throw new Error('Invalid task mode');
+    if (typeof task !== 'string' || !task.trim()) throw new Error('Task must be a nonempty string');
     const workspaceRoot = this.validateWorkspaceRoot(rawRoot);
 
-    // Load config for the workspace, auto-generate from env vars if missing
-    let cfg = configLoader.loadConfig(workspaceRoot);
-    if (!cfg) {
-      cfg = await configLoader.autoGenerateConfig(workspaceRoot);
-      if (!cfg) {
-        throw new Error(
-          'No .chimera/config.yaml found and no API keys in environment. Set ANTHROPIC_API_KEY, OPENAI_API_KEY, or GOOGLE_API_KEY.',
-        );
-      }
-    }
-
-    // Bootstrap chimera
-    const { workflowRegistry } = bootstrap();
-
-    // Wire the tool system so daemon workers run real tools through the same
-    // hook-gated gateway as the interactive CLI (previously tools: undefined,
-    // which left workers unable to call tools or hit pre-tool-use hooks).
-    const toolRegistry = new ToolRegistry();
-    const hookExecutor = new HookExecutor();
-    const toolExecutor = new ToolExecutor(
-      toolRegistry,
-      () => 'allow' as const,
-      undefined,
-      hookExecutor,
-    );
-    for (const tool of allTools) {
-      toolRegistry.register(tool as unknown as Parameters<typeof toolRegistry.register>[0]);
-    }
-
-    // Mode-based permission gating, mirroring the interactive CLI
-    // (cli-router.ts). Without this the daemon ran every wired tool under a
-    // blanket 'allow' with no policy engine, so a VS Code request in a
-    // read-only mode (plan/ask/review) could still write and run shell.
-    // The profiles never return 'ask', so a headless daemon never stalls
-    // waiting on a stdin prompt that will never arrive.
-    toolExecutor.setPermissionEngine(
-      new PermissionEngine(
-        mode === 'plan' || mode === 'ask' || mode === 'review'
-          ? readOnlyProfile
-          : editFilesProfile,
-      ),
-    );
-
-    // Create orchestrator. Wire the same LSP diagnostics hook as the CLI
-    // (cli-router.ts) so daemon sessions emit lsp_diagnostics events after
-    // file edits. Best-effort: a diagnostics failure must never break task
-    // execution (getDiagnosticsForFile already swallows errors, and the
-    // orchestrator try/catches the call — this is defense in depth).
-    const orchestrator = new SessionOrchestrator(
-      this.eventStream,
-      { registry: toolRegistry as unknown as ToolRegistryInterface, executor: toolExecutor as unknown as ToolExecutorInterface },
-      workspaceRoot,
-      undefined,
-      {
-        lspDiagnostics: (file: string) => {
-          try {
-            return getDiagnosticsForFile(workspaceRoot, file);
-          } catch {
-            return Promise.resolve([]);
-          }
-        },
-      },
-    );
-
-    // Create worker record
+    const controller = new AbortController();
     const workerId = `worker-${++this.workerCounter}`;
-    const worker: Worker = {
-      id: workerId,
-      task,
-      mode,
-      startedAt: Date.now(),
-      orchestrator,
-    };
+    const worker: Worker = { id: workerId, task, mode, startedAt: Date.now(), controller };
     this.workers.set(workerId, worker);
 
     try {
-      // Execute the task via orchestrator
-      const result = await orchestrator.executeWorkflow(task, {
-        writer: { complete: async (messages) => ({ content: '', usage: { inputTokens: 0, outputTokens: 0 } }) },
-      });
+      // Load config for the workspace, auto-generate from env vars if missing
+      let cfg = configLoader.loadConfig(workspaceRoot);
+      if (!cfg) {
+        cfg = await withAbort(() => configLoader.autoGenerateConfig(workspaceRoot), controller.signal);
+        controller.signal.throwIfAborted();
+        if (this.disposed) throw new Error('Daemon disposed');
+        if (!cfg) {
+          throw new Error(
+            'No .chimera/config.yaml found and no API keys in environment. Set ANTHROPIC_API_KEY, OPENAI_API_KEY, or GOOGLE_API_KEY.',
+          );
+        }
+      }
 
-      // Get final state
-      const state = orchestrator.getState();
-      const costTracker = orchestrator.getCostTracker();
+      const resolved = configLoader.resolveProviders(cfg);
       const byRole = configLoader.getProvidersByRole(cfg, mode);
-      const resolvedProviders = configLoader.resolveProviders(cfg);
-      const totalCost = resolvedProviders.reduce(
-        (acc, p) => acc + costTracker.getSpend(p.name),
-        0,
+      const makeProvider = (role: 'writer' | 'reviewer' | 'challenger') => {
+        const selected = byRole[role] ?? (role === 'challenger' ? undefined : byRole.writer ?? resolved[0]);
+        if (!selected) return undefined;
+        const entry = resolved.find(provider => provider.name === selected.name)!;
+        const configured = cfg.providers.find(provider => provider.name === entry.name);
+        const limits = configured?.constraints;
+        const provider = ProviderFactory.create({ ...entry, constraints: {
+          maxTokensPerTurn: limits?.max_tokens_per_turn ?? 4096,
+          costCapPerTask: limits?.cost_cap_per_task ?? 1,
+          costCapPerSession: limits?.cost_cap_per_session ?? 20,
+          costCapPerDay: limits?.cost_cap_per_day ?? 50,
+          maxParallelInstances: limits?.max_parallel_instances ?? 1,
+          rateLimitRpm: limits?.rate_limit_rpm ?? 60,
+        } });
+        if (provider.getModel().provider === 'mock') throw new Error('Daemon execution requires a configured real provider');
+        return adaptProvider(provider);
+      };
+      const writer = makeProvider('writer');
+      const reviewer = makeProvider('reviewer');
+      const challenger = makeProvider('challenger');
+      if (!writer || !reviewer) throw new Error('Daemon execution requires writer and reviewer providers');
+      const runtimeMemory = await withAbort(() => createRuntimeMemory(workspaceRoot, writer), controller.signal);
+      controller.signal.throwIfAborted();
+      if (this.disposed) throw new Error('Daemon disposed');
+      bootstrap();
+
+      // Wire the tool system so daemon workers run real tools through the same
+      // hook-gated gateway as the interactive CLI (previously tools: undefined,
+      // which left workers unable to call tools or hit pre-tool-use hooks).
+      const toolRegistry = new ToolRegistry();
+      const hookExecutor = new HookExecutor();
+      const toolExecutor = new ToolExecutor(
+        toolRegistry,
+        () => 'deny' as const,
+        undefined,
+        hookExecutor,
+      );
+      for (const tool of allTools) {
+        toolRegistry.register(tool as unknown as Parameters<typeof toolRegistry.register>[0]);
+      }
+
+      // Mode-based permission gating, mirroring the interactive CLI
+      // (cli-router.ts). Without this the daemon ran every wired tool under a
+      // blanket 'allow' with no policy engine, so a VS Code request in a
+      // read-only mode (plan/ask/review) could still write and run shell.
+      // The profiles never return 'ask', so a headless daemon never stalls
+      // waiting on a stdin prompt that will never arrive.
+      toolExecutor.setPermissionEngine(
+        new PermissionEngine(
+          mode === 'plan' || mode === 'ask' || mode === 'review'
+            ? readOnlyProfile
+            : editFilesProfile,
+        ),
       );
 
+      // Create orchestrator. Wire the same LSP diagnostics hook as the CLI
+      // (cli-router.ts) so daemon sessions emit lsp_diagnostics events after
+      // file edits. Best-effort: a diagnostics failure must never break task
+      // execution (getDiagnosticsForFile already swallows errors, and the
+      // orchestrator try/catches the call — this is defense in depth).
+      const orchestrator = new SessionOrchestrator(
+        this.eventStream,
+        { registry: toolRegistry as unknown as ToolRegistryInterface, executor: toolExecutor as unknown as ToolExecutorInterface },
+        workspaceRoot,
+        undefined,
+        {
+          ...runtimeMemory,
+          lspDiagnostics: (file: string) => {
+            try {
+              return getDiagnosticsForFile(workspaceRoot, file);
+            } catch {
+              return Promise.resolve([]);
+            }
+          },
+        },
+      );
+
+      worker.orchestrator = orchestrator;
+
+      const result = await orchestrator.execute({ task, mode: mode as Mode,
+        providers: { writer, reviewer, ...(challenger ? { challenger } : {}) },
+        costCap: cfg.providers.find(provider => provider.name === byRole.writer?.name)?.constraints?.cost_cap_per_task ?? 1, verificationCommands: raw.verificationCommands,
+        signal: controller.signal,
+      });
+
       return {
-        status: state.status === 'complete' ? 'done' : state.status === 'error' ? 'error' : 'blocked',
-        output: state.status === 'complete' ? (state as any).result : (state as any).error || '',
-        cost: totalCost,
-        agentCount: this.workers.size,
-        events: [...this.eventStream.getAll()],
+        status: result.status,
+        output: result.output,
+        cost: result.cost,
+        agentCount: result.agentCount,
+        events: result.events,
       };
     } finally {
+      const tracker = worker.orchestrator?.getCostTracker();
+      if (tracker) {
+        this.completedCost += tracker.getTotalCost();
+        for (const [provider, spend] of Object.entries(tracker.getSpendByProvider())) {
+          this.completedSpend[provider] = (this.completedSpend[provider] ?? 0) + spend;
+        }
+      }
       this.workers.delete(workerId);
+      worker.orchestrator?.dispose();
     }
   }
 
   private getState(): GetStateResult {
-    const costTracker = Array.from(this.workers.values())[0]?.orchestrator.getCostTracker();
-    const cost: Record<string, number> = {};
-    if (costTracker) {
-      // Collect cost from all providers
-      const allEvents = this.eventStream.getAll();
-      for (const evt of allEvents) {
-        if (evt.type === 'agent_spawned') {
-          if (!cost[evt.provider]) cost[evt.provider] = 0;
-        }
-      }
-    }
+    const cost = this.getCost().byProvider;
 
     return {
       status: this.workers.size > 0 ? 'running' : 'idle',
+      workers: Array.from(this.workers.values(), worker => ({
+        id: worker.id,
+        status: worker.controller.signal.aborted ? 'cancelling' : worker.orchestrator ? 'running' : 'initializing',
+      })),
       cost,
       events: this.eventStream.getAll().slice(-50), // last 50 events
       hidden: this.eventStream.getAll().length,
@@ -326,22 +356,16 @@ export class ChimeraDaemon {
 
   private getCost(): GetCostResult {
     const workers = Array.from(this.workers.values());
-    const byProvider: Record<string, number> = {};
+    const byProvider: Record<string, number> = Object.assign(Object.create(null), this.completedSpend);
     const budgetPerProvider: Record<string, { perTask: number; perSession: number; perDay: number }> = {};
-    let total = 0;
+    let total = this.completedCost;
 
-    if (workers.length > 0) {
-      const costTracker = workers[0].orchestrator.getCostTracker();
-      if (costTracker) {
-        const allEvents = this.eventStream.getAll();
-        for (const evt of allEvents) {
-          if (evt.type === 'agent_spawned') {
-            const spend = costTracker.getSpend(evt.provider);
-            if (!byProvider[evt.provider]) byProvider[evt.provider] = 0;
-            byProvider[evt.provider] += spend;
-            total += spend;
-          }
-        }
+    for (const worker of workers) {
+      if (!worker.orchestrator) continue;
+      const tracker = worker.orchestrator.getCostTracker();
+      total += tracker.getTotalCost();
+      for (const [provider, spend] of Object.entries(tracker.getSpendByProvider())) {
+        byProvider[provider] = (byProvider[provider] ?? 0) + spend;
       }
     }
 
@@ -358,7 +382,8 @@ export class ChimeraDaemon {
   }
 
   private async streamEvents(id: string | number): Promise<void> {
-    const idStr = String(id);
+    if (this.disposed) throw new Error('Daemon disposed');
+    this.cleanupSubscription(id);
     const unsubscribe = this.eventStream.subscribe('*', (event: ChimeraEvent) => {
       writeMessage({
         jsonrpc: '2.0',
@@ -367,11 +392,11 @@ export class ChimeraDaemon {
       } as any);
     });
 
-    this.activeSubscriptions.set(idStr, unsubscribe);
+    this.activeSubscriptions.set(id, unsubscribe);
     writeMessage(success(id, { streaming: true }));
   }
 
-  private cleanupSubscription(id: string): void {
+  private cleanupSubscription(id: string | number): void {
     const unsub = this.activeSubscriptions.get(id);
     if (unsub) {
       unsub();
@@ -380,6 +405,12 @@ export class ChimeraDaemon {
   }
 
   dispose(): void {
+    this.disposed = true;
+    this.scheduler.stop();
+    for (const worker of this.workers.values()) {
+      worker.controller.abort(new Error('Daemon disposed'));
+      worker.orchestrator?.dispose();
+    }
     for (const [id] of this.activeSubscriptions) {
       this.cleanupSubscription(id);
     }

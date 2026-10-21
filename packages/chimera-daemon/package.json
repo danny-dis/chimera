@@ -1,8 +1,20 @@
 {
   "name": "@chimera/daemon",
-  "version": "0.5.7",
-  "private": true,
+  "version": "0.6.0",
   "description": "Chimera daemon process — JSON-RPC stdio server wrapping the core orchestrator",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/danny-dis/chimera.git",
+    "directory": "packages/chimera-daemon"
+  },
+  "engines": {
+    "node": ">=22.13.0"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "files": ["dist", "!dist/**/__tests__/**", "!dist/**/*.test.*", "!dist/**/*.spec.*", "README.md", "LICENSE"],
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "bin": {

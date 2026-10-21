@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { execa } from 'execa';
+
 import path from 'path';
 import { readdir } from 'fs/promises';
 import type { ToolDefinition, ToolContext } from '../tool-schema.js';
@@ -24,6 +24,7 @@ const SearchFilesReturnsSchema = z.object({
 
 async function findRgPath(): Promise<string | null> {
   try {
+    const { execa } = require('execa') as typeof import('execa');
     const result = await execa('rg', ['--version'], { reject: false, timeout: 3000 });
     return result.exitCode === 0 ? 'rg' : null;
   } catch {
@@ -97,6 +98,7 @@ export const searchFilesTool: ToolDefinition<typeof SearchFilesParamsSchema, typ
     let exitCode = 0;
 
     try {
+      const { execa } = require('execa') as typeof import('execa');
       const result = await execa(command, args, {
         cwd: context.workspaceRoot,
         timeout: 30_000,
@@ -211,6 +213,7 @@ export const globFilesTool: ToolDefinition<typeof GlobFilesParamsSchema, typeof 
 
     if (rgPath) {
       try {
+        const { execa } = require('execa') as typeof import('execa');
         const result = await execa('rg', [
           '--files',
           '--glob', params.pattern,

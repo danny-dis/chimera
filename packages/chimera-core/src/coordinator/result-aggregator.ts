@@ -1,5 +1,6 @@
 import type { LLMProvider } from '../session-orchestrator.js';
 import { withRetry } from '@chimera/providers';
+import { withAbort } from '../utils/abort.js';
 import type { SubTaskResult, AggregatedResult, Conflict } from './types.js';
 
 const MERGE_PROMPT = `[!] #RESULT SYNTHESIS DIRECTIVE# [!]
@@ -36,16 +37,17 @@ export class ResultAggregator {
     this.provider = provider;
   }
 
-  async aggregate(results: SubTaskResult[]): Promise<AggregatedResult> {
+  async aggregate(results: SubTaskResult[], signal?: AbortSignal): Promise<AggregatedResult> {
     const successful = results.filter((r) => r.status === 'success');
+    const allSucceeded = results.length > 0 && successful.length === results.length && !signal?.aborted;
     const totalTokens = results.reduce((sum, r) => sum + r.tokensUsed, 0);
 
     // If only one result, no merging needed
-    if (successful.length <= 1) {
+    if (successful.length <= 1 || signal?.aborted) {
       return {
-        output: successful[0]?.output ?? '',
+        output: successful.map(result => result.output).join('\n\n---\n\n'),
         conflicts: [],
-        resolved: true,
+        resolved: allSucceeded,
         subTaskResults: results,
         totalTokens,
       };
@@ -57,13 +59,14 @@ export class ResultAggregator {
       .join('\n\n');
 
     try {
-      const mergeResult = await withRetry(() => this.provider.complete(
+      const mergeResult = await withAbort(() => withRetry(() => withAbort(() => this.provider.complete(
         [
           { role: 'system', content: MERGE_PROMPT },
           { role: 'user', content: outputsBlock },
         ],
-        { responseFormat: 'json_object', temperature: 0.2 }
-      ), { maxRetries: 2, baseDelayMs: 3000, maxDelayMs: 20000 });
+        { responseFormat: 'json_object', temperature: 0.2, signal }
+      ), signal), { maxRetries: 2, baseDelayMs: 3000, maxDelayMs: 20000 }), signal);
+      signal?.throwIfAborted();
 
       const parsed = JSON.parse(mergeResult.content);
 
@@ -75,7 +78,7 @@ export class ResultAggregator {
           description: (c.description as string) ?? '',
           resolution: c.resolution as string | undefined,
         })),
-        resolved: parsed.resolved ?? true,
+        resolved: allSucceeded && parsed.resolved === true && !signal?.aborted,
         subTaskResults: results,
         totalTokens,
       };

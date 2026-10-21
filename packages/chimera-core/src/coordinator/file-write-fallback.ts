@@ -61,6 +61,7 @@ function splitEditBlock(block: string): { old_string: string; new_string: string
  */
 export function parseProseActions(text: string, expectedPath?: string): ToolCall[] {
   const calls: ToolCall[] = [];
+  const rejectedNarration: string[] = [];
   if (!text) return calls;
   let n = 0;
   const mkId = () => `prose-${Date.now().toString(36)}-${n++}`;
@@ -96,15 +97,16 @@ export function parseProseActions(text: string, expectedPath?: string): ToolCall
     if (path && content) calls.push({ id: mkId(), name: 'write_file', arguments: { path, content, overwrite: true } });
   }
 
-  // 4c) Inline-arg form: write_file('path', 'content') / write_file("path", "content")
-  //     where the content lives INSIDE the call parens (no separate fenced block).
-  //     Common on helperbot-style narration. Single/double quoted; non-greedy so
-  //     the first closing quote ends the arg. ponytail: ceiling = content with
-  //     embedded quotes/parens won't parse cleanly; rare for code-file writes.
-  const inlineArgRe = /write_file\(\s*['"]([^'"]+)['"]\s*,\s*['"]([\s\S]*?)['"]\s*\)/gi;
+  // ponytail: static literals only; interpolation requires native tool calls.
+  const inlineArgRe = /write_file\(\s*(['"])([^'"]+)\1\s*,\s*(['"`])((?:\\[\s\S]|(?!\3)[^\\])*)\3\s*\)/gi;
   while ((m = inlineArgRe.exec(text))) {
-    const path = m[1].trim();
-    const content = m[2];
+    if (m[3] === '`' && /(?<!\\)\$\{/.test(m[4])) {
+      rejectedNarration.push(m[0]);
+      continue;
+    }
+    const path = m[2].trim();
+    const escapes: Record<string, string> = { n: '\n', r: '\r', t: '\t' };
+    const content = m[4].replace(/\\([\\'"`nrt])/g, (_match, escaped: string) => escapes[escaped] ?? escaped);
     if (path && content && !hasPath(calls, path)) {
       calls.push({ id: mkId(), name: 'write_file', arguments: { path, content, overwrite: true } });
     }
@@ -196,7 +198,7 @@ export function parseProseActions(text: string, expectedPath?: string): ToolCall
     }
   }
 
-  return calls;
+  return calls.filter(call => !rejectedNarration.some(narration => String(call.arguments.content ?? '').includes(narration)));
 }
 
 export interface ExecuteProseDeps {

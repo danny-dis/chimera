@@ -132,13 +132,18 @@ export interface TUIProps {
   workingDir?: string;
   instructions?: string[];
   tokenUsage?: { input: number; output: number; total: number };
-  onSendMessage?: (text: string) => void;
+  onSendMessage?: (text: string) => void | Promise<void>;
+  isRunning?: boolean;
+  onCancel?: () => void | Promise<void>;
+  commandContext?: Partial<import('./commands/commands.js').CommandContext>;
+  runTask?: import('./commands/commands.js').CommandContext['runTask'];
+  runWorkflow?: import('./commands/commands.js').CommandContext['runWorkflow'];
   onModeChange?: (mode: Mode) => void;
   onPresetChange?: (preset: import('@chimera/core').DeliberationMode) => void;
   onSessionSelect?: (sessionId: string) => void;
   onSessionDelete?: (sessionId: string) => void;
   onEventFilter?: (type: string | null) => void;
-  onExit?: () => void;
+  onExit?: () => void | Promise<void>;
   /** Optional per-session skill model for adaptive (tiered) onboarding copy. */
   skillModel?: SkillModelView;
 }

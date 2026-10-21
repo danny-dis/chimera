@@ -1,6 +1,13 @@
 import React from 'react';
-import { describe, it, expect, vi } from 'vitest';
-import { render } from 'ink-testing-library';
+import { describe, it, expect, vi, afterEach } from 'vitest';
+import { interactiveScreen } from './interactive-screen';
+const screens: ReturnType<typeof interactiveScreen>[] = [];
+const render = (element: React.ReactElement, columns = 100) => {
+  const screen = interactiveScreen(element, columns);
+  screens.push(screen);
+  return screen;
+};
+afterEach(async () => { for (const screen of screens.splice(0)) await screen.unmount(); });
 import { Chat } from '../components/chat.js';
 import { Footer, selectFooterHints } from '../components/footer.js';
 import { EmptyState } from '../components/empty-state.js';
@@ -67,7 +74,7 @@ describe('Footer — responsive hints', () => {
   // the frame regardless of what it selected. Needs a width-configurable
   // stdout stub. The hint-selection logic itself is covered by the 80-column
   // test above, which passes.
-  it.skip('shows the full hint set at 120 columns, including the ones dropped at 80', () => {
+  it('shows the full hint set at 120 columns, including the ones dropped at 80', () => {
     const narrow = selectFooterHints(80);
     const wide = selectFooterHints(120);
 
@@ -79,7 +86,7 @@ describe('Footer — responsive hints', () => {
     // is wide enough that not everything fits in 80 columns).
     expect(wide.length).toBeGreaterThan(narrow.length);
 
-    const { lastFrame } = render(<Footer width={120} sessionId="sess-wide" />);
+    const { lastFrame } = render(<Footer width={120} sessionId="sess-wide" />, 120);
     const frame = lastFrame() ?? '';
     for (const hint of wide) {
       expect(frame).toContain(hint.combo);
@@ -119,28 +126,29 @@ describe('EmptyState', () => {
 // take an injectable input source, or the assertion to move off the frame.
 // UNVERIFIED BY TEST — the paste behavior has not been confirmed end-to-end.
 describe('Input — paste handling (bug fix)', () => {
-  it.skip('appends a multi-character stdin chunk instead of silently dropping it', async () => {
+  it('appends a multi-character stdin chunk instead of silently dropping it', async () => {
     const onSubmit = vi.fn();
-    const { lastFrame, unmount } = render(<Input onSubmit={onSubmit} focused />);
+    const { lastFrame, unmount, stdin } = render(<Input onSubmit={onSubmit} focused />);
 
     // Simulate a terminal delivering a pasted file path as one 'data' event —
     // Input listens on the real global process.stdin (not Ink's injected
     // stdin), so we drive it the same way a terminal would.
-    process.stdin.emit('data', Buffer.from('/Users/dev/project/file.ts'));
+    stdin.write('/Users/dev/project/file.ts');
     // Flush the state update.
     await new Promise((resolve) => setImmediate(resolve));
 
-    expect(lastFrame() ?? '').toContain('/Users/dev/project/file.ts');
+    await vi.waitFor(() => expect(lastFrame() ?? '').toContain('/Users/dev/project/file.ts'));
     unmount();
   });
 
-  it.skip('strips control bytes and collapses embedded newlines in a pasted chunk', async () => {
+  it('strips control bytes and collapses embedded newlines in a pasted chunk', async () => {
     const onSubmit = vi.fn();
-    const { lastFrame, unmount } = render(<Input onSubmit={onSubmit} focused />);
+    const { lastFrame, unmount, stdin } = render(<Input onSubmit={onSubmit} focused />);
 
-    process.stdin.emit('data', Buffer.from('foo\nbar\x07baz'));
+    stdin.write('foo\nbar\x07baz');
     await new Promise((resolve) => setImmediate(resolve));
 
+    await vi.waitFor(() => expect(lastFrame() ?? '').toContain('foo bar'));
     const frame = lastFrame() ?? '';
     expect(frame).toContain('foo bar');
     expect(frame).toContain('baz');

@@ -1,6 +1,6 @@
 export { LongTermMemory } from './long-term-memory.js';
 export type { LongTermMemoryConfig } from './long-term-memory.js';
-export { VectorStore, LocalEmbeddingProvider } from './vector-store.js';
+export { VectorStore, LocalEmbeddingProvider, cosineSimilarity } from './vector-store.js';
 export type {
   MemoryItem,
   MemoryMetadata,
@@ -17,9 +17,12 @@ export type {
 } from './agent-memory.js';
 export { MemoryPersistence } from './memory-persistence.js';
 export type { MemoryPersistenceConfig } from './memory-persistence.js';
+export { createRuntimeMemory } from './runtime-memory.js';
 export { AutoExtractService } from './auto-extract.js';
 export type { ExtractionConfig, ExtractedFacts } from './auto-extract.js';
 export { RecallService } from './recall-service.js';
 export type { RecallConfig } from './recall-service.js';
 export { AutoDreamService } from './auto-dream.js';
 export type { DreamConfig, DreamState } from './auto-dream.js';
+export { createEmbeddingProvider, OllamaEmbeddingProvider, isOllamaAvailable } from './embedding-providers.js';
+export type { OllamaProviderConfig } from './embedding-providers.js';

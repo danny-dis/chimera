@@ -88,6 +88,16 @@ const assert = (cond, msg) => {
     'function lastIndex(arr) {\n  return arr.length;\n}\nmodule.exports = {};\n',
   );
 
+  const verifier = `import assert from 'node:assert/strict';
+import { gradeTask } from ${JSON.stringify(new URL('./grade-task.mjs', import.meta.url).href)};
+const grade = gradeTask('debug', process.cwd());
+assert(grade.gradeable && grade.total >= 7 && grade.passed === grade.total, JSON.stringify(grade));
+`;
+  writeFileSync(join(ws, 'verify.mjs'), verifier);
+  const { gradeTask } = await import('./grade-task.mjs');
+  const baseline = gradeTask('debug', ws);
+  assert(baseline.passed < baseline.total, 'buggy fixture fails real caller grading');
+
   const reg = new SimpleModelRegistry();
   try {
     reg.register({
@@ -117,11 +127,15 @@ const assert = (cond, msg) => {
       preset: 'solo',
       providers: { writer: narrator, reviewer: narrator, challenger: narrator },
       costCap: 10,
+      verificationCommands: [`"${process.execPath}" verify.mjs`],
+      verificationInputs: ['verify.mjs', '__grade_runner.cjs'],
     });
   } catch (e) {
     assert(false, `orchestrator.execute threw: ${e.message}`);
   }
 
+  assert(result?.verification?.verified === true, 'actual caller verifier passed');
+  assert(readFileSync(join(ws, 'verify.mjs'), 'utf8') === verifier, 'caller verifier unchanged');
   assert(result?.status === 'done', `status=done (got ${result?.status})`);
   const after = readFileSync(join(ws, 'stats.js'), 'utf-8');
   assert(after.includes('arr.length - 1'), 'target file actually fixed on disk (prose fallback landed)');

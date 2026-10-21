@@ -52,6 +52,7 @@ export interface DeliberationConfigBase {
   budgetUsd?: number;
   /** Max recursion depth. Default 1. */
   maxDepth?: number;
+  maxToolRounds?: number;
   /** Reasoning config (passed through to provider). */
   reasoning?: Record<string, unknown>;
 }
@@ -176,6 +177,10 @@ export interface DeliberationResult {
   durationMs: number;
   degraded: boolean;
   degradationReason?: string;
+  /** True when the deliberation flagged a result that needs human review. */
+  needsUserEscalation?: boolean;
+  /** Human-readable reason for escalation, if any. */
+  escalationReason?: string;
   /** Present when mode === 'auto'. Records which preset was selected and why. */
   autoSelection?: {
     selectedPreset: DeliberationMode;
@@ -203,8 +208,12 @@ export interface DeliberationEngineDeps {
    * are executed against the workspace instead of being ignored.
    */
   workspaceRoot?: string;
+  mode?: import('../../types/agent.js').Mode;
+  toolContext?: Record<string, unknown>;
   toolExecutor?: import('../../session-orchestrator.js').ToolExecutorInterface;
   toolRegistry?: import('../../session-orchestrator.js').ToolRegistryInterface;
   /** Resolved output style, injected by the caller (which owns `learning`). */
   style?: import('../../output-styles/index.js').OutputStyle;
+  /** Per-run abort signal, threaded to every executor's writer tool loop. */
+  signal?: AbortSignal;
 }

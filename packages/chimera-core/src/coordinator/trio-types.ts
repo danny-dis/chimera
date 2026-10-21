@@ -42,6 +42,7 @@ export interface TrioConfig {
   budgetUsd?: number;
   /** Maximum recursion depth. Default 1. */
   maxDepth?: number;
+  maxToolRounds?: number;
   /** Wrap the draft stage in a WorktreeIsolation worktree. Off by default. */
   isolateWorktree?: boolean;
   /**
@@ -90,6 +91,8 @@ export interface TrioStageResult {
   durationMs: number;
   /** Issues raised by the reviewer. */
   issues?: Array<{ description: string; severity: string; evidence: string }>;
+  /** Strictly-validated reviewer verdict (absent when not a reviewer stage). */
+  verdict?: 'PASS' | 'FAIL' | 'NEEDS_REVISION';
   /** Challenges raised by the challenger. */
   challenges?: string[];
   /** Alternative approaches with tradeoffs, raised by the challenger. */

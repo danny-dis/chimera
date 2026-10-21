@@ -1,84 +1,91 @@
-# Chimera
+# Chimera CLI
 
-Terminal-native parallel multi-agent coding platform. Multiple specialized
-agents (writer / reviewer / challenger / synthesizer) work behind one
-unified response so you ship code safely on cheap or local models.
+Chimera is an experimental terminal coding agent. It supports multiple API
+providers and local models, but needs a working provider configuration to run a
+task. It is not certified for unattended use.
 
-## Install
+## Set up from source
 
-```bash
-npm install -g @chimera/cli
-# or run without installing:
-npx @chimera/cli
-```
-
-Requires Node.js >= 20.
-
-## First run (zero config)
-
-Chimera auto-detects a provider on first run — no API key required if you
-have a local model:
-
-- **Ollama** — if `ollama` is running locally (`ollama pull llama3`), Chimera
-  uses your pulled model automatically. Nothing to configure.
-- **Any API key** — set one of these env vars and Chimera picks it up:
-  `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GOOGLE_API_KEY`,
-  `OPENROUTER_API_KEY`, or the `CHIMERA_CHEAP_API_KEY` + `CHIMERA_CHEAP_BASE_URL`
-  pair for any OpenAI-compatible endpoint. Model-agnostic: whatever model the
-  key maps to is what runs.
+Use Node.js 22.13 or newer and pnpm 11 (pinned to 11.0.8). Follow the
+[repository setup steps](../../README.md#set-up-from-source) to install and build.
+To work on a different repository, change to that project's directory and invoke
+the built CLI by its absolute path:
 
 ```bash
-chimera init        # writes AGENTS.md + .chimera/config.yaml from your env
-chimera code "fix the off-by-one in src/parser.ts"
+cd /path/to/your-project
+node "/absolute/path/to/chimera/packages/chimera-cli/dist/index.js" setup
+node "/absolute/path/to/chimera/packages/chimera-cli/dist/index.js" code "fix the failing tests" --verify "pnpm test"
 ```
 
-`chimera init` generates `.chimera/config.yaml` from detected providers; every
-role (writer/reviewer/challenger) is assigned automatically. Override any role
-with `CHIMERA_WRITER_MODEL` / `CHIMERA_REVIEWER_MODEL` / `CHIMERA_CHALLENGER_MODEL`.
+The current directory is the target workspace. On Windows, use a quoted path such
+as `"C:/path/to/chimera/packages/chimera-cli/dist/index.js"`.
 
-## Adaptive guidance
+Public v0.6.0 downloads have not been published. Use the source-checkout workflow
+above. Public npm installation has not been verified.
 
-Chimera adapts how much it explains to *you* — not what it lets you do. It
-infers a confidence score from how you use it (flags you pass, how you phrase
-requests, whether a step needs repeating) and shows more or less hand-holding
-accordingly. New or ambiguous sessions start in the middle. You can always shift
-it:
+The wizard writes `.chimera/config.yaml` in the current directory and saves
+supplied API keys to `.env`. It sends small completion requests to test configured
+API-provider connections, which may incur charges. It skips the Ollama connection
+test; start the local server and make the selected model available yourself.
+Automatic local-provider detection has not been verified for first-time setup.
 
-- Say **"explain more"** (or "teach me") for a why-first, jargon-defined walkthrough.
-- Say **"explain less"** (or "skip the explanation") for terse, shortcut-first output.
+The CLI loads project configuration from `.chimera/config.yaml` relative to its
+working directory. It does not load `~/.chimera/config.yaml`. The schema requires
+`providers` entries with `name`, `provider`, `model`, and `role` fields. Roles are
+`writer`, `reviewer`, and `challenger`; entries can also specify `api_key` and
+`base_url`. For the full schema, see [config-loader.ts](src/config-loader.ts).
+Keep `.env` and credentials out of version control.
 
-The toggle is reversible at any time. Set `CHIMERA_DEV=1` to see, in one line,
-why a given depth was chosen (`[skill] score≈0.62 intermediate — …`).
+## Commands and presets
 
-## Modes
+The examples below run from the source checkout using the root `chimera` script.
 
-| Mode | What it does |
-|------|--------------|
-| `ask` | Answer a question |
-| `plan` | Produce an implementation plan |
-| `code` | Write/edit files (lands real files on disk) |
-| `debug` | Find and fix a bug |
-| `review` | Review a change |
-| `oal` | Autonomous loop |
-| `auto` | Self-selects the best preset |
+| Command | Purpose |
+|---|---|
+| `pnpm chimera` | Open the terminal UI |
+| `pnpm chimera ask "explain this repository"` | Ask a question with read-only tools |
+| `pnpm chimera plan "add input validation"` | Plan a change with read-only tools |
+| `pnpm chimera code "fix the failing tests"` | Make a coding change |
+| `pnpm chimera debug "find the parser bug"` | Investigate and fix a bug |
+| `pnpm chimera review "review the current diff"` | Review with read-only tools |
 
-## Presets
+`code` defaults to `--preset solo`. It accepts `solo`, `duo`, `trio`, `fusion`,
+`hive`, `swarm`, or `auto`; choose `--preset auto` explicitly for adaptive strategy
+selection. A preset name does not certify that strategy's reliability. See the
+[release-readiness record](../../DOCS/RELEASE_READINESS.md) for historical results
+and unresolved limitations.
 
-`solo` · `duo` · `trio` · `fusion` · `hive` · `swarm` · `auto`.
-`code`/`debug` tasks default to a file-writing preset (`trio`/`fusion`);
-`swarm` is reserved for analysis (review/plan) and is remapped to `trio` for
-code tasks so a file always lands.
-
-## Examples
+## Run and verify
 
 ```bash
-chimera code "add a --verbose flag to cli.ts"
-chimera review "did PR #42 introduce a regression?"
-chimera debug "tests fail with TypeError in session.ts"
+pnpm chimera code "fix the off-by-one in src/parser.ts" --verify "npm test"
+pnpm chimera code "fix src/parser.ts" --verify "node verify.cjs" --verify-input verify.cjs
 ```
 
-## Config
+Choose a verification command that applies to your project. `--verify` is
+repeatable, as is `--verify-input` on `code`, `debug`, `oal`, and `parallel`.
+The verifier file must already exist as a regular, non-symlinked file inside the
+workspace. Its contents are pinned before generation, including repair and
+checkpoint resume. Workflow coding steps accept the same paths in
+`inputs.verificationInputs`. Only declared files are protected; this detects
+changes at verification boundaries, not transient writes restored between them.
 
-`~/.chimera/config.yaml` or `.chimera/config.yaml` (per-project). Set
-`CHIMERA_CHEAP_*` / `OPENROUTER_*` / vendor keys in your shell or `.env`.
-API keys are never written to disk by Chimera — only `${ENV_VAR}` references.
+Inspect the worktree diff and run the relevant tests and build checks yourself.
+The command's completion status alone is not proof that a task is correct.
+
+## Permissions and learning
+
+`ask`, `plan`, and `review` use read-only tool permissions. Write-capable modes
+permit edits, with file-write approval prompts in interactive runs. Non-interactive
+runs can edit without those prompts. The default edit profile denies
+model-requested shell tools.
+
+`--yolo` explicitly auto-approves tools in write-capable modes. It is off by default
+and does not override read-only modes. Use it only in a workspace you trust.
+
+Configured spending limits are stop thresholds. They are not hard ceilings on
+in-flight provider charges.
+
+The global `--no-learn` flag disables automatic learning, including background
+memory extraction. Existing memory access and session persistence remain
+available. It does not disable provider calls or make the run private or offline.

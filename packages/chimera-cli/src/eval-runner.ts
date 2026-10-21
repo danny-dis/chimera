@@ -10,41 +10,14 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
-import { SessionOrchestrator, EventStream } from '@chimera/core';
-import type { Mode, OrchestratorResult, LLMProvider } from '@chimera/core';
+import { SessionOrchestrator, EventStream, adaptProvider } from '@chimera/core';
+import type { Mode, OrchestratorResult, ToolRegistryInterface, ToolExecutorInterface } from '@chimera/core';
 import type { ChimeraEvent } from '@chimera/core';
 import type { ModelProvider } from '@chimera/providers';
 import { EvalHarness } from '@chimera/eval';
 import type { EvalReport, TaskSpec, Trajectory, TrajectoryStep } from '@chimera/eval';
+import { createToolContext } from './tool-context.js';
 
-/**
- * Adapt a ModelProvider (from @chimera/providers) to the LLMProvider interface
- * expected by SessionOrchestrator.
- */
-function adaptProvider(provider: ModelProvider): LLMProvider {
-  return {
-    async complete(messages, options) {
-      const result = await provider.complete(
-        messages.map((m) => ({
-          role: m.role as 'system' | 'user' | 'assistant' | 'tool',
-          content: m.content,
-        })),
-        {
-          temperature: options?.temperature,
-          maxTokens: options?.maxTokens,
-          responseFormat: options?.responseFormat,
-        },
-      );
-      return {
-        content: result.content,
-        usage: {
-          inputTokens: result.usage.inputTokens,
-          outputTokens: result.usage.outputTokens,
-        },
-      };
-    },
-  };
-}
 
 /**
  * Real trajectory recorder — executes a task through the SessionOrchestrator
@@ -54,13 +27,19 @@ export class RealTrajectoryRecorder {
   constructor(
     private providers: { writer: ModelProvider; reviewer: ModelProvider },
     private workspaceRoot: string,
+    private toolOptions: Parameters<typeof createToolContext>[1] = {},
   ) {}
 
   async record(task: TaskSpec, mode: Mode): Promise<Trajectory> {
+    for (const field of ['expectedFiles', 'verificationCommands', 'verificationOutputs'] as const) {
+      const values = task[field];
+      if (values !== undefined && (!Array.isArray(values) || values.some(value => typeof value !== 'string' || !value.trim()))) throw new Error(`${field} must be an array of nonempty strings`);
+    }
     const eventStream = new EventStream();
+    const { toolRegistry, toolExecutor } = createToolContext(mode, this.toolOptions);
     const orchestrator = new SessionOrchestrator(
       eventStream,
-      undefined, // no tool system needed for eval
+      { registry: toolRegistry as unknown as ToolRegistryInterface, executor: toolExecutor as unknown as ToolExecutorInterface },
       this.workspaceRoot,
     );
 
@@ -69,14 +48,20 @@ export class RealTrajectoryRecorder {
     eventStream.subscribe('*', (event) => events.push(event));
 
     const startTime = Date.now();
-    const result = await orchestrator.execute({
-      task: task.description,
-      mode,
-      providers: {
-        writer: adaptProvider(this.providers.writer),
-        reviewer: adaptProvider(this.providers.reviewer),
-      },
-    });
+    let result: OrchestratorResult;
+    try {
+      result = await orchestrator.execute({
+        task: task.description,
+        mode,
+        providers: {
+          writer: adaptProvider(this.providers.writer),
+          reviewer: adaptProvider(this.providers.reviewer),
+        },
+        verificationCommands: task.verificationCommands,
+        verificationOutputs: task.verificationOutputs,
+        costCap: task.maxCost,
+      });
+    } finally { orchestrator.dispose(); }
     const duration = Date.now() - startTime;
 
     return this.buildTrajectory(task, mode, events, result, duration);
@@ -95,13 +80,21 @@ export class RealTrajectoryRecorder {
       const step = this.eventToStep(event);
       if (step) steps.push(step);
     }
+    const files = (task.expectedFiles ?? []).filter(file => {
+      try {
+        const target = path.resolve(this.workspaceRoot, file);
+        const within = path.relative(fs.realpathSync(this.workspaceRoot), fs.realpathSync(target));
+        return within !== '..' && !within.startsWith(`..${path.sep}`) && !path.isAbsolute(within) && fs.statSync(target).isFile();
+      } catch { return false; }
+    });
+    steps.push({ timestamp: Date.now(), type: 'check', output: { pass: result.status === 'done', verification: result.verification, files }, ...(result.status !== 'done' ? { error: `Run ended ${result.status}` } : {}) });
 
     // Calculate total tokens from events
     const totalTokens = this.calculateTokens(events);
 
     return {
       taskId: task.id,
-      config: { mode },
+      config: { mode, real: true, synthetic: false, tokensMeasured: false },
       steps,
       finalOutput: result.output,
       totalCost: result.cost,
@@ -269,42 +262,27 @@ export function buildSyntheticTrajectory(task: TaskSpec, mode: Mode): Trajectory
       type: 'user_request',
       input: { task: task.description, mode },
     },
-    {
-      timestamp: now + 1,
-      type: 'agent_call',
-      role: 'writer',
-      model: 'eval-synthetic',
-      output: { thought: 'Eval-trajectory stub', response: task.description },
-      tokens: { input: 100, output: 50 },
-      cost: 0.0001,
-      duration: 50,
-    },
+
   ];
-  if (task.expectedFiles && task.expectedFiles.length > 0) {
-    steps.push({
-      timestamp: now + 2,
-      type: 'patch',
-      output: { filesChanged: task.expectedFiles },
-    });
-  }
   steps.push({
     timestamp: now + 3,
     type: 'check',
-    output: { pass: true },
+    output: { pass: false, reason: 'Synthetic trajectory: no task or checks executed' },
+    error: 'Synthetic trajectory: no task or checks executed',
   });
   steps.push({
     timestamp: now + 4,
     type: 'response',
-    output: task.description,
+    output: `[SYNTHETIC] ${task.description}`,
   });
   return {
     taskId: task.id,
-    config: { mode },
+    config: { mode, real: false, synthetic: true, tokensMeasured: false },
     steps,
-    finalOutput: task.description,
-    totalCost: 0.0001,
-    totalTokens: { input: 100, output: 50 },
-    duration: 100,
+    finalOutput: `[SYNTHETIC] ${task.description}`,
+    totalCost: 0,
+    totalTokens: { input: 0, output: 0 },
+    duration: 0,
   };
 }
 
@@ -322,16 +300,21 @@ export async function runEval(
     real?: boolean;
     providers?: { writer: ModelProvider; reviewer: ModelProvider };
     workspaceRoot?: string;
+    toolOptions?: Parameters<typeof createToolContext>[1];
   },
 ): Promise<EvalReport> {
   const spec = loadTaskSpec(taskRef, options.fixturesDir);
   let trajectory: Trajectory;
+  if (options.real && (!options.providers || Object.values(options.providers).some(provider => provider.getModel().provider === 'mock'))) {
+    throw new Error('Real evaluation requires actual model providers; offline mock/synthetic runs are not live evidence');
+  }
 
   if (options.real && options.providers) {
     // Real orchestrator run
     const recorder = new RealTrajectoryRecorder(
       options.providers,
       options.workspaceRoot ?? process.cwd(),
+      options.toolOptions,
     );
     trajectory = await recorder.record(spec, options.mode);
   } else {
@@ -365,8 +348,8 @@ export function formatEvalMarkdown(report: EvalReport): string {
   lines.push(`- Pass rate: ${(report.summary.passRate * 100).toFixed(1)}%`);
   lines.push(`- Avg cost: $${report.summary.avgCost.toFixed(4)}`);
   lines.push(`- Avg latency: ${Math.round(report.summary.avgLatency)} ms`);
-  lines.push(`- Avg quality: ${(report.summary.avgQuality * 100).toFixed(1)}%`);
-  lines.push(`- Cost savings vs frontier: ${report.summary.costSavingsVsFrontier}%`);
+  lines.push(`- Avg quality (heuristic unless judged): ${(report.summary.avgQuality * 100).toFixed(1)}%`);
+  lines.push(`- Cost savings vs frontier: ${report.summary.costSavingsVsFrontier === null ? 'unavailable (no measured baseline)' : `${report.summary.costSavingsVsFrontier}%`}`);
   lines.push('');
   lines.push(`## Per-task results`);
   lines.push('');

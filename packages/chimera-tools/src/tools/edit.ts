@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { execa } from 'execa';
+
 import { promises as fs } from 'fs';
 import path from 'path';
 import type { ToolDefinition, ToolContext } from '../tool-schema.js';
@@ -164,6 +164,7 @@ export const applyPatchTool: ToolDefinition<typeof ApplyPatchParamsSchema, typeo
     }
 
     try {
+      const { execa } = require('execa') as typeof import('execa');
       if (params.dryRun) {
         const result = await execa('git', ['apply', '--check', '--verbose', patchFile], {
           cwd: workingDir,

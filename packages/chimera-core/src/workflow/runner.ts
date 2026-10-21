@@ -72,6 +72,8 @@ export interface WorkflowHandlers {
    */
   llmCaller?: (params: {
     role: string;
+    withTools?: boolean;
+    preset?: unknown;
     messages: Array<{ role: string; content: string }>;
     options?: {
       temperature?: number;
@@ -82,13 +84,13 @@ export interface WorkflowHandlers {
   }) => Promise<{
     content: string;
     toolCalls?: ToolCall[];
-    usage: { inputTokens: number; outputTokens: number };
+    usage?: { inputTokens: number; outputTokens: number };
   }>;
 
   /**
    * Optional gate evaluator. Receives the gate step's `config` and the
    * current `state`; returns 'success' to continue or 'error' to abort.
-   * If absent, gates always return 'success'.
+   * If absent, gate execution is refused.
    */
   gateEvaluator?: (gate: WorkflowStep, state: Record<string, unknown>) => 'success' | 'error' | Promise<'success' | 'error'>;
 
@@ -260,7 +262,7 @@ async function runLlmStep(
   step: WorkflowStep,
   _ctx: WorkflowContext,
   handlers: WorkflowHandlers,
-): Promise<{ content: string; parsed?: unknown; usage: { inputTokens: number; outputTokens: number } }> {
+): Promise<{ content: string; parsed?: unknown; usage?: { inputTokens: number; outputTokens: number } }> {
   const role = (step.config.role as string) ?? 'default';
   const provider = handlers.providers[role];
   if (!provider) {
@@ -276,8 +278,11 @@ async function runLlmStep(
     responseFormat: (step.config.responseFormat as 'text' | 'json_object' | undefined) ?? 'text',
   };
 
+  const withTools = step.config.withTools === true || step.config.toolLoop === true;
+  if (withTools && !handlers.llmCaller) throw new Error('Tool-enabled workflow steps require an execution-aware caller');
   const caller = handlers.llmCaller ?? ((p) => defaultLlmCaller(p, handlers));
-  const result = await caller({ role, messages, options, ctx: _ctx });
+  const result = await caller({ role, messages, options, ctx: _ctx, withTools, preset: step.config.preset });
+  if (result.toolCalls?.length) throw new Error('Workflow step returned unexecuted tool calls');
 
   // Best-effort JSON parse: structured-output roles (writer, reviewer,
   // challenger) emit JSON; gates look up `.verdict` on the parsed object.
@@ -304,7 +309,7 @@ async function defaultLlmCaller(
     ctx: WorkflowContext;
   },
   handlers: WorkflowHandlers,
-): Promise<{ content: string; usage: { inputTokens: number; outputTokens: number } }> {
+): Promise<{ content: string; toolCalls?: ToolCall[]; usage: { inputTokens: number; outputTokens: number } }> {
   const provider = handlers.providers[params.role];
   if (!provider) {
     throw new Error(
@@ -355,6 +360,7 @@ async function runParallelStep(
   handlers: WorkflowHandlers,
   outputs: Record<string, unknown>,
 ): Promise<{ branches: Record<string, unknown>; results: ParallelBranchResult[] }> {
+  if (step.config.tasks !== undefined) throw new Error('Parallel workflow steps require config.branches, not config.tasks');
   const branches = (step.config.branches as WorkflowStep[]) ?? [];
   if (branches.length === 0) {
     return { branches: {}, results: [] };
@@ -393,14 +399,7 @@ async function runParallelStep(
     }
     // Reviewer did not pass — run dependents in parallel.
     const dependents = branches.filter((b) => reviewerFirst.dependentBranchIds.includes(b.id));
-    const dependentSettled = await Promise.allSettled(
-      dependents.map((b) => runStep(b, ctx, handlers, outputs)),
-    );
-    const dependentResults: ParallelBranchResult[] = dependentSettled.map((s, i) =>
-      s.status === 'fulfilled'
-        ? { branchId: dependents[i].id, status: 'fulfilled', value: s.value }
-        : { branchId: dependents[i].id, status: 'rejected', error: errorMessage(s.reason) },
-    );
+    const dependentResults = await runRequiredBranches(dependents, ctx, handlers, outputs);
     return {
       branches: {
         [reviewerBranch.id]: reviewerValue,
@@ -411,18 +410,20 @@ async function runParallelStep(
   }
 
   // Default path: fan-out across all branches concurrently.
-  const settled = await Promise.allSettled(
-    branches.map((b) => runStep(b, ctx, handlers, outputs)),
-  );
-  const results: ParallelBranchResult[] = settled.map((s, i) =>
-    s.status === 'fulfilled'
-      ? { branchId: branches[i].id, status: 'fulfilled', value: s.value }
-      : { branchId: branches[i].id, status: 'rejected', error: errorMessage(s.reason) },
-  );
+  const results = await runRequiredBranches(branches, ctx, handlers, outputs);
   return {
     branches: Object.fromEntries(results.map((r) => [r.branchId, r.value])),
     results,
   };
+}
+
+async function runRequiredBranches(branches: WorkflowStep[], ctx: WorkflowContext, handlers: WorkflowHandlers, outputs: Record<string, unknown>): Promise<ParallelBranchResult[]> {
+  const settled = await Promise.allSettled(branches.map(branch => runStep(branch, ctx, handlers, outputs)));
+  const failures = settled.flatMap((result, i) => result.status === 'rejected' && branches[i].required !== false ? [new Error(`${branches[i].id}: ${errorMessage(result.reason)}`)] : []);
+  if (failures.length) throw new AggregateError(failures, `Required parallel workflow branches failed: ${failures.map(error => error.message).join('; ')}`);
+  return settled.map((result, i) => result.status === 'fulfilled'
+    ? { branchId: branches[i].id, status: 'fulfilled', value: result.value }
+    : { branchId: branches[i].id, status: 'rejected', error: errorMessage(result.reason) });
 }
 
 function extractVerdict(value: unknown): string | undefined {
@@ -469,7 +470,7 @@ async function runGateStep(
   handlers: WorkflowHandlers,
 ): Promise<{ status: 'success' | 'error'; reason?: string }> {
   if (!handlers.gateEvaluator) {
-    return { status: 'success' };
+    throw new Error(`Workflow gate '${step.id}' requires an evaluator`);
   }
   const result = await handlers.gateEvaluator(step, ctx.state);
   if (result === 'error') {
@@ -540,8 +541,8 @@ async function runLoopStep(
   if (!until) {
     throw new Error(`WorkflowRunner: loop step '${step.id}' missing config.until`);
   }
-  if (maxIterations < 1) {
-    throw new Error(`WorkflowRunner: loop step '${step.id}' max_iterations must be >= 1`);
+  if (!Number.isSafeInteger(maxIterations) || maxIterations < 1 || maxIterations > 100) {
+    throw new Error(`WorkflowRunner: loop step '${step.id}' max_iterations must be an integer from 1 to 100`);
   }
 
   const role = (config.role as string) ?? 'default';
@@ -552,7 +553,6 @@ async function runLoopStep(
     );
   }
 
-  const caller = handlers.llmCaller ?? ((p) => defaultLlmCaller(p, handlers));
   const eventStream = handlers.eventStream;
 
   let totalInputTokens = 0;
@@ -580,14 +580,9 @@ async function runLoopStep(
       : [...history, { role: 'user', content: prompt }];
 
     let content: string;
-    let usage: { inputTokens: number; outputTokens: number };
+    let usage: { inputTokens: number; outputTokens: number } | undefined;
     try {
-      const result = await caller({
-        role,
-        messages,
-        options: { temperature: 0.7, maxTokens: 4096 },
-        ctx,
-      });
+      const result = await runLlmStep({ ...step, config: { ...config, messages } }, ctx, handlers);
       content = result.content;
       usage = result.usage;
     } catch (err) {
@@ -606,8 +601,8 @@ async function runLoopStep(
       );
     }
 
-    totalInputTokens += usage.inputTokens;
-    totalOutputTokens += usage.outputTokens;
+    totalInputTokens += usage?.inputTokens ?? 0;
+    totalOutputTokens += usage?.outputTokens ?? 0;
     lastOutput = content;
 
     // Accumulate history (unless fresh context)
@@ -622,17 +617,17 @@ async function runLoopStep(
     let bashComplete = false;
     if (untilBash && handlers.toolExecutor) {
       try {
-        const bashResult = await handlers.toolExecutor('bash', {
+        const bashResult = await handlers.toolExecutor('run_shell_command', {
           command: untilBash,
           env: { LOOP_PREV_OUTPUT: lastOutput },
         });
-        bashComplete = bashResult.success;
+        bashComplete = bashResult.success && (bashResult.data as { exitCode?: number } | undefined)?.exitCode === 0;
       } catch {
         bashComplete = false;
       }
     }
 
-    const completionDetected = signalDetected || bashComplete;
+    const completionDetected = untilBash ? bashComplete : signalDetected;
     const durationMs = Date.now() - iterationStart;
 
     // Emit iteration completed

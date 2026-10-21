@@ -48,6 +48,7 @@ RESEARCH BEFORE WRITING:
 - If you have a known documentation URL, use webfetch to pull its contents.`;
 
 interface SoloExecutorDeps {
+  readOnly?: boolean;
   eventStream: EventStream;
   /** Model registry — used for cost lookups. */
   registry: ModelRegistry;
@@ -59,6 +60,8 @@ interface SoloExecutorDeps {
   toolExecutor?: ToolExecutorInterface;
   /** Optional tool registry — supplies tool definitions to the LLM. */
   toolRegistry?: ToolRegistryInterface;
+  /** Per-run abort signal, forwarded to the writer's tool loop. */
+  signal?: AbortSignal;
 }
 
 /**
@@ -84,20 +87,24 @@ function expectedPathFromTask(task: string): string | undefined {
 }
 
 export class SoloExecutor {
+  private readOnly: boolean;
   private eventStream: EventStream;
   private registry: ModelRegistry;
   private costTracker: CostTracker | undefined;
   private workspaceRoot?: string;
   private toolExecutor?: ToolExecutorInterface;
   private toolRegistry?: ToolRegistryInterface;
+  private signal?: AbortSignal;
 
   constructor(deps: SoloExecutorDeps) {
+    this.readOnly = deps.readOnly ?? false;
     this.eventStream = deps.eventStream;
     this.registry = deps.registry;
     this.costTracker = deps.costTracker;
     this.workspaceRoot = deps.workspaceRoot;
     this.toolExecutor = deps.toolExecutor;
     this.toolRegistry = deps.toolRegistry;
+    this.signal = deps.signal;
   }
 
   /**
@@ -129,7 +136,7 @@ export class SoloExecutor {
     let wroteFileCount = 0;
     const selfVerify = config.selfVerify ?? true;
     // Whether the task wants files created on disk (used for the completion gate).
-    const wantsFiles = taskWantsFiles(task);
+    const wantsFiles = !this.readOnly && taskWantsFiles(task);
     // Capture the pre-existing target file content (if any) so the prose
     // fallback can detect "the model only NARRATED the fix" — a write tool may
     // have been *called* yet failed to land, leaving the file at its seed/old
@@ -176,7 +183,7 @@ export class SoloExecutor {
     try {
       // For tool-driven (code) tasks, force an agentic system prompt so the
       // model actually invokes tools instead of narrating a plan in prose.
-      const writerConfig: SoloConfig = this.toolRegistry
+      const writerConfig: SoloConfig = this.toolRegistry && !this.readOnly
         ? { ...config, systemPrompt: [CODE_MODE_PROMPT, config.systemPrompt].filter(Boolean).join('\n\n') }
         : config;
       const res = await this.callPeer(
@@ -202,13 +209,13 @@ export class SoloExecutor {
       let currentToolCalls = res.toolCalls;
       let lastContent = res.content;
       let draftContentForLoop = draftContent;
-      const MAX_TOOL_ROUNDS = Math.max(1, config.maxDepth ?? 4);
+      const MAX_TOOL_ROUNDS = Math.max(1, config.maxToolRounds ?? config.maxDepth ?? 4);
       let round = 0;
 
       // Shared bounded LLM→tool→feedback loop (single source of truth).
       const loop = await runAgentToolLoop({
         provider: providerFactory(config.model),
-        messages: [{ role: 'user', content: task }],
+        messages: res.messages,
         options: { temperature: config.temperature, maxTokens: config.maxCompletionTokens },
         toolExecutor: this.toolExecutor,
         toolRegistry: this.toolRegistry,
@@ -225,6 +232,7 @@ export class SoloExecutor {
         systemPrompt: config.systemPrompt,
         toolDefs: this.toolRegistry ? this.listToolDefs() : undefined,
         sanitize: sanitizeWriterOutput,
+        signal: this.signal,
       });
       round = loop.round;
       wroteFileCount += loop.wroteFileCount;
@@ -376,7 +384,7 @@ export class SoloExecutor {
     draft?: string,
     thought?: string,
     tools?: Array<{ name: string; description: string; parameters: Record<string, unknown> }>,
-  ): Promise<{ content: string; inputTokens: number; outputTokens: number; durationMs: number; toolCalls?: import('../types/agent.js').ToolCall[] }> {
+  ): Promise<{ content: string; inputTokens: number; outputTokens: number; durationMs: number; toolCalls?: import('../types/agent.js').ToolCall[]; messages: Array<{ role: 'system' | 'user'; content: string }> }> {
     const start = Date.now();
     const provider = providerFactory(modelId);
     let prompt: string;
@@ -409,6 +417,7 @@ export class SoloExecutor {
       outputTokens: r.usage?.outputTokens ?? 0,
       durationMs: Date.now() - start,
       toolCalls: r.toolCalls,
+      messages,
     };
   }
 

@@ -8,6 +8,8 @@ import type { LLMProvider } from '../session-orchestrator.js';
 export interface FusionConfig {
   /** Panel of model identifiers (resolved via the ModelRegistry). */
   analysisModels: string[];
+  /** Optional project context supplied to panel, rebuttal and judge calls. */
+  context?: string;
   /** 
    * Number of panel models to load automatically if analysisModels is empty.
    * Also referred to as N.
@@ -39,7 +41,7 @@ export interface FusionConfig {
   temperature?: number;
   /** Max output tokens (including reasoning) per inner call. */
   maxCompletionTokens?: number;
-  /** Max tool-calling steps per inner call. 1–16. */
+  /** Max follow-up completions per panel tool loop; the final emitted batch is drained. */
   maxToolCalls?: number;
   /** Reasoning config forwarded to panel and judge. */
   reasoning?: {

@@ -1,7 +1,8 @@
 import { EventStream } from '../event-stream.js';
 import type { LLMProvider, ToolExecutorInterface, ToolRegistryInterface } from '../session-orchestrator.js';
 import type { ModelRegistry, ModelEntry } from '@chimera/providers';
-import { withRetry } from '@chimera/providers';
+import { withRetry, type RetryOptions } from '@chimera/providers';
+import { withAbort } from '../utils/abort.js';
 import type { CostTracker } from '../cost-tracker.js';
 import { sanitizeWriterOutput } from './output-sanitizer.js';
 import { runAgentToolLoop, countSourceFiles } from './agent-tool-loop.js';
@@ -77,12 +78,15 @@ function extractJsonObject(raw: string): Record<string, unknown> {
 }
 
 interface FusionExecutorDeps {
+  readOnly?: boolean;
   eventStream: EventStream;
   registry: ModelRegistry;
   costTracker?: CostTracker;
   toolExecutor?: ToolExecutorInterface;
   toolRegistry?: ToolRegistryInterface;
   workspaceRoot?: string;
+  /** Per-run abort signal, forwarded to the writer's tool loop. */
+  signal?: AbortSignal;
 }
 
 function expectedPathFromTask(task: string): string | undefined {
@@ -95,20 +99,24 @@ function expectedPathFromTask(task: string): string | undefined {
  * Parallel panel of models generates answers, then a judge synthesizes.
  */
 export class FusionExecutor {
+  private readOnly: boolean;
   private eventStream: EventStream;
   private registry: ModelRegistry;
   private costTracker: CostTracker | undefined;
   private toolExecutor: ToolExecutorInterface | undefined;
   private toolRegistry: ToolRegistryInterface | undefined;
   private workspaceRoot: string | undefined;
+  private signal: AbortSignal | undefined;
 
   constructor(deps: FusionExecutorDeps) {
+    this.readOnly = deps.readOnly ?? false;
     this.eventStream = deps.eventStream;
     this.registry = deps.registry;
     this.costTracker = deps.costTracker;
     this.toolExecutor = deps.toolExecutor;
     this.toolRegistry = deps.toolRegistry;
     this.workspaceRoot = deps.workspaceRoot;
+    this.signal = deps.signal;
   }
 
   async execute(
@@ -127,6 +135,7 @@ export class FusionExecutor {
     providerFactory: FusionProviderFactory,
     context: FusionContext = { depth: 0 }
   ): Promise<FusionResultV2> {
+    this.signal?.throwIfAborted();
     const startTime = Date.now();
     let totalTokens = 0;
     let totalCostUsd = 0;
@@ -167,6 +176,7 @@ export class FusionExecutor {
     }
 
     this.safeEmit({ type: 'fusion_started', task, models, judge: config.judgeModel });
+    const contextBlock = config.context ? `\n\n[!] PROJECT CONTEXT [!]\n${config.context}` : '';
 
     // ── Parallel Panel Calls ──────────────────────────────────────────
     const panelSettled = await Promise.allSettled(
@@ -186,6 +196,7 @@ export class FusionExecutor {
             const perspective = perspectives[index % perspectives.length];
             finalTask = `PERSPECTIVE: ${perspective}\n\nTASK: ${task}`;
         }
+        finalTask += contextBlock;
 
         const toolDefs = this.toolRegistry
           ? this.toolRegistry.getAll().map((t) => ({
@@ -195,15 +206,14 @@ export class FusionExecutor {
             }))
           : undefined;
 
-        const res = await withRetry(() => provider.complete(
+        const res = await this.complete(provider,
           [{ role: 'user', content: finalTask }],
           {
             temperature: config.temperature,
             maxTokens: config.maxCompletionTokens,
             ...(config.reasoning !== undefined ? { reasoning: config.reasoning } : {}),
             ...(this.toolExecutor && this.workspaceRoot && toolDefs ? { tools: toolDefs } : {}),
-          }
-        ), { maxRetries: 2, baseDelayMs: 4000, maxDelayMs: 25000 });
+          }, { maxRetries: 2, baseDelayMs: 4000, maxDelayMs: 25000 });
 
         // Writer-panel path: route through the shared agentic tool loop so the
         // panel agent actually calls write_file instead of narrating the file in
@@ -213,7 +223,7 @@ export class FusionExecutor {
         let extraInput = res.usage?.inputTokens ?? 0;
         let extraOutput = res.usage?.outputTokens ?? 0;
         if (this.toolExecutor && this.toolRegistry && this.workspaceRoot) {
-          const wantsFiles = taskWantsFiles(task);
+          const wantsFiles = !this.readOnly && taskWantsFiles(task);
           try {
             const loop = await runAgentToolLoop({
               provider,
@@ -226,14 +236,16 @@ export class FusionExecutor {
               sessionId: `fusion-${modelId}`,
               initialContent: res.content,
               initialToolCalls: res.toolCalls ?? [],
-              maxRounds: Math.max(1, config.maxDepth ?? 4),
+              maxRounds: Math.max(1, config.maxToolCalls ?? 4),
               mode: 'solo',
               forceMinFiles: 1,
               wantsFiles,
               task,
               toolDefs,
               sanitize: sanitizeWriterOutput,
+              signal: this.signal,
             });
+            this.signal?.throwIfAborted();
             content = loop.content || res.content;
             extraInput = (res.usage?.inputTokens ?? 0) + loop.inputTokens;
             extraOutput = (res.usage?.outputTokens ?? 0) + loop.outputTokens;
@@ -255,6 +267,7 @@ export class FusionExecutor {
               }
             }
           } catch {
+            this.signal?.throwIfAborted();
             // Tool loop failed — fall through to the bare draft below.
           }
         }
@@ -269,6 +282,7 @@ export class FusionExecutor {
       })
     );
 
+    this.signal?.throwIfAborted();
     for (const res of panelSettled) {
       if (res.status === 'fulfilled') {
         const v = res.value;
@@ -309,15 +323,15 @@ export class FusionExecutor {
                     '',
                     'Review the other perspectives and provide your final refined answer. Address any contradictions or improvements identified.',
                     'TASK:',
-                    task,
+                    task + contextBlock,
                     '',
                     'FINAL ANSWER:'
                 ].join('\n');
 
-                const res = await withRetry(() => provider.complete(
+                const res = await this.complete(provider,
                     [{ role: 'user', content: rebuttalPrompt }],
-                    { temperature: config.temperature, maxTokens: config.maxCompletionTokens, ...(config.reasoning !== undefined ? { reasoning: config.reasoning } : {}) }
-                ), { maxRetries: 2, baseDelayMs: 4000, maxDelayMs: 25000 });
+                    { temperature: config.temperature, maxTokens: config.maxCompletionTokens, ...(config.reasoning !== undefined ? { reasoning: config.reasoning } : {}) },
+                    { maxRetries: 2, baseDelayMs: 4000, maxDelayMs: 25000 });
 
                 return {
                     modelId,
@@ -329,6 +343,7 @@ export class FusionExecutor {
             })
         );
 
+        this.signal?.throwIfAborted();
         for (const res of adversarialSettled) {
             if (res.status === 'fulfilled' && res.value) {
                 const v = res.value;
@@ -361,15 +376,15 @@ export class FusionExecutor {
     // ponytail: writer is the last-resort judge — if all registry judges
     // are rate-limited, we still get a synthesis instead of "all judges failed"
     const judgeModels = [config.judgeModel, ...(config.judgeFailover ?? []), 'writer'];
-    const prompt = this.buildJudgePrompt(task, panelResults);
+    const prompt = this.buildJudgePrompt(task + contextBlock, panelResults);
 
     for (const judgeModel of judgeModels) {
       try {
         const judgeProvider = providerFactory(judgeModel);
-        const judgeRes = await withRetry(() => judgeProvider.complete(
+        const judgeRes = await this.complete(judgeProvider,
           [{ role: 'user', content: prompt }],
-          { responseFormat: 'json_object', temperature: config.temperature, maxTokens: config.maxCompletionTokens, ...(config.reasoning !== undefined ? { reasoning: config.reasoning } : {}) }
-        ), { maxRetries: 2, baseDelayMs: 3000, maxDelayMs: 20000 });
+          { responseFormat: 'json_object', temperature: config.temperature, maxTokens: config.maxCompletionTokens, ...(config.reasoning !== undefined ? { reasoning: config.reasoning } : {}) },
+          { maxRetries: 2, baseDelayMs: 3000, maxDelayMs: 20000 });
 
         let parsed: Record<string, unknown> | null = null;
         try {
@@ -416,6 +431,7 @@ export class FusionExecutor {
         this.recordSpend(judgeModel, cost);
         break;
       } catch (err) {
+        this.signal?.throwIfAborted();
         this.safeEmit({ type: 'fusion_fallback_judge', failedModel: judgeModel, error: String(err) });
       }
     }
@@ -450,6 +466,20 @@ export class FusionExecutor {
       durationMs: Date.now() - startTime,
       degraded: judgeParseFailed,
     };
+  }
+
+  private async complete(
+    provider: LLMProvider,
+    messages: Parameters<LLMProvider['complete']>[0],
+    options: Parameters<LLMProvider['complete']>[1],
+    retry: RetryOptions,
+  ) {
+    const result = await withAbort(() => withRetry(() => {
+      this.signal?.throwIfAborted();
+      return provider.complete(messages, { ...options, ...(this.signal ? { signal: this.signal } : {}) });
+    }, retry), this.signal);
+    this.signal?.throwIfAborted();
+    return result;
   }
 
   private buildJudgePrompt(task: string, results: FusionPanelResult[]): string {

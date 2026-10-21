@@ -1,7 +1,11 @@
 {
   "name": "@chimera/core",
-  "version": "0.5.7",
+  "version": "0.6.0",
   "description": "Core orchestrator, event stream, and agent mesh coordination",
+  "license": "MIT",
+  "engines": { "node": ">=22.13.0" },
+  "publishConfig": { "access": "public" },
+  "files": ["dist", "!dist/**/__tests__/**", "!dist/**/*.test.*", "!dist/**/*.spec.*", "README.md", "LICENSE"],
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "scripts": {
@@ -13,6 +17,7 @@
   },
   "dependencies": {
     "@chimera/context": "workspace:*",
+    "@chimera/domain": "workspace:*",
     "@chimera/providers": "workspace:*",
     "yaml": "^2.4.0",
     "zod": "^3.23.0"

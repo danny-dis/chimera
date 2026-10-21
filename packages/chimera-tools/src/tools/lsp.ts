@@ -2,6 +2,8 @@ import { z } from 'zod';
 import type { ToolDefinition, ToolContext } from '../tool-schema.js';
 import { buildTool } from '../tool-builder.js';
 import type { LspLocation, LspHover, LspDocumentSymbol, LspWorkspaceSymbol } from '@chimera/lsp';
+
+import { PathRestrictionEngine } from '../permission/path-restrictions.js';
 import { getOrCreateLspService } from '../lsp-registry.js';
 
 // ── Schemas ───────────────────────────────────────────────────────────────────
@@ -83,6 +85,23 @@ export const lspTool: ToolDefinition<typeof LspParamsSchema, typeof LspReturnsSc
   category: 'lsp',
   permissionLevel: 'read',
   execute: async (params, context: ToolContext) => {
+    // Canonical containment at the tool boundary — before any service
+    // startup or read. Reuses the existing PathRestrictionEngine (same
+    // package, no new helper, no circular dep); file: URIs are decoded
+    // first so URI-outside is contained too. The service seam re-enforces
+    // with assertWorkspaceContainment (exported from @chimera/lsp src).
+    // workspaceSymbol takes a query, not a path, so nothing to contain.
+    if (params.operation !== 'workspaceSymbol') {
+      const { uriToPath } = require('@chimera/lsp') as typeof import('@chimera/lsp');
+      let decoded = params.filePath.startsWith('file:') ? uriToPath(params.filePath) : params.filePath;
+      // Normalize drive-letter case on Windows (vscode-uri lowercases it)
+      // so legitimate inside URIs are not false-positive escapes.
+      if (process.platform === 'win32' && /^[a-z]:[\\/]/.test(decoded)) {
+        decoded = decoded[0].toUpperCase() + decoded.slice(1);
+      }
+      const violation = new PathRestrictionEngine(context.workspaceRoot).getViolation(decoded);
+      if (violation) throw new Error(`path escapes workspace: ${params.filePath} (${violation})`);
+    }
     const service = await getOrCreateLspService(context.workspaceRoot);
 
     switch (params.operation) {

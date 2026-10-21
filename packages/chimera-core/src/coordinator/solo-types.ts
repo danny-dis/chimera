@@ -34,6 +34,7 @@ export interface SoloConfig {
   budgetUsd?: number;
   /** Maximum recursion depth. Default 1. */
   maxDepth?: number;
+  maxToolRounds?: number;
   /** Force the executor to run even when the request looks simple. */
   forceInvocation?: boolean;
   /** Optional system prompt prepended to every LLM call. */

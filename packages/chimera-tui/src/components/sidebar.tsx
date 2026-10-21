@@ -15,6 +15,7 @@ interface SidebarProps {
   tokenUsage?: { input: number; output: number; total: number };
   instructions?: string[];
   contentWidth?: number;
+  activeFocus?: number;
   onModeChange?: (mode: import('@chimera/core').Mode) => void;
   onPresetChange?: (preset: import('@chimera/core').DeliberationMode) => void;
   skillModel?: SkillModelView;
@@ -38,6 +39,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   tokenUsage,
   instructions,
   contentWidth,
+  activeFocus = -1,
   onModeChange,
   onPresetChange,
   skillModel,
@@ -69,7 +71,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
         <ModeSelector
           mode={mode}
           compact
-          focused
+          focused={activeFocus === 2}
           onSelect={onModeChange}
           skillModel={skillModel}
         />
@@ -80,7 +82,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
         <PresetSelector
           preset={preset}
           compact
-          focused
+          focused={activeFocus === 3}
           onSelect={onPresetChange}
           skillModel={skillModel}
         />

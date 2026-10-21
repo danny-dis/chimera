@@ -1,7 +1,11 @@
 {
   "name": "@chimera/learning",
-  "version": "0.5.7",
+  "version": "0.6.0",
   "description": "Self-improvement engine: session analysis → skill/workflow synthesis",
+  "license": "MIT",
+  "engines": { "node": ">=22.13.0" },
+  "publishConfig": { "access": "public" },
+  "files": ["dist", "!dist/**/__tests__/**", "!dist/**/*.test.*", "!dist/**/*.spec.*", "README.md", "LICENSE"],
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "scripts": {

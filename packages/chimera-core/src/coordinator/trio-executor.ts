@@ -14,6 +14,7 @@ import { TaskRouter } from '../task-router.js';
 import { runAgentToolLoop } from './tool-execution-helper.js';
 import { executeProseActions } from './file-write-fallback.js';
 import { taskWantsFiles, snapshotTarget, targetChanged } from './path-from-task.js';
+import { parseReviewVerdict } from './review-verdict.js';
 import type { Mode, ToolCall } from '../types/agent.js';
 import type { OutputStyle } from '../output-styles/index.js';
 import type {
@@ -41,6 +42,7 @@ function expectedPathFromTask(task: string): string | undefined {
 }
 
 interface TrioExecutorDeps {
+  readOnly?: boolean;
   eventStream: EventStream;
   /** Model registry — used for cost lookups and (future) capability checks. */
   registry: ModelRegistry;
@@ -63,6 +65,8 @@ interface TrioExecutorDeps {
    * create a dependency cycle (learning value-imports core).
    */
   style?: OutputStyle;
+  /** Per-run abort signal, forwarded to the writer's tool loop. */
+  signal?: AbortSignal;
 }
 
 /**
@@ -89,6 +93,7 @@ interface TrioExecutorDeps {
  *   9. Test coverage — smoke + benchmark tests live in `__tests__/`
  */
 export class TrioExecutor {
+  private readOnly: boolean;
   private eventStream: EventStream;
   private registry: ModelRegistry;
   private costTracker: CostTracker | undefined;
@@ -97,9 +102,11 @@ export class TrioExecutor {
   private toolExecutor?: ToolExecutorInterface;
   private toolRegistry?: ToolRegistryInterface;
   private style?: OutputStyle;
+  private signal?: AbortSignal;
   private errorRecovery: ErrorRecovery;
 
   constructor(deps: TrioExecutorDeps) {
+    this.readOnly = deps.readOnly ?? false;
     this.eventStream = deps.eventStream;
     this.registry = deps.registry;
     this.costTracker = deps.costTracker;
@@ -108,6 +115,7 @@ export class TrioExecutor {
     this.toolExecutor = deps.toolExecutor;
     this.toolRegistry = deps.toolRegistry;
     this.style = deps.style;
+    this.signal = deps.signal;
     this.errorRecovery = new ErrorRecovery({ eventStream: this.eventStream });
   }
 
@@ -159,7 +167,7 @@ export class TrioExecutor {
     }
 
     // ── Worktree isolation (opt-in) ───────────────────────────────────
-    if (config.isolateWorktree) {
+    if (config.isolateWorktree && !this.readOnly) {
       if (!this.worktreeIsolation) {
         return this.degraded('isolateWorktree=true but no WorktreeIsolation provided', totalTokens, totalCostUsd, startTime, false, stages, worktreePath);
       }
@@ -222,14 +230,15 @@ export class TrioExecutor {
           sessionId: `trio-${config.writer}`,
           initialContent: draftResult.content,
           initialToolCalls: draftToolCalls,
-          maxRounds: Math.max(1, config.maxDepth ?? 4),
+          maxRounds: Math.max(1, config.maxToolRounds ?? config.maxDepth ?? 4),
           mode: 'trio',
           forceMinFiles: 1,
-          wantsFiles: taskWantsFiles(task),
+          wantsFiles: !this.readOnly && taskWantsFiles(task),
           task,
           systemPrompt: CHIMERA_CORE_IDENTITY,
           toolDefs: toolDefs,
           sanitize: sanitizeWriterOutput,
+          signal: this.signal,
         });
         if (loop.round > 0) {
           draftContent = sanitizeWriterOutput(loop.content);
@@ -264,7 +273,7 @@ export class TrioExecutor {
       // "no real file landed on disk" (not wroteFileCount — a failed emit would
       // wrongly suppress this), so we don't clobber a file that genuinely landed
       // but always rescue a missing one.
-      if (this.toolExecutor && this.workspaceRoot && !targetChanged(task, this.workspaceRoot, targetBefore)) {
+      if (!this.readOnly && this.toolExecutor && this.workspaceRoot && !targetChanged(task, this.workspaceRoot, targetBefore)) {
         try {
           await executeProseActions(draftContent, {
             eventStream: this.eventStream,
@@ -322,6 +331,7 @@ export class TrioExecutor {
         );
         const inputTokens = result.usage?.inputTokens ?? 0;
         const outputTokens = result.usage?.outputTokens ?? 0;
+        const parsed = this.parseReviewer(result.content);
         return {
           modelId: config.reviewer,
           role: 'reviewer',
@@ -329,7 +339,8 @@ export class TrioExecutor {
           inputTokens,
           outputTokens,
           durationMs: Date.now() - start,
-          issues: this.tryExtractIssues(result.content),
+          issues: parsed.issues,
+          verdict: parsed.verdict,
         };
       };
 
@@ -375,7 +386,7 @@ export class TrioExecutor {
         totalCostUsd += cost;
         this.recordSpend(config.reviewer, cost);
         stages.push(reviewStage);
-        this.safeEmit({ type: 'verified', agentId: config.reviewer, verdict: reviewStage.issues && reviewStage.issues.length > 0 ? 'needs_revision' : 'pass', findings: (reviewStage.issues ?? []).map((i) => ({ description: i.description, severity: i.severity as 'high' | 'med' | 'low', evidence: i.evidence })) });
+        this.safeEmit({ type: 'verified', agentId: config.reviewer, verdict: reviewStage.verdict === 'PASS' ? 'pass' : reviewStage.verdict === 'FAIL' ? 'fail' : 'needs_revision', findings: (reviewStage.issues ?? []).map((i) => ({ description: i.description, severity: i.severity as 'high' | 'med' | 'low', evidence: i.evidence })) });
       }
 
       // Extract challenge result — optional, graceful degradation
@@ -399,14 +410,8 @@ export class TrioExecutor {
         );
       }
 
-      // If parallel review failed, run sequential review+challenge to avoid
-      // discarding the draft that already completed.
-      if (!parallelReviewSucceeded) {
-        // Fall through to sequential block below.
-      } else {
-        // Parallel succeeded — skip sequential.
-      }
-    } else {
+    }
+    if (!parallelReviewSucceeded) {
       // ── Sequential path (fallback) ─────────────────────────────────
       if (parallelReviewSucceeded) {
         // Parallel succeeded — sequential already captured above.
@@ -420,7 +425,7 @@ export class TrioExecutor {
           ), { maxRetries: 2, baseDelayMs: 3000, maxDelayMs: 20000 });
           const inputTokens = reviewResult.usage?.inputTokens ?? 0;
           const outputTokens = reviewResult.usage?.outputTokens ?? 0;
-          const issues = this.tryExtractIssues(reviewResult.content);
+          const parsed = this.parseReviewer(reviewResult.content);
           reviewStage = {
             modelId: config.reviewer,
             role: 'reviewer',
@@ -428,7 +433,8 @@ export class TrioExecutor {
             inputTokens,
             outputTokens,
             durationMs: Date.now() - reviewStart,
-            issues,
+            issues: parsed.issues,
+            verdict: parsed.verdict,
           };
           totalTokens += inputTokens + outputTokens;
           const cost = this.computeCost(config.reviewer, inputTokens, outputTokens);
@@ -438,7 +444,7 @@ export class TrioExecutor {
           return this.degraded(`review stage failed: ${String(err)}`, totalTokens, totalCostUsd, startTime, false, stages, worktreePath);
         }
         stages.push(reviewStage);
-        this.safeEmit({ type: 'verified', agentId: config.reviewer, verdict: reviewStage.issues && reviewStage.issues.length > 0 ? 'needs_revision' : 'pass', findings: (reviewStage.issues ?? []).map((i) => ({ description: i.description, severity: i.severity as 'high' | 'med' | 'low', evidence: i.evidence })) });
+        this.safeEmit({ type: 'verified', agentId: config.reviewer, verdict: reviewStage.verdict === 'PASS' ? 'pass' : reviewStage.verdict === 'FAIL' ? 'fail' : 'needs_revision', findings: (reviewStage.issues ?? []).map((i) => ({ description: i.description, severity: i.severity as 'high' | 'med' | 'low', evidence: i.evidence })) });
 
         if (this.isOverBudget(config, totalCostUsd)) {
           return this.degraded(
@@ -488,12 +494,21 @@ export class TrioExecutor {
       }
     }
 
+    // ── Non-PASS verdict escalation (before synthesis) ───────────────
+    // A reviewer verdict of FAIL or NEEDS_REVISION must escalate to the user
+    // regardless of what the synthesizer produces. This prevents a non-PASS
+    // review from being silently overridden by a confident synthesis.
+    let needsUserEscalation = false;
+    let escalationReason: string | undefined;
+    if (reviewStage && reviewStage.verdict && reviewStage.verdict !== 'PASS') {
+      needsUserEscalation = true;
+      escalationReason = `reviewer verdict: ${reviewStage.verdict}`;
+    }
+
     // ── Stage 4: Synthesize ───────────────────────────────────────────
     const synthesisStart = Date.now();
     let analysis: Partial<TrioAnalysis>;
     let finalResponse: string;
-    let needsUserEscalation = false;
-    let escalationReason: string | undefined;
 
     if (config.synthesizer) {
       // LLM synthesizer with failover chain
@@ -524,16 +539,16 @@ export class TrioExecutor {
         const det = this.safeDeterministicSynthesis(task, draftStage, reviewStage, challengeStage);
         analysis = det.analysis;
         finalResponse = det.output;
-        needsUserEscalation = det.needsUserEscalation;
-        escalationReason = det.escalationReason;
+        needsUserEscalation ||= det.needsUserEscalation;
+        escalationReason ??= det.escalationReason;
       }
     } else {
       // Deterministic synthesis (no LLM call)
       const det = this.safeDeterministicSynthesis(task, draftStage, reviewStage, challengeStage);
       analysis = det.analysis;
       finalResponse = det.output;
-      needsUserEscalation = det.needsUserEscalation;
-      escalationReason = det.escalationReason;
+      needsUserEscalation ||= det.needsUserEscalation;
+      escalationReason ??= det.escalationReason;
     }
 
     if (this.isOverBudget(config, totalCostUsd)) {
@@ -549,7 +564,7 @@ export class TrioExecutor {
     // Completion gate: a task that wants files on disk must have actually
     // written at least one, or we escalate to needs_user instead of a false
     // `done` (small/free models sometimes narrate instead of writing).
-    const wantsFiles = taskWantsFiles(task);
+    const wantsFiles = !this.readOnly && taskWantsFiles(task);
     if (wantsFiles && this.workspaceRoot) {
       // Completion gate: a file-writing task must have actually MODIFIED its
       // target on disk (mtime/size change vs run start), not merely left a
@@ -731,6 +746,9 @@ export class TrioExecutor {
   }
 
   private buildDraftPrompt(task: string, context?: string, style?: OutputStyle): string {
+    if (this.readOnly) {
+      return `You are the writer. Gather evidence with read-only tools and provide the requested analysis or plan.\n\nTASK: ${task}${context ? `\n\nPROJECT CONTEXT:\n${context}` : ''}`;
+    }
     if (TaskRouter.isConversationalTask(task)) {
       const contextBlock = context ? `\n\n[!] PROJECT CONTEXT [!]\n${context}` : '';
       return `You are a helpful assistant. Answer the following conversational question directly.\n` +
@@ -756,15 +774,16 @@ export class TrioExecutor {
 
   private buildReviewPrompt(task: string, draft: string, context?: string): string {
     const contextBlock = context ? `\n\n[!] PROJECT CONTEXT [!]\n${context}` : '';
+    const contract = 'Return only valid JSON matching {"verdict":"PASS"|"FAIL"|"NEEDS_REVISION","confidence":number 0-1,"findings":[{"description":string,"severity":"high"|"med"|"low","evidence":string}]}. Use findings: [] when there are no findings.\n\n';
     if (TaskRouter.isConversationalTask(task)) {
-      return `[!] CONVERSATIONAL REVIEW [!]\n` +
+      return contract + `[!] CONVERSATIONAL REVIEW [!]\n` +
         `This is a conversational/general question, NOT a code task.\n` +
         `Do NOT apply code-review criteria (race conditions, input validation, architectural coupling, etc.).\n` +
         `Evaluate ONLY: factual accuracy, completeness, and clarity.\n` +
         `Default to PASS unless the answer is factually incorrect.\n\n` +
         `## Task\n${task}\n\n## Draft\n${draft}${contextBlock}`;
     }
-    return `You are a code reviewer. Review the following draft against the task.\n\n## Task\n${task}\n\n## Draft\n${draft}${contextBlock}`;
+    return contract + `You are a code reviewer. Review the following draft against the task.\n\n## Task\n${task}\n\n## Draft\n${draft}${contextBlock}`;
   }
 
   private buildChallengePrompt(task: string, draft: string, review: string, context?: string): string {
@@ -901,6 +920,19 @@ export class TrioExecutor {
       // not JSON
     }
     return undefined;
+  }
+
+  /**
+   * Strictly parse a reviewer response into a validated verdict + findings.
+   * Reuses the shared fail-closed parser so a malformed/absent verdict maps to
+   * NEEDS_REVISION (never an inferred pass from "no issues found").
+   */
+  private parseReviewer(content: string): {
+    verdict: 'PASS' | 'FAIL' | 'NEEDS_REVISION';
+    issues: Array<{ description: string; severity: string; evidence: string }>;
+  } {
+    const parsed = parseReviewVerdict(content);
+    return { verdict: parsed.verdict, issues: parsed.findings };
   }
 
   private tryExtractChallenges(content: string): string[] | undefined {

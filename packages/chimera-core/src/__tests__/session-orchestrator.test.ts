@@ -214,7 +214,8 @@ describe('SessionOrchestrator', () => {
         costCap: 10,
       });
 
-      expect(result.status).toBe('done');
+      expect(result.status).toBe('needs_user');
+      expect(result.verification?.verified).toBe(false);
       expect(result.agentCount).toBe(2);
     });
 
@@ -642,7 +643,8 @@ describe('SessionOrchestrator', () => {
         costCap: 10,
       });
 
-      expect(result.status).toBe('done');
+      expect(result.status).toBe('needs_user');
+      expect(result.verification?.verified).toBe(false);
       const modeSuggested = eventStream.getByType('mode_suggested') as any[];
       expect(modeSuggested).toHaveLength(1);
       expect(modeSuggested[0].suggested).toBe('debug');
@@ -723,7 +725,8 @@ describe('SessionOrchestrator', () => {
         costCap: 10,
       });
 
-      expect(result.status).toBe('done');
+      expect(result.status).toBe('needs_user');
+      expect(result.verification?.verified).toBe(false);
       const modeSuggested = eventStream.getByType('mode_suggested') as any[];
       expect(modeSuggested).toHaveLength(1);
       expect(modeSuggested[0].suggested).toBe('code');

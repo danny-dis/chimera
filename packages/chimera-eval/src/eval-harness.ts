@@ -10,6 +10,8 @@ export interface TaskSpec {
   expectedFiles?: string[];
   expectedTests?: boolean;
   acceptanceCriteria?: string[];
+  verificationCommands?: string[];
+  verificationOutputs?: string[];
   maxCost?: number;
   maxTokens?: number;
 }
@@ -66,7 +68,7 @@ export interface EvalReport {
     avgCost: number;
     avgLatency: number;
     avgQuality: number;
-    costSavingsVsFrontier: number;  // percentage
+    costSavingsVsFrontier: number | null;  // null without a measured comparison
   };
   failureBreakdown: Record<string, number>;
 }
@@ -110,7 +112,7 @@ export class EvalHarness {
     // Use judge verdict quality if provided, otherwise use heuristic
     const qualityScore = judgeVerdict?.score ?? heuristicQuality;
     
-    let notes: string | undefined;
+    let notes: string | undefined = 'Heuristic quality is activity-based, not a correctness or comparative-performance measurement.';
     if (judgeVerdict) {
       const pct = Math.round(judgeVerdict.score * 100);
       notes = `Judge score: ${pct}% — ${judgeVerdict.rationale}`;
@@ -182,7 +184,7 @@ export class EvalHarness {
         avgCost,
         avgLatency,
         avgQuality,
-        costSavingsVsFrontier: this.estimateCostSavings(tasks),
+        costSavingsVsFrontier: null,
       },
       failureBreakdown,
     };
@@ -223,15 +225,27 @@ export class EvalHarness {
   }
 
   private evaluateSuccess(task: TaskSpec, trajectory: Trajectory): boolean {
-    if (trajectory.steps.some(s => s.error && s.type === 'check')) {
-      return false;
-    }
-    if (task.maxCost && trajectory.totalCost > task.maxCost) {
-      return false;
-    }
+    if (trajectory.steps.some(s => s.error && s.type === 'check')) return false;
+    if (!Number.isFinite(trajectory.totalCost) || trajectory.totalCost < 0) return false;
+    const tokens = trajectory.totalTokens;
+    if (!Number.isSafeInteger(tokens?.input) || tokens.input < 0 || !Number.isSafeInteger(tokens?.output) || tokens.output < 0) return false;
+    if (task.maxTokens !== undefined && trajectory.config.tokensMeasured === false) return false;
+    if (task.maxCost !== undefined && (!Number.isFinite(task.maxCost) || task.maxCost < 0 || trajectory.totalCost > task.maxCost)) return false;
+    if (task.maxTokens !== undefined && (!Number.isFinite(task.maxTokens) || task.maxTokens < 0 || trajectory.totalTokens.input + trajectory.totalTokens.output > task.maxTokens)) return false;
+    const check = trajectory.steps.filter(s => s.type === 'check').at(-1)?.output as {
+      pass?: boolean; files?: string[];
+      verification?: { verified?: boolean; bundle?: { evidences?: Array<{ type: string; verdict: string; description?: string; data?: { exitCode?: number } }> } };
+    } | undefined;
+    if (check?.pass !== true || check.verification?.verified !== true) return false;
+    const evidence = check.verification.bundle?.evidences;
+    if (!Array.isArray(evidence) || evidence.some(item => !item || typeof item !== 'object' || Array.isArray(item) || typeof item.type !== 'string' || typeof item.verdict !== 'string')) return false;
+    const tests = evidence.filter(item => item.type === 'test_result');
+    if (!tests.length || tests.some(item => item.verdict !== 'pass' || item.data?.exitCode !== 0)) return false;
+    if (task.verificationCommands?.some(command => !tests.some(item => item.description === command))) return false;
+    if (task.expectedFiles?.some(file => !Array.isArray(check.files) || !check.files.includes(file))) return false;
+    if (task.acceptanceCriteria?.length && !task.verificationCommands?.length) return false;
     const lastResponse = trajectory.steps.filter(s => s.type === 'response').pop();
-    if (!lastResponse) return false;
-    return true;
+    return Boolean(lastResponse);
   }
 
   private evaluateQuality(_task: TaskSpec, trajectory: Trajectory): number {
@@ -271,13 +285,5 @@ export class EvalHarness {
     const patches = trajectory.steps.filter(s => s.type === 'patch');
     if (patches.length === 0) return 'planning';
     return 'unknown';
-  }
-
-  private estimateCostSavings(tasks: EvalScore[]): number {
-    // Estimate cost savings vs frontier-only baseline
-    // If cheap model was used for most work, savings are ~40-60%
-    // For now return a placeholder based on success rate
-    const avgCost = tasks.reduce((sum, t) => sum + t.costScore, 0) / Math.max(1, tasks.length);
-    return Math.round(avgCost * 50); // rough estimate
   }
 }

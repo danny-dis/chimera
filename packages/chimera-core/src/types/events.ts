@@ -321,6 +321,13 @@ export const ChimeraEventSchema = z.discriminatedUnion('type', [
     backend: z.string(),
   }),
   z.object({
+    type: z.literal('deliberation_executed'),
+    mode: z.string().optional(),
+    preset: z.string(),
+    resultMode: z.string(),
+    degraded: z.boolean(),
+  }),
+  z.object({
     type: z.literal('preset_role_resolved'),
     preset: z.string(),
     role: z.string(),

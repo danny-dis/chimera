@@ -8,6 +8,7 @@ export interface LspServerConfig {
   filePatterns?: string[];
   rootFiles?: string[];
   env?: Record<string, string>;
+  initializationOptions?: Record<string, unknown>;
   enabled?: boolean;
   diagnosticsLimit?: number;
 }
@@ -70,4 +71,5 @@ export interface LspService {
   hover(filePath: string, line: number, character: number): Promise<LspHover | null>;
   documentSymbols(filePath: string): Promise<LspDocumentSymbol[]>;
   workspaceSymbols(query: string): Promise<LspWorkspaceSymbol[]>;
+  updateDocument(filePath: string): Promise<void>;
 }

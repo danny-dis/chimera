@@ -51,6 +51,7 @@ export interface DaemonNotification {
 // ---------------------------------------------------------------------------
 
 export interface ExecuteTaskParams {
+  verificationCommands?: string[];
   task: string;
   mode?: string;
   workspaceRoot: string;
@@ -85,6 +86,7 @@ export interface GetWorkflowStatusResult {
 
 export interface GetStateResult {
   status: string;
+  workers?: Array<{ id: string; status: 'initializing' | 'running' | 'cancelling' }>;
   cost: Record<string, number>;
   events: unknown[];
   hidden: number;
