@@ -7,7 +7,7 @@
     },
     "test": {
       "dependsOn": ["build"],
-      "passThroughEnv": ["CHIMERA_SANDBOX_DIAGNOSTICS", "LOCALAPPDATA"],
+      "passThroughEnv": ["CHIMERA_SANDBOX_DIAGNOSTICS", "PSModulePath"],
       "inputs": ["src/**/*.ts", "test/**/*.ts"]
     },
     "lint": {},
