@@ -156,14 +156,28 @@ export class Sandbox {
 
     try {
       const shell = isWindows ? 'powershell' : 'bash';
+      const probe = (phase: string) => {
+        if (process.env.CHIMERA_SANDBOX_DIAGNOSTICS !== '1') return;
+        console.error(JSON.stringify({ sandboxPhase: phase, elapsedMs: Date.now() - startTime,
+          cwd: options.cwd, paths: Object.fromEntries(['SYSTEMROOT', 'PSMODULEPATH', 'LOCALAPPDATA',
+            'USERPROFILE', 'APPDATA', 'PROGRAMFILES', 'TEMP', 'TMP'].map(name =>
+            [name, Object.entries(options.env).find(([key]) => key.toUpperCase() === name)?.[1] ?? null])) }));
+      };
+      probe('before-load');
       const { execa } = require('execa') as typeof import('execa');
-      const result = await execa(shell, shellArgs, {
+      probe('after-load');
+      const subprocess = execa(shell, shellArgs, {
         cwd: options.cwd,
         timeout: options.timeout,
         env: options.env,
         reject: false,
         killSignal: 'SIGTERM',
       });
+      probe('after-spawn');
+      subprocess.stdout?.once('data', () => probe('first-stdout'));
+      subprocess.stderr?.once('data', () => probe('first-stderr'));
+      const result = await subprocess;
+      probe('settled');
 
       const execaResult = result as unknown as {
         stdout: string;

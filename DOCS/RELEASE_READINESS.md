@@ -26,7 +26,18 @@ installed command, separate-project launcher, real shell output and unchanged
 consumer manifests. Release regressions, 33 offline coverage cases and smoke
 regressions passed. The fresh production audit reported no known vulnerabilities.
 
-These local checks do not establish a public release or green remote CI result.
+These local checks do not establish a public release. A later remote diagnostic
+run on Node.js 22.23.3 passed Linux CI, Windows CI and E2E smoke:
+[CI run 39583240922](https://github.com/danny-dis/chimera/actions/runs/39583240922).
+The preceding Windows run timed out in two sandbox tests at 30 seconds. Both
+unchanged tests passed locally on Node 22 and 26. The temporary CI probe measured
+Execa loading at 85 ms and PowerShell commands below two seconds, but may have
+warmed caches. The sandbox tests still took 26.5 seconds for the first command
+and about 12 seconds for several output cmdlets. The standalone probe was removed;
+phase timing inside the actual sandbox call is being collected to locate that gap.
+No runtime fix has been established and no test deadline changed. Check the PR's
+current-head results separately.
+
 Commit and push are authorized; publication remains separate. Previously committed
 real credentials still need owner revocation; deleting files leaves Git history
 intact.
