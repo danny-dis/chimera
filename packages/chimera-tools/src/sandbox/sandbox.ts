@@ -156,28 +156,15 @@ export class Sandbox {
 
     try {
       const shell = isWindows ? 'powershell' : 'bash';
-      const probe = (phase: string) => {
-        if (process.env.CHIMERA_SANDBOX_DIAGNOSTICS !== '1') return;
-        console.error(JSON.stringify({ sandboxPhase: phase, elapsedMs: Date.now() - startTime,
-          cwd: options.cwd, paths: Object.fromEntries(['SYSTEMROOT', 'PSMODULEPATH', 'LOCALAPPDATA',
-            'USERPROFILE', 'APPDATA', 'PROGRAMFILES', 'TEMP', 'TMP'].map(name =>
-            [name, Object.entries(options.env).find(([key]) => key.toUpperCase() === name)?.[1] ?? null])) }));
-      };
-      probe('before-load');
       const { execa } = require('execa') as typeof import('execa');
-      probe('after-load');
-      const subprocess = execa(shell, shellArgs, {
+      const result = await execa(shell, shellArgs, {
         cwd: options.cwd,
         timeout: options.timeout,
         env: options.env,
+        extendEnv: false,
         reject: false,
         killSignal: 'SIGTERM',
       });
-      probe('after-spawn');
-      subprocess.stdout?.once('data', () => probe('first-stdout'));
-      subprocess.stderr?.once('data', () => probe('first-stderr'));
-      const result = await subprocess;
-      probe('settled');
 
       const execaResult = result as unknown as {
         stdout: string;
@@ -278,12 +265,15 @@ ${networkRule}
     const profilePath = `/tmp/chimera-sandbox-${Date.now()}.sb`;
     const { execa } = require('execa') as typeof import('execa');
     try {
-      await execa('bash', ['-c', `echo '${profile.replace(/'/g, "'\"'\"'")}' > ${profilePath}`]);
+      await execa('bash', ['-c', `echo '${profile.replace(/'/g, "'\"'\"'")}' > ${profilePath}`], {
+        env: options.env, extendEnv: false,
+      });
 
       const result = await execa('sandbox-exec', ['-f', profilePath, 'bash', '-c', command], {
         cwd: options.cwd,
         timeout: options.timeout,
         env: options.env,
+        extendEnv: false,
         reject: false,
         killSignal: 'SIGTERM',
       });
@@ -300,7 +290,7 @@ ${networkRule}
       return this.executeProcessTier(command, options);
     } finally {
       try {
-        await execa('rm', ['-f', profilePath]);
+        await execa('rm', ['-f', profilePath], { env: options.env, extendEnv: false });
       } catch {
         // ignore cleanup errors
       }
@@ -331,6 +321,7 @@ ${networkRule}
         cwd: options.cwd,
         timeout: options.timeout,
         env: options.env,
+        extendEnv: false,
         reject: false,
         killSignal: 'SIGTERM',
       });
@@ -374,6 +365,7 @@ ${networkRule}
       ], {
         timeout: options.timeout + 5000,
         env: options.env,
+        extendEnv: false,
         reject: false,
         killSignal: 'SIGTERM',
       });

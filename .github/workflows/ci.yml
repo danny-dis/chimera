@@ -48,8 +48,6 @@ jobs:
 
       - name: Test
         run: pnpm exec turbo run test --concurrency=1 -- --maxWorkers=1 --minWorkers=1
-        env:
-          CHIMERA_SANDBOX_DIAGNOSTICS: ${{ matrix.os == 'windows-latest' && '1' || '0' }}
 
       - name: Release workflow regression
         run: node scripts/test-release-workflow.mjs

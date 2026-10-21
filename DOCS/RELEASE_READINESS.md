@@ -26,17 +26,28 @@ installed command, separate-project launcher, real shell output and unchanged
 consumer manifests. Release regressions, 33 offline coverage cases and smoke
 regressions passed. The fresh production audit reported no known vulnerabilities.
 
-These local checks do not establish a public release. A later remote diagnostic
-run on Node.js 22.23.3 passed Linux CI, Windows CI and E2E smoke:
-[CI run 39583240922](https://github.com/danny-dis/chimera/actions/runs/39583240922).
-The preceding Windows run timed out in two sandbox tests at 30 seconds. Both
-unchanged tests passed locally on Node 22 and 26. The temporary CI probe measured
-Execa loading at 85 ms and PowerShell commands below two seconds, but may have
-warmed caches. The sandbox tests still took 26.5 seconds for the first command
-and about 12 seconds for several output cmdlets. The standalone probe was removed;
-phase timing inside the actual sandbox call is being collected to locate that gap.
-No runtime fix has been established and no test deadline changed. Check the PR's
-current-head results separately.
+These local checks do not establish a public release. The Windows sandbox
+failure was traced to Turbo strict mode dropping `PSModulePath`, making PowerShell
+cmdlet discovery take tens of seconds. An in-worker probe separated Execa loading
+(124 ms) from first output (28.7 seconds). Passing through `LOCALAPPDATA` did not
+help and was removed. Preserving only `PSModulePath` reduced the sandbox suite
+from 118.3 to 11.0 seconds and stderr capture from 22.4 seconds to 640 ms, without
+changing assertions or deadlines. Linux CI, Windows CI and E2E smoke passed the
+[module-path trial](https://github.com/danny-dis/chimera/actions/runs/39588856776).
+Temporary probes are removed; check the PR's current-head results separately.
+
+The investigation also reproduced blocked parent environment variables reaching
+sandbox children because Execa merged the parent environment back in. All sandbox
+Execa launches now disable that merge. A real-child sentinel regression failed
+before the repair and passed afterward while explicitly supplied variables still
+arrived. Focused Node 22 checks passed 23 tests with one existing Windows skip.
+macOS sandbox and Docker execution were not exercised locally.
+
+A separate full local Node 22 Tools run reported 354 passed, three LSP failures,
+one skipped and two stream errors. Its Bun-installed dependency tree supplies an
+`.exe` server launcher, but the pinned-pnpm fixture requires `.CMD`. No assertion
+or timeout was changed to mask that installation mismatch. Remote CI uses the
+committed pnpm setup.
 
 Commit and push are authorized; publication remains separate. Previously committed
 real credentials still need owner revocation; deleting files leaves Git history
